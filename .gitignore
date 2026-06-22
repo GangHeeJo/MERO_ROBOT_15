@@ -1,0 +1,18 @@
+# 모델 가중치 (용량 큼)
+model/best.pt
+model/best.engine
+
+# 캘리브레이션은 포함 (작은 JSON)
+!model/calibration.json
+
+# 데이터셋 이미지 (용량 큼)
+DATASET/
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# 시스템
+.DS_Store
+Thumbs.db
