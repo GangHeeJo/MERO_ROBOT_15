@@ -13,6 +13,9 @@ __pycache__/
 *.pyc
 .ipynb_checkpoints/
 
+# 개발 일지 (로컬 전용)
+DEVLOG.md
+
 # 시스템
 .DS_Store
 Thumbs.db
