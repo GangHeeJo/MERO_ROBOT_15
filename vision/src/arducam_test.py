@@ -1,13 +1,17 @@
 """
 MERO_AI_ROBOT 메인 실행 파일
 ─────────────────────────────
-실행: python src/arducam_test.py
+실행: python vision/src/arducam_test.py
 
 동작 순서:
   1. YOLO 모델 로드 (best.pt 또는 best.engine)
   2. 캘리브레이션 파일 로드 (있으면 mm 좌표 계산)
   3. Arducam USB 카메라 열기
-  4. 매 프레임: 탐지 → 트래킹 → 타겟 선택 → ESP32로 JSON 전송
+  4. 매 프레임: 탐지 → 트래킹 → 타겟 선택 → 두 보드에 전송
+
+시리얼 연결 구조:
+  Jetson → /dev/ttyUSB0  → ESP32   (UGV02 바퀴 제어, JSON)
+  Jetson → /dev/ttyACM0  → OpenRB  (Dynamixel 팔·그리퍼, JSON)
 """
 
 import cv2
@@ -86,40 +90,64 @@ def select_target(objects: list) -> dict | None:
     return max(objects, key=lambda o: o["conf"])
 
 # ──────────────────────────────────────────────
-# 시리얼 초기화 (Jetson → ESP32 USB 연결)
+# 시리얼 초기화
+# Jetson → ESP32  (/dev/ttyUSB0): 바퀴 제어
+# Jetson → OpenRB (/dev/ttyACM0): 팔·그리퍼 제어
 # ──────────────────────────────────────────────
-# Jetson에서 ESP32 연결 시 포트 확인 방법: ls /dev/tty*
-# 보통 /dev/ttyUSB0 또는 /dev/ttyACM0 로 잡힘
-SERIAL_PORT = "/dev/ttyUSB0"
-BAUD_RATE   = 115200  # ESP32 기본 통신 속도
+ESP32_PORT  = "/dev/ttyUSB0"   # ESP32 (UGV02 바퀴)
+OPENRB_PORT = "/dev/ttyACM0"   # OpenRB (Dynamixel 팔·그리퍼)
+BAUD_RATE   = 115200
 
-ser = None
-try:
-    ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
-    print(f"✅ ESP32 시리얼 연결 성공: {SERIAL_PORT}")
-except Exception:
-    # ESP32가 연결 안 돼있어도 에러 없이 카메라 단독 모드로 실행됨
-    print(f"⚠️ ESP32 시리얼 연결 실패 ({SERIAL_PORT}) — 카메라 단독 모드로 실행합니다.")
+def _open_serial(port):
+    """시리얼 포트 열기. 실패해도 에러 없이 None 반환."""
+    try:
+        s = serial.Serial(port, BAUD_RATE, timeout=1)
+        print(f"✅ 시리얼 연결 성공: {port}")
+        return s
+    except Exception:
+        print(f"⚠️ 시리얼 연결 실패: {port} — 해당 보드 없이 실행합니다.")
+        return None
 
-def send_to_robot(objects: list, target: dict | None):
+ser_esp32  = _open_serial(ESP32_PORT)
+ser_openrb = _open_serial(OPENRB_PORT)
+
+def send_to_esp32(objects: list, target: dict | None):
     """
-    탐지된 전체 물체 목록 + 집을 타겟 1개를 JSON으로 ESP32에 전송.
+    바퀴 제어용 JSON을 ESP32로 전송.
+    ESP32(mobility.ino)가 target의 mx, my 기반으로 이동.
 
-    ESP32가 받는 데이터 형식 (한 줄, \\n 으로 끝남):
-    {
-      "objects": [
-        {"id": 1, "cls": "d8", "cx": 342.5, "cy": 218.3, "mx": 12.3, "my": -5.1, "conf": 0.91}
-      ],
-      "target": {"id": 1, "cls": "d8", "cx": 342.5, "cy": 218.3, "mx": 12.3, "my": -5.1, "conf": 0.91}
-    }
-
+    형식:
+      {"objects": [...], "target": {"cls":"d8", "mx":12.3, "my":-5.1, ...}}
     탐지 없으면: {"objects": [], "target": null}
-    mx, my 는 캘리브레이션 파일이 있을 때만 포함됨 (mm 단위, 이미지 중심 기준)
     """
-    if ser is None or not ser.is_open:
+    if ser_esp32 is None or not ser_esp32.is_open:
         return
     payload = json.dumps({"objects": objects, "target": target}) + "\n"
-    ser.write(payload.encode())
+    ser_esp32.write(payload.encode())
+
+def send_to_openrb(target: dict | None):
+    """
+    팔·그리퍼 제어 명령을 OpenRB로 전송.
+    OpenRB(arm.ino + gripper.ino)가 팔 동작 실행.
+
+    형식:
+      {"cmd": "pick",  "cls": "d8", "mx": 12.3, "my": -5.1}  ← 물체 집기
+      {"cmd": "drop",  "cls": "d8"}                            ← 드롭존에 내려놓기
+      {"cmd": "home"}                                           ← 홈 포지션
+      {"cmd": "idle"}                                           ← 대기
+    """
+    if ser_openrb is None or not ser_openrb.is_open:
+        return
+    if target is None:
+        payload = json.dumps({"cmd": "idle"}) + "\n"
+    else:
+        payload = json.dumps({
+            "cmd": "pick",
+            "cls": target["cls"],
+            "mx":  target.get("mx", 0),
+            "my":  target.get("my", 0),
+        }) + "\n"
+    ser_openrb.write(payload.encode())
 
 # ──────────────────────────────────────────────
 # 카메라 초기화
@@ -205,8 +233,10 @@ try:
         if target:
             print(f"[타겟]   ID={target['id']} | {target['cls']} → 집게 이동")
 
-        # 탐지 결과 + 타겟 ESP32로 전송
-        send_to_robot(detected, target)
+        # ESP32 (바퀴): 전체 탐지 결과 + 타겟 전송
+        send_to_esp32(detected, target)
+        # OpenRB (팔·그리퍼): 타겟 기반 집기 명령 전송
+        send_to_openrb(target)
 
         # ── 시각화 ──────────────────────────────
         # YOLO 기본 오버레이 (바운딩박스 + 클래스명 + ID + 신뢰도)
@@ -236,7 +266,7 @@ try:
 finally:
     # 'q' 종료든 Ctrl+C든 예외 발생이든 반드시 자원 해제
     cap.release()
-    if ser and ser.is_open:
-        ser.close()
+    if ser_esp32  and ser_esp32.is_open:  ser_esp32.close()
+    if ser_openrb and ser_openrb.is_open: ser_openrb.close()
     cv2.destroyAllWindows()
     print("카메라 및 시리얼 자원이 안전하게 해제되었습니다.")
