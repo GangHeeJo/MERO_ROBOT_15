@@ -1,11 +1,8 @@
 # TensorRT 변환 파일 (Jetson 전용, 용량 큼)
-model/best.engine
-
-# 캘리브레이션은 포함 (작은 JSON)
-!model/calibration.json
+vision/model/best.engine
 
 # 데이터셋 이미지 (용량 큼)
-DATASET/
+vision/DATASET/
 
 # Python
 __pycache__/

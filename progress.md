@@ -33,26 +33,35 @@ pip install ultralytics opencv-python pyserial
 
 ```bash
 # Jetson 최초 세팅 시 (순서대로)
-python src/calibration.py    # 1. 카메라 캘리브레이션 (1회)
-python src/export_engine.py  # 2. TensorRT 변환 (1회)
-python src/arducam_test.py   # 3. 메인 실행
+python vision/src/calibration.py    # 1. 카메라 캘리브레이션 (1회)
+python vision/src/export_engine.py  # 2. TensorRT 변환 (1회)
+python vision/src/arducam_test.py   # 3. 메인 실행
 
 # 이후 실행은 항상
-python src/arducam_test.py
+python vision/src/arducam_test.py
 ```
 
 ---
 
-## 파일별 역할
+## 폴더 구조
+
+```
+MERO_AI_ROBOT/
+├── vision/       # 비전팀
+├── robot/        # 로봇팀 ESP32 코드
+└── progress.md
+```
+
+## 파일별 역할 (vision/)
 
 | 파일 | 역할 |
 |------|------|
-| `src/arducam_test.py` | 메인 실행 파일. 탐지·트래킹·타겟선정·ESP32 전송 전부 담당 |
-| `src/calibration.py` | 픽셀 좌표 → 실제 mm 변환 비율 측정. `model/calibration.json` 생성 |
-| `src/export_engine.py` | `best.pt` → `best.engine` TensorRT 변환 (Jetson에서만 실행) |
-| `src/export_image_from_video.py` | 동영상에서 프레임 추출해서 데이터셋 생성 |
-| `train/MERO_train.ipynb` | Google Colab 학습 노트북 |
-| `model/best.pt` | 학습된 모델 가중치 (git 제외, 별도 공유) |
+| `vision/src/arducam_test.py` | 메인 실행 파일. 탐지·트래킹·타겟선정·ESP32 전송 전부 담당 |
+| `vision/src/calibration.py` | 픽셀 좌표 → 실제 mm 변환 비율 측정. `vision/model/calibration.json` 생성 |
+| `vision/src/export_engine.py` | `best.pt` → `best.engine` TensorRT 변환 (Jetson에서만 실행) |
+| `vision/src/export_image_from_video.py` | 동영상에서 프레임 추출해서 데이터셋 생성 |
+| `vision/train/MERO_train.ipynb` | Google Colab 학습 노트북 |
+| `vision/model/best.pt` | 학습된 모델 가중치 (현재 d8만 학습된 임시본) |
 
 ---
 
