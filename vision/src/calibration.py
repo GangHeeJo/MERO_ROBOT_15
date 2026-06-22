@@ -15,7 +15,7 @@
   4. 터미널에 실제 거리(mm) 입력
   5. model/calibration.json 저장 완료
 
-저장 후 arducam_test.py 실행 시 자동으로 불러와서 mm 좌표 계산에 사용됨.
+저장 후 main.py 실행 시 자동으로 불러와서 mm 좌표 계산에 사용됨.
 """
 
 import cv2
@@ -118,4 +118,4 @@ with open(CALIB_PATH, "w") as f:
 print(f"\n✅ 캘리브레이션 완료!")
 print(f"   비율: {mm_per_pixel:.4f} mm/pixel")
 print(f"   저장: {CALIB_PATH}")
-print(f"\n이제 arducam_test.py 실행 시 mm 좌표가 함께 출력됩니다.")
+print(f"\n이제 main.py 실행 시 mm 좌표가 함께 출력됩니다.")

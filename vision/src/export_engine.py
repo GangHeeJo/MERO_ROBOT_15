@@ -8,7 +8,7 @@ Jetson TensorRT 변환 스크립트
   TensorRT 포맷(best.engine)으로 변환.
   변환 후 추론 속도가 3~5배 빨라짐.
 
-변환 후 arducam_test.py 에서 모델 경로만 바꾸면 됨:
+변환 후 main.py 에서 모델 경로만 바꾸면 됨:
   MODEL_PATH = os.path.join(BASE_DIR, "model", "best.engine")
 
 주의:
@@ -47,5 +47,5 @@ model.export(format="engine", half=True)
 
 print(f"\n✅ 변환 완료: {ENGINE_PATH}")
 print("\n다음 단계:")
-print("  arducam_test.py 상단에서 아래 줄의 주석을 해제하세요:")
+print("  main.py 상단에서 아래 줄의 주석을 해제하세요:")
 print("  # MODEL_PATH = os.path.join(BASE_DIR, 'model', 'best.engine')")

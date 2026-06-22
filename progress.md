@@ -68,7 +68,7 @@ sudo chmod 666 /dev/ttyACM0   # OpenRB (팔·그리퍼)
 ls /dev/ttyUSB*
 ls /dev/ttyACM*
 # 라이다가 ttyACM0을 점유하면 ESP32가 ttyACM1 또는 ttyUSB0으로 잡힘
-# arducam_test.py 상단 ESP32_PORT 값을 확인된 포트로 수정할 것
+# main.py 상단 ESP32_PORT 값을 확인된 포트로 수정할 것
 ```
 
 ---
@@ -79,10 +79,10 @@ ls /dev/ttyACM*
 # Jetson 최초 세팅 시 (순서대로)
 python vision/src/calibration.py    # 1. 카메라 캘리브레이션 (1회)
 python vision/src/export_engine.py  # 2. TensorRT 변환 (1회)
-python vision/src/arducam_test.py   # 3. 메인 실행
+python vision/src/main.py   # 3. 메인 실행
 
 # 이후 실행은 항상
-python vision/src/arducam_test.py
+python vision/src/main.py
 ```
 
 ---
@@ -93,7 +93,7 @@ python vision/src/arducam_test.py
 MERO_AI_ROBOT/
 ├── vision/       # 비전팀 (Jetson Python)
 │   ├── src/
-│   │   ├── arducam_test.py             # 메인 실행 (트래킹 + 통신)
+│   │   ├── main.py             # 메인 실행 (트래킹 + 통신)
 │   │   ├── calibration.py              # 픽셀→mm 캘리브레이션 (1회)
 │   │   ├── export_engine.py            # TensorRT 변환 (Jetson 1회)
 │   │   └── export_image_from_video.py  # 동영상 → 프레임 추출
@@ -116,7 +116,7 @@ MERO_AI_ROBOT/
 
 | 파일 | 역할 |
 |------|------|
-| `vision/src/arducam_test.py` | 메인 실행 파일. 탐지·트래킹·타겟선정·ESP32/OpenRB 전송 전부 담당 |
+| `vision/src/main.py` | 메인 실행 파일. 탐지·트래킹·타겟선정·ESP32/OpenRB 전송 전부 담당 |
 | `vision/src/calibration.py` | 픽셀 좌표 → 실제 mm 변환 비율 측정. `vision/model/calibration.json` 생성 |
 | `vision/src/export_engine.py` | `best.pt` → `best.engine` TensorRT 변환 (Jetson에서만 실행) |
 | `vision/src/export_image_from_video.py` | 동영상에서 프레임 추출해서 데이터셋 생성 |
@@ -133,7 +133,7 @@ MERO_AI_ROBOT/
 | `robot/arm.ino` | XL430 × 6 팔 관절 제어 (구성 확정 대기 중, 스텁 상태) |
 | `robot/gripper.ino` | XL330 × 2 그리퍼 손가락 제어. Dynamixel2Arduino 사용 |
 
-> 바퀴 제어(ESP32)는 `vision/src/arducam_test.py`의 `control_wheels()`가 직접 담당.
+> 바퀴 제어(ESP32)는 `vision/src/main.py`의 `control_wheels()`가 직접 담당.
 
 ### 상태 머신 흐름
 
@@ -155,8 +155,8 @@ MERO_AI_ROBOT/
 
 | 파일 | 항목 | 내용 |
 |------|------|------|
-| `arducam_test.py` | `ARRIVE_THRESHOLD_MM` | 실물 테스트 후 도착 판정 거리 조정 (현재 30mm) |
-| `arducam_test.py` | `DROP_ZONES` (추후) | 드롭존 이동이 필요하면 Python에서 cls별 좌표 관리 |
+| `main.py` | `ARRIVE_THRESHOLD_MM` | 실물 테스트 후 도착 판정 거리 조정 (현재 30mm) |
+| `main.py` | `DROP_ZONES` (추후) | 드롭존 이동이 필요하면 Python에서 cls별 좌표 관리 |
 | `gripper.ino` | `FINGER_OPEN_DEG` / `FINGER_CLOSE_DEG` | 실물 테스트 후 실제 각도 측정·수정 |
 | `arm.ino` | 전체 구현 | 팔 관절 구성 확정 후 역기구학 + 동작 시퀀스 작성 |
 
@@ -263,7 +263,7 @@ OpenRB 내장 Dynamixel 포트 (`Serial1`) 사용 — 방향핀 별도 불필요
       ↓
 4. python vision/src/export_engine.py (Jetson)
       ↓
-5. vision/model/best.engine → arducam_test.py에서 자동 사용
+5. vision/model/best.engine → main.py에서 자동 사용
 ```
 
 Colab 노트북 실행 전 필요한 것:
@@ -282,7 +282,7 @@ Colab 노트북 실행 전 필요한 것:
 - [x] Colab 학습 노트북 (`vision/train/MERO_train.ipynb`)
 - [x] d6 이미지 파일명 정리 (d6_1 ~ d6_85)
 - [x] pyserial 설치 및 통신 코드 작성
-- [x] **듀얼 시리얼 통신 구현** (`vision/src/arducam_test.py`)
+- [x] **듀얼 시리얼 통신 구현** (`vision/src/main.py`)
   - ESP32 `/dev/ttyUSB0` — 바퀴 제어용 전체 탐지 JSON 전송
   - OpenRB `/dev/ttyACM0` — 팔·그리퍼 pick/idle 명령 전송
 - [x] **OpenRB 메인 제어 코드** (`robot/main.ino`)
@@ -331,7 +331,7 @@ Colab 노트북 실행 전 필요한 것:
 3. Colab 노트북 실행 전 Roboflow API 키 입력
 4. Jetson 연결 포트 확인:
    - `ls /dev/tty*` 실행
-   - ESP32: `ttyUSB0` → `arducam_test.py`의 `ESP32_PORT` 맞춰 수정
+   - ESP32: `ttyUSB0` → `main.py`의 `ESP32_PORT` 맞춰 수정
    - OpenRB: `ttyACM0` → `OPENRB_PORT` 맞춰 수정
 5. OpenRB Arduino 업로드 시 보드: **OpenRB-150** 선택
 6. Dynamixel Wizard로 서보 ID 및 Baudrate 사전 설정 (57600 baud)

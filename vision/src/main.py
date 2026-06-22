@@ -1,7 +1,7 @@
 """
 MERO_AI_ROBOT 메인 실행 파일
 ─────────────────────────────
-실행: python vision/src/arducam_test.py
+실행: python vision/src/main.py
 
 동작 순서:
   1. YOLO 모델 로드 (best.pt 또는 best.engine)
@@ -31,7 +31,7 @@ from ultralytics import YOLO
 # ──────────────────────────────────────────────
 # 모델 로드
 # ──────────────────────────────────────────────
-# __file__ = src/arducam_test.py
+# __file__ = src/main.py
 # BASE_DIR  = MERO_AI_ROBOT/ (프로젝트 루트)
 BASE_DIR   = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL_PATH = os.path.join(BASE_DIR, "model", "best.pt")

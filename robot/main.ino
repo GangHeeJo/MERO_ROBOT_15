@@ -19,7 +19,7 @@
  *   arm.ino      — 팔 관절 제어 XL430 × 6 (구성 확정 후 작성)
  *   gripper.ino  — 그리퍼 손가락 XL330 × 2
  *
- * 바퀴 제어는 Jetson Python(arducam_test.py)이 ESP32에 직접 담당.
+ * 바퀴 제어는 Jetson Python(main.py)이 ESP32에 직접 담당.
  * OpenRB는 팔·그리퍼만 제어함.
  *
  * 필요 라이브러리:
