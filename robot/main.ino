@@ -19,6 +19,9 @@
  *   arm.ino      — 팔 관절 제어 XL430 × 6 (구성 확정 후 작성)
  *   gripper.ino  — 그리퍼 손가락 XL330 × 2
  *
+ * 바퀴 제어는 Jetson Python(arducam_test.py)이 ESP32에 직접 담당.
+ * OpenRB는 팔·그리퍼만 제어함.
+ *
  * 필요 라이브러리:
  *   ArduinoJson, Dynamixel2Arduino
  */
@@ -32,17 +35,15 @@
 
 // ──────────────────────────────────────
 // 공유 데이터 구조체
-// mobility.ino, gripper.ino에서도 사용됨
+// gripper.ino, arm.ino에서도 사용됨
 // ──────────────────────────────────────
 
-// 상태 머신 상태
+// 상태 머신 상태 (팔·그리퍼만, 바퀴는 Python이 담당)
 enum State {
-  IDLE,      // 대기: target 없음
-  APPROACH,  // 물체로 이동 중
-  PICK,      // 물체 집기
-  CARRY,     // 목표 드롭존으로 이동 중
-  DROP,      // 내려놓기
-  RETURN     // 초기 위치 복귀
+  IDLE,    // 대기: pick 명령 대기
+  PICK,    // 팔 내리기 + 그리퍼 닫기
+  DROP,    // 드롭존으로 팔 이동 + 그리퍼 열기
+  RETURN   // 팔 홈 복귀
 };
 
 // 현재 타겟 정보 (비전팀이 보낸 JSON에서 파싱)
@@ -93,67 +94,45 @@ bool parseCommand(const String& json) {
 }
 
 // ──────────────────────────────────────
-// 상태 머신
+// 상태 머신 (팔·그리퍼 전용)
+// 바퀴 제어는 Jetson Python이 담당.
+// Jetson이 타겟 도달 판단 후 pick 명령을 보내면 여기서 팔 시퀀스 실행.
 // ──────────────────────────────────────
 void updateStateMachine() {
   switch (currentState) {
 
     case IDLE:
+      // pick 명령 수신 시 팔 시퀀스 시작
       if (currentTarget.valid) {
-        Serial.print("[IDLE→APPROACH] 타겟: ");
+        Serial.print("[IDLE→PICK] 타겟: ");
         Serial.println(currentTarget.cls);
-        gripperOpen();
-        currentState = APPROACH;
-      }
-      break;
-
-    case APPROACH:
-      if (!currentTarget.valid) {
-        stopMotor();
-        currentState = IDLE;
-        break;
-      }
-      // 물체 위치로 이동, 도달하면 PICK
-      if (moveToward(currentTarget.mx, currentTarget.my)) {
-        Serial.println("[APPROACH→PICK]");
         currentState = PICK;
       }
       break;
 
     case PICK:
-      stopMotor();
+      // 팔을 물체 위치로 내리고 그리퍼 닫기
+      armMoveToTarget(currentTarget.mx, currentTarget.my);
       gripperClose();
-      Serial.print("[PICK→CARRY] cls: ");
+      Serial.print("[PICK→DROP] cls: ");
       Serial.println(currentTarget.cls);
-      currentState = CARRY;
+      currentState = DROP;
       break;
-
-    case CARRY: {
-      // cls에 따라 드롭존 좌표 가져와서 이동
-      float dx, dy;
-      getDropZone(currentTarget.cls, dx, dy);
-      if (moveToward(dx, dy)) {
-        Serial.println("[CARRY→DROP]");
-        currentState = DROP;
-      }
-      break;
-    }
 
     case DROP:
-      stopMotor();
+      // cls에 따른 드롭존으로 팔 이동 후 그리퍼 열기
+      armMoveToDrop(currentTarget.cls);
       gripperOpen();
       Serial.println("[DROP→RETURN]");
-      delay(300);
       currentState = RETURN;
       break;
 
     case RETURN:
-      // 원점(0, 0)으로 복귀
-      if (moveToward(0.0, 0.0)) {
-        Serial.println("[RETURN→IDLE]");
-        currentTarget.valid = false;
-        currentState = IDLE;
-      }
+      // 팔 홈 포지션 복귀
+      armHome();
+      Serial.println("[RETURN→IDLE]");
+      currentTarget.valid = false;
+      currentState = IDLE;
       break;
   }
 }
@@ -163,10 +142,9 @@ void updateStateMachine() {
 // ──────────────────────────────────────
 void setup() {
   JETSON_SERIAL.begin(115200);
-  mobilitySetup();   // mobility.ino 초기화
   armSetup();        // arm.ino 초기화 (팔 관절 XL430 × 6)
   gripperSetup();    // gripper.ino 초기화 (집게 손가락 XL330 × 2)
-  Serial.println("MERO 로봇 제어 시작. Jetson 대기 중...");
+  Serial.println("MERO OpenRB 시작. Jetson pick 명령 대기 중...");
 }
 
 void loop() {

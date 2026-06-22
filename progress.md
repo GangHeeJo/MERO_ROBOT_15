@@ -40,8 +40,8 @@
 ```
 
 **Jetson에서 나가는 신호 두 가지:**
-1. `/dev/ttyUSB0` → ESP32: 바퀴 이동 명령 (탐지 결과 + 타겟 좌표 JSON)
-2. `/dev/ttyACM0` → OpenRB: 팔·그리퍼 명령 (pick / drop / home / idle)
+1. `/dev/ttyUSB0` → ESP32: 바퀴 속도 명령 `{"T":1,"L":...,"R":...}` (Waveshare 포맷, Python이 직접 계산)
+2. `/dev/ttyACM0` → OpenRB: 팔·그리퍼 명령 (pick / idle)
 
 ---
 
@@ -49,6 +49,26 @@
 
 ```bash
 pip install ultralytics opencv-python pyserial
+```
+
+---
+
+## Jetson USB 권한 설정 (매번 필요)
+
+USB 케이블을 꽂거나 Jetson이 재부팅될 때마다 아래 명령을 실행해야 함.  
+안 하면 Python에서 시리얼 포트 열기 실패.
+
+```bash
+sudo chmod 666 /dev/ttyUSB0   # ESP32 (UGV02 바퀴)
+sudo chmod 666 /dev/ttyACM0   # OpenRB (팔·그리퍼)
+```
+
+포트 번호 확인:
+```bash
+ls /dev/ttyUSB*
+ls /dev/ttyACM*
+# 라이다가 ttyACM0을 점유하면 ESP32가 ttyACM1 또는 ttyUSB0으로 잡힘
+# arducam_test.py 상단 ESP32_PORT 값을 확인된 포트로 수정할 것
 ```
 
 ---
@@ -83,9 +103,8 @@ MERO_AI_ROBOT/
 │       ├── best.pt                     # 학습 가중치 (현재 d8만)
 │       ├── best.engine                 # TensorRT 파일 (Jetson 변환 후)
 │       └── calibration.json            # 캘리브레이션 결과 (1회 실행 후)
-├── robot/        # 로봇팀 (OpenRB Arduino)
+├── robot/        # 로봇팀 (OpenRB Arduino — 팔·그리퍼만)
 │   ├── main.ino      # JSON 수신 + 상태 머신
-│   ├── mobility.ino  # ESP32 바퀴 제어
 │   ├── arm.ino       # XL430 × 6 팔 관절 (구성 확정 후)
 │   └── gripper.ino   # XL330 × 2 그리퍼 손가락
 └── progress.md
@@ -110,34 +129,34 @@ MERO_AI_ROBOT/
 
 | 파일 | 역할 |
 |------|------|
-| `robot/main.ino` | Jetson JSON 수신 → 파싱 → 상태 머신 실행. 다른 .ino 함수 호출 |
-| `robot/mobility.ino` | ESP32 바퀴 모터 제어. Waveshare JSON 포맷으로 전송 |
+| `robot/main.ino` | Jetson pick 명령 수신 → 팔·그리퍼 상태 머신 실행 |
 | `robot/arm.ino` | XL430 × 6 팔 관절 제어 (구성 확정 대기 중, 스텁 상태) |
 | `robot/gripper.ino` | XL330 × 2 그리퍼 손가락 제어. Dynamixel2Arduino 사용 |
 
+> 바퀴 제어(ESP32)는 `vision/src/arducam_test.py`의 `control_wheels()`가 직접 담당.
+
 ### 상태 머신 흐름
 
+바퀴 이동은 Python이 담당, OpenRB는 팔·그리퍼 시퀀스만 실행:
+
 ```
-IDLE → target 수신
-  ↓
-APPROACH → mx, my 기반으로 물체 위치로 이동 (ESP32 바퀴)
-  ↓
-PICK → 그리퍼 닫기 (OpenRB 그리퍼)
-  ↓
-CARRY → cls에 따라 목표 드롭존으로 이동 (ESP32 바퀴)
-  ↓
-DROP → 그리퍼 열기 (OpenRB 그리퍼)
-  ↓
-RETURN → 초기 위치 복귀 → IDLE
+[Python] 탐지 → 타겟 선택 → control_wheels()로 ESP32 직접 제어
+                           ↓ (타겟 30mm 이내 도달 시)
+                     OpenRB에 pick 명령 전송
+                           ↓
+[OpenRB] IDLE → PICK (팔 내리기 + 그리퍼 닫기)
+                  ↓
+               DROP (드롭존으로 팔 이동 + 그리퍼 열기)
+                  ↓
+               RETURN (팔 홈 복귀) → IDLE
 ```
 
 ### 로봇팀 TODO
 
 | 파일 | 항목 | 내용 |
 |------|------|------|
-| `mobility.ino` | `MOTOR_SERIAL` | `Serial2` 등 실제 포트로 변경 (현재 `Serial` 임시) |
-| `mobility.ino` | `DROP_ZONES[]` | 대회 환경 실측 후 mm 좌표 입력 |
-| `mobility.ino` | `ARRIVE_THRESHOLD_MM` | 실물 테스트 후 도착 판정 거리 조정 |
+| `arducam_test.py` | `ARRIVE_THRESHOLD_MM` | 실물 테스트 후 도착 판정 거리 조정 (현재 30mm) |
+| `arducam_test.py` | `DROP_ZONES` (추후) | 드롭존 이동이 필요하면 Python에서 cls별 좌표 관리 |
 | `gripper.ino` | `FINGER_OPEN_DEG` / `FINGER_CLOSE_DEG` | 실물 테스트 후 실제 각도 측정·수정 |
 | `arm.ino` | 전체 구현 | 팔 관절 구성 확정 후 역기구학 + 동작 시퀀스 작성 |
 

@@ -10,8 +10,13 @@ MERO_AI_ROBOT 메인 실행 파일
   4. 매 프레임: 탐지 → 트래킹 → 타겟 선택 → 두 보드에 전송
 
 시리얼 연결 구조:
-  Jetson → /dev/ttyUSB0  → ESP32   (UGV02 바퀴 제어, JSON)
-  Jetson → /dev/ttyACM0  → OpenRB  (Dynamixel 팔·그리퍼, JSON)
+  Jetson → /dev/ttyUSB0  → ESP32   (UGV02 바퀴 제어, Waveshare JSON)
+  Jetson → /dev/ttyACM0  → OpenRB  (Dynamixel 팔·그리퍼, 명령 JSON)
+
+바퀴 제어 방식:
+  Python이 mx/my 기반으로 속도 계산 → {"T":1, "L":speed, "R":speed} 직접 전송
+  타겟이 ARRIVE_THRESHOLD_MM 이내 → 정지 + OpenRB에 pick 명령
+  타겟 없음 → 정지 + OpenRB에 idle 명령
 """
 
 import cv2
@@ -91,12 +96,24 @@ def select_target(objects: list) -> dict | None:
 
 # ──────────────────────────────────────────────
 # 시리얼 초기화
-# Jetson → ESP32  (/dev/ttyUSB0): 바퀴 제어
-# Jetson → OpenRB (/dev/ttyACM0): 팔·그리퍼 제어
+# Jetson → ESP32  (/dev/ttyUSB0): 바퀴 제어 (Waveshare JSON)
+# Jetson → OpenRB (/dev/ttyACM0): 팔·그리퍼 제어 (명령 JSON)
+#
+# Jetson에서 실행 전 권한 열기 (USB 연결할 때마다):
+#   sudo chmod 666 /dev/ttyUSB0
+#   sudo chmod 666 /dev/ttyACM0
 # ──────────────────────────────────────────────
-ESP32_PORT  = "/dev/ttyUSB0"   # ESP32 (UGV02 바퀴)
+ESP32_PORT  = "/dev/ttyUSB0"   # ESP32 (UGV02 바퀴) — 라이다 있으면 ttyACM1일 수 있음
 OPENRB_PORT = "/dev/ttyACM0"   # OpenRB (Dynamixel 팔·그리퍼)
 BAUD_RATE   = 115200
+
+# ──────────────────────────────────────────────
+# 바퀴 제어 파라미터
+# ──────────────────────────────────────────────
+ARRIVE_THRESHOLD_MM = 30.0   # 이 거리 이내면 도착으로 판단 → 정지
+MOVE_SPEED          = 0.3    # 기본 이동 속도 (Waveshare: -0.5 ~ 0.5)
+TURN_SPEED          = 0.25   # 방향 정렬 회전 속도
+SLOW_SPEED          = 0.15   # 근접 100mm 이내 감속 속도
 
 def _open_serial(port):
     """시리얼 포트 열기. 실패해도 에러 없이 None 반환."""
@@ -111,42 +128,66 @@ def _open_serial(port):
 ser_esp32  = _open_serial(ESP32_PORT)
 ser_openrb = _open_serial(OPENRB_PORT)
 
-def send_to_esp32(objects: list, target: dict | None):
+def control_wheels(target: dict | None):
     """
-    바퀴 제어용 JSON을 ESP32로 전송.
-    ESP32(mobility.ino)가 target의 mx, my 기반으로 이동.
+    target의 mx/my 기반으로 바퀴 속도 계산 → ESP32에 Waveshare 포맷 전송.
+    형식: {"T":1, "L": 좌속도, "R": 우속도}
 
-    형식:
-      {"objects": [...], "target": {"cls":"d8", "mx":12.3, "my":-5.1, ...}}
-    탐지 없으면: {"objects": [], "target": null}
+    동작:
+      - 타겟 없거나 캘리브레이션 없음(mx=None) → 정지
+      - |mx| > threshold → 좌우 방향 정렬 (회전)
+      - |mx| <= threshold → 전진/후진 (my 기준)
+      - dist < ARRIVE_THRESHOLD_MM → 정지
     """
     if ser_esp32 is None or not ser_esp32.is_open:
         return
-    payload = json.dumps({"objects": objects, "target": target}) + "\n"
-    ser_esp32.write(payload.encode())
 
-def send_to_openrb(target: dict | None):
+    L, R = 0.0, 0.0
+
+    if target is not None and target.get("mx") is not None:
+        mx   = target["mx"]
+        my   = target["my"]
+        dist = (mx ** 2 + my ** 2) ** 0.5
+
+        if dist >= ARRIVE_THRESHOLD_MM:
+            if abs(mx) > ARRIVE_THRESHOLD_MM:
+                # 좌우 편차 큰 경우 먼저 방향 정렬
+                if mx > 0:
+                    L, R =  TURN_SPEED, -TURN_SPEED   # 우회전
+                else:
+                    L, R = -TURN_SPEED,  TURN_SPEED   # 좌회전
+            else:
+                speed = SLOW_SPEED if dist < 100.0 else MOVE_SPEED
+                if my > 0:
+                    L, R =  speed,  speed   # 전진
+                else:
+                    L, R = -speed, -speed   # 후진
+
+    cmd = {"T": 1, "L": round(L, 2), "R": round(R, 2)}
+    ser_esp32.write((json.dumps(cmd) + "\n").encode())
+
+def send_to_openrb(target: dict | None, at_target: bool = False):
     """
-    팔·그리퍼 제어 명령을 OpenRB로 전송.
-    OpenRB(arm.ino + gripper.ino)가 팔 동작 실행.
+    팔·그리퍼 명령을 OpenRB로 전송.
+
+    at_target=True (타겟 도달) → pick 명령
+    at_target=False 또는 타겟 없음 → idle 명령
 
     형식:
-      {"cmd": "pick",  "cls": "d8", "mx": 12.3, "my": -5.1}  ← 물체 집기
-      {"cmd": "drop",  "cls": "d8"}                            ← 드롭존에 내려놓기
-      {"cmd": "home"}                                           ← 홈 포지션
-      {"cmd": "idle"}                                           ← 대기
+      {"cmd": "pick", "cls": "d8", "mx": 12.3, "my": -5.1}
+      {"cmd": "idle"}
     """
     if ser_openrb is None or not ser_openrb.is_open:
         return
-    if target is None:
-        payload = json.dumps({"cmd": "idle"}) + "\n"
-    else:
+    if target is not None and at_target:
         payload = json.dumps({
             "cmd": "pick",
             "cls": target["cls"],
             "mx":  target.get("mx", 0),
             "my":  target.get("my", 0),
         }) + "\n"
+    else:
+        payload = json.dumps({"cmd": "idle"}) + "\n"
     ser_openrb.write(payload.encode())
 
 # ──────────────────────────────────────────────
@@ -230,13 +271,19 @@ try:
 
         # 이번 프레임에서 집을 물체 1개 선택
         target = select_target(detected)
-        if target:
-            print(f"[타겟]   ID={target['id']} | {target['cls']} → 집게 이동")
 
-        # ESP32 (바퀴): 전체 탐지 결과 + 타겟 전송
-        send_to_esp32(detected, target)
-        # OpenRB (팔·그리퍼): 타겟 기반 집기 명령 전송
-        send_to_openrb(target)
+        # 타겟 도달 여부 판단 (캘리브레이션 있을 때만 가능)
+        at_target = False
+        if target and target.get("mx") is not None:
+            dist = (target["mx"] ** 2 + target["my"] ** 2) ** 0.5
+            at_target = dist < ARRIVE_THRESHOLD_MM
+            status = "도달" if at_target else f"이동중 ({dist:.0f}mm)"
+            print(f"[타겟]   ID={target['id']} | {target['cls']} | {status}")
+
+        # ESP32 (바퀴): mx/my 기반 속도 계산 → Waveshare JSON 전송
+        control_wheels(target)
+        # OpenRB (팔·그리퍼): 도달했을 때만 pick, 아니면 idle
+        send_to_openrb(target, at_target)
 
         # ── 시각화 ──────────────────────────────
         # YOLO 기본 오버레이 (바운딩박스 + 클래스명 + ID + 신뢰도)
