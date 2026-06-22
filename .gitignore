@@ -1,5 +1,4 @@
-# 모델 가중치 (용량 큼)
-model/best.pt
+# TensorRT 변환 파일 (Jetson 전용, 용량 큼)
 model/best.engine
 
 # 캘리브레이션은 포함 (작은 JSON)
