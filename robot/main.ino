@@ -130,9 +130,11 @@ void updateStateMachine() {
     case RETURN:
       // 팔 홈 포지션 복귀
       armHome();
-      Serial.println("[RETURN→IDLE]");
       currentTarget.valid = false;
       currentState = IDLE;
+      Serial.println("[RETURN→IDLE]");
+      // Jetson에 완료 신호 전송 → Python WAITING 상태 즉시 해제
+      JETSON_SERIAL.println("{\"status\":\"done\"}");
       break;
   }
 }

@@ -22,7 +22,10 @@ MERO_AI_ROBOT 메인 실행 파일
 import cv2
 import os
 import json
+import time
+import threading
 import serial
+from enum import Enum
 from ultralytics import YOLO
 
 # ──────────────────────────────────────────────
@@ -112,8 +115,21 @@ BAUD_RATE   = 115200
 # ──────────────────────────────────────────────
 ARRIVE_THRESHOLD_MM = 30.0   # 이 거리 이내면 도착으로 판단 → 정지
 MOVE_SPEED          = 0.3    # 기본 이동 속도 (Waveshare: -0.5 ~ 0.5)
-TURN_SPEED          = 0.25   # 방향 정렬 회전 속도
 SLOW_SPEED          = 0.15   # 근접 100mm 이내 감속 속도
+MAX_MX              = 200.0  # 카메라 좌우 반폭 추정값(mm) — 캘리브레이션 후 조정
+MAX_MY              = 150.0  # 카메라 상하 반폭 추정값(mm) — 캘리브레이션 후 조정
+
+# ──────────────────────────────────────────────
+# 로봇 상태 머신
+# ──────────────────────────────────────────────
+class RobotState(Enum):
+    SEARCHING = "탐색중"   # 타겟 탐지 + 이동
+    WAITING   = "팔동작대기"  # pick 명령 전송 후 OpenRB 시퀀스 완료 대기
+
+PICK_WAIT_SECS = 8.0   # OpenRB pick→drop→return 예상 소요 시간 (실물 테스트 후 조정)
+
+robot_state  = RobotState.SEARCHING
+pick_sent_at = 0.0
 
 def _open_serial(port):
     """시리얼 포트 열기. 실패해도 에러 없이 None 반환."""
@@ -128,15 +144,69 @@ def _open_serial(port):
 ser_esp32  = _open_serial(ESP32_PORT)
 ser_openrb = _open_serial(OPENRB_PORT)
 
+# ──────────────────────────────────────────────
+# ESP32 수신 스레드 (배터리 전압 모니터링)
+# ESP32는 주기적으로 {"T":1001, ..., "v":1137} 전송
+# v = 배터리 전압 × 100 (1137 = 11.37V)
+# ──────────────────────────────────────────────
+battery_v = None  # 현재 배터리 전압 (V), 수신 전까지 None
+
+def _read_esp32_loop():
+    global battery_v
+    while True:
+        if ser_esp32 is None or not ser_esp32.is_open:
+            time.sleep(0.5)
+            continue
+        try:
+            if ser_esp32.in_waiting > 0:
+                raw  = ser_esp32.readline()
+                data = json.loads(raw.decode("utf-8").strip())
+                if data.get("T") == 1001:
+                    v_raw = data.get("v") or data.get("V")  # 소문자·대문자 모두 대응
+                    if v_raw is not None:
+                        battery_v = v_raw / 100.0
+        except Exception:
+            pass
+        time.sleep(0.01)
+
+threading.Thread(target=_read_esp32_loop, daemon=True).start()
+
+# ──────────────────────────────────────────────
+# OpenRB 수신 스레드 (팔 시퀀스 완료 신호)
+# OpenRB가 RETURN→IDLE 시 {"status":"done"} 전송
+# → Python WAITING 상태 즉시 해제 (타이머 대기 불필요)
+# ──────────────────────────────────────────────
+openrb_done = False  # OpenRB 완료 신호 수신 여부
+
+def _read_openrb_loop():
+    global openrb_done
+    while True:
+        if ser_openrb is None or not ser_openrb.is_open:
+            time.sleep(0.5)
+            continue
+        try:
+            if ser_openrb.in_waiting > 0:
+                raw  = ser_openrb.readline()
+                data = json.loads(raw.decode("utf-8").strip())
+                if data.get("status") == "done":
+                    openrb_done = True
+                    print("[OpenRB] 팔 시퀀스 완료 신호 수신")
+        except Exception:
+            pass
+        time.sleep(0.01)
+
+threading.Thread(target=_read_openrb_loop, daemon=True).start()
+
 def control_wheels(target: dict | None):
     """
     target의 mx/my 기반으로 바퀴 속도 계산 → ESP32에 Waveshare 포맷 전송.
     형식: {"T":1, "L": 좌속도, "R": 우속도}
 
-    동작:
-      - 타겟 없거나 캘리브레이션 없음(mx=None) → 정지
-      - |mx| > threshold → 좌우 방향 정렬 (회전)
-      - |mx| <= threshold → 전진/후진 (my 기준)
+    차동 조향: mx/my 비율로 L/R 속도 차이를 계산해 전진하면서 동시에 방향 조정.
+      - turn = mx / MAX_MX  (-1=좌, +1=우)
+      - fwd  = my / MAX_MY  (-1=후진, +1=전진)
+      - L = speed * (fwd + turn),  R = speed * (fwd - turn)
+      - 타겟 없거나 mx=None → 정지
       - dist < ARRIVE_THRESHOLD_MM → 정지
     """
     if ser_esp32 is None or not ser_esp32.is_open:
@@ -150,18 +220,17 @@ def control_wheels(target: dict | None):
         dist = (mx ** 2 + my ** 2) ** 0.5
 
         if dist >= ARRIVE_THRESHOLD_MM:
-            if abs(mx) > ARRIVE_THRESHOLD_MM:
-                # 좌우 편차 큰 경우 먼저 방향 정렬
-                if mx > 0:
-                    L, R =  TURN_SPEED, -TURN_SPEED   # 우회전
-                else:
-                    L, R = -TURN_SPEED,  TURN_SPEED   # 좌회전
-            else:
-                speed = SLOW_SPEED if dist < 100.0 else MOVE_SPEED
-                if my > 0:
-                    L, R =  speed,  speed   # 전진
-                else:
-                    L, R = -speed, -speed   # 후진
+            speed = SLOW_SPEED if dist < 100.0 else MOVE_SPEED
+
+            turn = max(-1.0, min(1.0, mx / MAX_MX))  # 좌우 방향 비율
+            fwd  = max(-1.0, min(1.0, my / MAX_MY))  # 전후 방향 비율
+
+            L = speed * (fwd + turn)
+            R = speed * (fwd - turn)
+
+            # Waveshare 속도 범위 제한
+            L = max(-0.5, min(0.5, L))
+            R = max(-0.5, min(0.5, R))
 
     cmd = {"T": 1, "L": round(L, 2), "R": round(R, 2)}
     ser_esp32.write((json.dumps(cmd) + "\n").encode())
@@ -277,13 +346,42 @@ try:
         if target and target.get("mx") is not None:
             dist = (target["mx"] ** 2 + target["my"] ** 2) ** 0.5
             at_target = dist < ARRIVE_THRESHOLD_MM
-            status = "도달" if at_target else f"이동중 ({dist:.0f}mm)"
-            print(f"[타겟]   ID={target['id']} | {target['cls']} | {status}")
 
-        # ESP32 (바퀴): mx/my 기반 속도 계산 → Waveshare JSON 전송
-        control_wheels(target)
-        # OpenRB (팔·그리퍼): 도달했을 때만 pick, 아니면 idle
-        send_to_openrb(target, at_target)
+        # ── 상태 머신 ────────────────────────────
+        global robot_state, pick_sent_at, openrb_done
+
+        if robot_state == RobotState.WAITING:
+            elapsed = time.time() - pick_sent_at
+            # 완료 신호 수신 시 즉시 전환, 없으면 타이머로 fallback
+            if openrb_done:
+                robot_state  = RobotState.SEARCHING
+                openrb_done  = False
+                print(f"[상태] WAITING → SEARCHING (완료 신호 수신, {elapsed:.1f}s)")
+            elif elapsed >= PICK_WAIT_SECS:
+                robot_state = RobotState.SEARCHING
+                print(f"[상태] WAITING → SEARCHING (타이머 fallback, {elapsed:.1f}s)")
+
+        if robot_state == RobotState.SEARCHING:
+            if target and target.get("mx") is not None:
+                status = "도달" if at_target else f"이동중 ({dist:.0f}mm)"
+                print(f"[타겟]   ID={target['id']} | {target['cls']} | {status}")
+
+            control_wheels(target)   # 바퀴: 타겟 추적
+
+            if at_target:
+                send_to_openrb(target, at_target=True)   # pick 명령 1회 전송
+                robot_state  = RobotState.WAITING
+                pick_sent_at = time.time()
+                openrb_done  = False   # 이전 완료 신호 초기화
+                print(f"[상태] SEARCHING → WAITING (pick 전송: {target['cls']})")
+            else:
+                send_to_openrb(None)   # idle
+
+        else:  # WAITING
+            elapsed = time.time() - pick_sent_at
+            print(f"[상태] 팔 동작 대기중... ({elapsed:.1f}s / {PICK_WAIT_SECS}s)")
+            control_wheels(None)   # 바퀴 정지
+            send_to_openrb(None)   # idle
 
         # ── 시각화 ──────────────────────────────
         # YOLO 기본 오버레이 (바운딩박스 + 클래스명 + ID + 신뢰도)
@@ -303,6 +401,53 @@ try:
                     cv2.putText(annotated_frame, "TARGET",
                                 (int(x1), int(y1) - 12),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
+        # ── 상태 오버레이 ────────────────────────
+        h, w = annotated_frame.shape[:2]
+
+        # 상태에 따라 색상·텍스트 결정
+        if robot_state == RobotState.SEARCHING:
+            state_color = (0, 255, 0)      # 초록
+            state_text  = f"STATE: SEARCHING"
+        else:
+            elapsed     = time.time() - pick_sent_at
+            remain      = max(0.0, PICK_WAIT_SECS - elapsed)
+            state_color = (0, 165, 255)    # 주황
+            state_text  = f"STATE: WAITING  {elapsed:.1f}s / {PICK_WAIT_SECS:.0f}s"
+
+        # 반투명 검정 배경 (텍스트 가독성)
+        overlay = annotated_frame.copy()
+        cv2.rectangle(overlay, (0, h - 80), (w, h), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.5, annotated_frame, 0.5, 0, annotated_frame)
+
+        # 상태 텍스트
+        cv2.putText(annotated_frame, state_text,
+                    (10, h - 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, state_color, 2)
+
+        # 타겟 정보 (있을 때만)
+        if target:
+            if target.get("mx") is not None:
+                dist_now = (target["mx"]**2 + target["my"]**2)**0.5
+                tgt_text = f"TARGET: {target['cls']}  dist={dist_now:.0f}mm  conf={target['conf']:.2f}"
+            else:
+                tgt_text = f"TARGET: {target['cls']}  conf={target['conf']:.2f}"
+            cv2.putText(annotated_frame, tgt_text,
+                        (10, h - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+        # 배터리 전압 (우측 상단)
+        if battery_v is not None:
+            if battery_v >= 11.5:
+                batt_color = (0, 255, 0)    # 초록 (양호)
+            elif battery_v >= 10.0:
+                batt_color = (0, 165, 255)  # 주황 (주의)
+            else:
+                batt_color = (0, 0, 255)    # 빨강 (위험 — 충전 필요)
+            batt_text = f"BAT: {battery_v:.2f}V"
+        else:
+            batt_color = (128, 128, 128)    # 회색 (수신 대기)
+            batt_text  = "BAT: --"
+        cv2.putText(annotated_frame, batt_text,
+                    (w - 150, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, batt_color, 2)
 
         cv2.imshow(WINDOW_NAME, annotated_frame)
 
