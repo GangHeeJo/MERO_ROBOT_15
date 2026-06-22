@@ -1,7 +1,7 @@
 """
 Jetson TensorRT 변환 스크립트
 ─────────────────────────────
-실행: python src/export_engine.py  ← 반드시 Jetson에서 실행
+실행: python src/trt_export.py  ← 반드시 Jetson에서 실행
 
 목적:
   학습된 best.pt (PyTorch 가중치)를 Jetson 전용 추론 엔진인

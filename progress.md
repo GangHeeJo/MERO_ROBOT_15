@@ -31,8 +31,7 @@
 │   Jetson     │                                    └─────────────┘
 │  Orin Nano   │
 │  (vision/    │     USB-C (/dev/ttyACM0)           ┌─────────────┐
-│  arducam_    │ ──────────── JSON ───────────────▶ │  OpenRB-150 │ → XL430 × 6 (팔)
-│  test.py)    │                                    │             │ → XL330 × 2 (그리퍼)
+│  main.py)    │ ──────────── JSON ───────────────▶ │  OpenRB-150 │ → XL430 × 6 (팔)                                    │             │ → XL330 × 2 (그리퍼)
 └──────────────┘                                    └─────────────┘
       ▲
       │ Arducam USB
@@ -78,7 +77,7 @@ ls /dev/ttyACM*
 ```bash
 # Jetson 최초 세팅 시 (순서대로)
 python vision/src/calibration.py    # 1. 카메라 캘리브레이션 (1회)
-python vision/src/export_engine.py  # 2. TensorRT 변환 (1회)
+python vision/src/trt_export.py  # 2. TensorRT 변환 (1회)
 python vision/src/main.py   # 3. 메인 실행
 
 # 이후 실행은 항상
@@ -95,10 +94,10 @@ MERO_AI_ROBOT/
 │   ├── src/
 │   │   ├── main.py             # 메인 실행 (트래킹 + 통신)
 │   │   ├── calibration.py              # 픽셀→mm 캘리브레이션 (1회)
-│   │   ├── export_engine.py            # TensorRT 변환 (Jetson 1회)
-│   │   └── export_image_from_video.py  # 동영상 → 프레임 추출
+│   │   ├── trt_export.py            # TensorRT 변환 (Jetson 1회)
+│   │   └── video_to_frames.py  # 동영상 → 프레임 추출
 │   ├── train/
-│   │   └── MERO_train.ipynb            # Colab 학습 노트북
+│   │   └── train.ipynb            # Colab 학습 노트북
 │   └── model/
 │       ├── best.pt                     # 학습 가중치 (현재 d8만)
 │       ├── best.engine                 # TensorRT 파일 (Jetson 변환 후)
@@ -118,9 +117,9 @@ MERO_AI_ROBOT/
 |------|------|
 | `vision/src/main.py` | 메인 실행 파일. 탐지·트래킹·타겟선정·ESP32/OpenRB 전송 전부 담당 |
 | `vision/src/calibration.py` | 픽셀 좌표 → 실제 mm 변환 비율 측정. `vision/model/calibration.json` 생성 |
-| `vision/src/export_engine.py` | `best.pt` → `best.engine` TensorRT 변환 (Jetson에서만 실행) |
-| `vision/src/export_image_from_video.py` | 동영상에서 프레임 추출해서 데이터셋 생성 |
-| `vision/train/MERO_train.ipynb` | Google Colab 학습 노트북 |
+| `vision/src/trt_export.py` | `best.pt` → `best.engine` TensorRT 변환 (Jetson에서만 실행) |
+| `vision/src/video_to_frames.py` | 동영상에서 프레임 추출해서 데이터셋 생성 |
+| `vision/train/train.ipynb` | Google Colab 학습 노트북 |
 | `vision/model/best.pt` | 학습된 모델 가중치 (현재 d8만 학습된 임시본) |
 
 ---
@@ -257,11 +256,11 @@ OpenRB 내장 Dynamixel 포트 (`Serial1`) 사용 — 방향핀 별도 불필요
 ```
 1. Roboflow 라벨링 (바운딩박스)
       ↓
-2. vision/train/MERO_train.ipynb (Google Colab)
+2. vision/train/train.ipynb (Google Colab)
       ↓
 3. vision/model/best.pt 저장
       ↓
-4. python vision/src/export_engine.py (Jetson)
+4. python vision/src/trt_export.py (Jetson)
       ↓
 5. vision/model/best.engine → main.py에서 자동 사용
 ```
@@ -278,8 +277,8 @@ Colab 노트북 실행 전 필요한 것:
 - [x] 타겟 선택 로직 (신뢰도 최고 물체 1개 자동 선정)
 - [x] 화면 시각화 (바운딩박스 + TARGET 노란 강조)
 - [x] 카메라 캘리브레이션 코드 (`vision/src/calibration.py`)
-- [x] TensorRT 변환 스크립트 (`vision/src/export_engine.py`)
-- [x] Colab 학습 노트북 (`vision/train/MERO_train.ipynb`)
+- [x] TensorRT 변환 스크립트 (`vision/src/trt_export.py`)
+- [x] Colab 학습 노트북 (`vision/train/train.ipynb`)
 - [x] d6 이미지 파일명 정리 (d6_1 ~ d6_85)
 - [x] pyserial 설치 및 통신 코드 작성
 - [x] **듀얼 시리얼 통신 구현** (`vision/src/main.py`)

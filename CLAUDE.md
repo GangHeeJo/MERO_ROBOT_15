@@ -26,10 +26,10 @@ MERO_AI_ROBOT/
 │   ├── src/
 │   │   ├── main.py        # 메인 실행 (트래킹 + ESP32/OpenRB 통신)
 │   │   ├── calibration.py         # 카메라 캘리브레이션 (픽셀→mm, 1회 실행)
-│   │   ├── export_engine.py       # TensorRT 변환 스크립트 (Jetson 전용)
-│   │   └── export_image_from_video.py
+│   │   ├── trt_export.py       # TensorRT 변환 스크립트 (Jetson 전용)
+│   │   └── video_to_frames.py
 │   ├── train/
-│   │   └── MERO_train.ipynb       # Colab 학습 노트북
+│   │   └── train.ipynb       # Colab 학습 노트북
 │   ├── model/
 │   │   ├── best.pt                # 학습된 가중치
 │   │   ├── best.engine            # TensorRT 변환 파일 (Jetson 변환 후 생성)
@@ -54,14 +54,14 @@ sudo chmod 666 /dev/ttyACM0   # OpenRB (팔·그리퍼)
 
 # Jetson 셋업 시 순서
 python vision/src/calibration.py    # 1. 캘리브레이션 (1회)
-python vision/src/export_engine.py  # 2. TensorRT 변환 (1회, Jetson에서만)
+python vision/src/trt_export.py  # 2. TensorRT 변환 (1회, Jetson에서만)
 python vision/src/main.py   # 3. 메인 실행
 ```
 
 ## 학습 파이프라인
 
 ```
-Roboflow 라벨링 → MERO_train.ipynb(Colab) → best.pt → export_engine.py → best.engine
+Roboflow 라벨링 → train.ipynb(Colab) → best.pt → trt_export.py → best.engine
 ```
 
 ## 통신 구조
