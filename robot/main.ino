@@ -151,7 +151,8 @@ void updateStateMachine() {
 void setup() {
   JETSON_SERIAL.begin(115200);
   mobilitySetup();   // mobility.ino 초기화
-  gripperSetup();    // gripper.ino 초기화
+  armSetup();        // arm.ino 초기화 (팔 관절 XL430 × 6)
+  gripperSetup();    // gripper.ino 초기화 (집게 손가락 XL330 × 2)
   Serial.println("MERO 로봇 제어 시작. Jetson 대기 중...");
 }
 
