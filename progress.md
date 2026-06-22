@@ -1,6 +1,6 @@
 # MERO AI ROBOT — Progress
 
-> 최종 업데이트: 2026-06-21  
+> 최종 업데이트: 2026-06-22  
 > 비전 담당: 조강희
 
 ---
@@ -8,7 +8,7 @@
 ## 프로젝트 개요
 
 카메라로 물체를 실시간 탐지·분류·트래킹 후 집게로 집어서 목표 지점으로 이동하는 pick-and-place 대회.  
-이 리포는 **비전 파트**만 포함. 로봇 제어 코드는 로봇팀 별도 관리.
+이 리포는 **비전팀 + 로봇팀 코드** 모두 포함.
 
 **하드웨어**
 - 보드: NVIDIA Jetson Orin Nano
@@ -47,8 +47,8 @@ python vision/src/arducam_test.py
 
 ```
 MERO_AI_ROBOT/
-├── vision/       # 비전팀
-├── robot/        # 로봇팀 ESP32 코드
+├── vision/       # 비전팀 (Jetson)
+├── robot/        # 로봇팀 (ESP32)
 └── progress.md
 ```
 
@@ -62,6 +62,42 @@ MERO_AI_ROBOT/
 | `vision/src/export_image_from_video.py` | 동영상에서 프레임 추출해서 데이터셋 생성 |
 | `vision/train/MERO_train.ipynb` | Google Colab 학습 노트북 |
 | `vision/model/best.pt` | 학습된 모델 가중치 (현재 d8만 학습된 임시본) |
+
+## 파일별 역할 (robot/)
+
+| 파일 | 역할 |
+|------|------|
+| `robot/main.ino` | ESP32 메인 제어 코드. JSON 수신 → 상태 머신 → 모터·그리퍼 제어 |
+
+### 상태 머신 흐름
+
+```
+IDLE → target 수신
+  ↓
+APPROACH → mx, my 기반으로 물체 위치로 이동
+  ↓
+PICK → 그리퍼 닫기
+  ↓
+CARRY → cls에 따라 목표 드롭존으로 이동
+  ↓
+DROP → 그리퍼 열기
+  ↓
+RETURN → 초기 위치 복귀 → IDLE
+```
+
+### 로봇팀 TODO (main.ino 내 TODO 주석 위치)
+
+| 항목 | 내용 |
+|------|------|
+| 모터 시리얼 포트 | `setMotor()` 안에서 `Serial2.print(cmd)` 로 교체 |
+| 그리퍼 핀 | `GRIPPER_PIN` 실제 핀 번호로 변경 |
+| 그리퍼 각도 | `GRIPPER_CLOSE` 실제 서보 각도 측정 후 수정 |
+| 드롭존 좌표 | `DROP_ZONES[]` 대회 환경 측정 후 mm 좌표 입력 |
+
+### 필요 라이브러리
+
+Arduino IDE → 라이브러리 매니저에서 설치:
+- **ArduinoJson** (Benoit Blanchon)
 
 ---
 
@@ -148,6 +184,11 @@ Colab 노트북 실행 전 필요한 것:
 - [x] Colab 학습 노트북 (`train/MERO_train.ipynb`)
 - [x] d6 이미지 파일명 정리 (d6_1 ~ d6_85)
 - [x] pyserial 설치 및 통신 테스트
+- [x] ESP32 로봇 제어 코드 작성 (`robot/main.ino`)
+  - JSON 수신 및 파싱
+  - 상태 머신 (IDLE → APPROACH → PICK → CARRY → DROP → RETURN)
+  - mx/my 기반 이동 제어
+  - 클래스별 드롭존 지정
 
 ---
 
@@ -164,6 +205,8 @@ Colab 노트북 실행 전 필요한 것:
 | 🟢 낮음 | 캘리브레이션 실행 (1회) | 코드 완료 |
 | 🟢 낮음 | ESP32 실물 연동 테스트 | |
 | 🟢 낮음 | 멀티스레딩 (비전 / 제어 분리) | |
+| 🟡 중간 | robot/main.ino TODO 항목 완성 | 핀번호·드롭존 좌표·그리퍼 각도 |
+| 🟡 중간 | 모빌리티·그리퍼 실물 테스트 | Jetson 도착 후 |
 
 ---
 
@@ -171,7 +214,7 @@ Colab 노트북 실행 전 필요한 것:
 
 이어서 작업하는 사람이 확인할 것:
 
-1. `model/best.pt` 파일 별도 수령 (git에 미포함)
+1. `vision/model/best.pt` GitHub에 포함되어 있음 (현재 d8만 학습된 임시본)
 2. Roboflow 프로젝트 접근 권한 확인
 3. Colab 노트북 실행 전 Roboflow API 키 입력
 4. Jetson 도착 시 `ls /dev/tty*` 로 ESP32 포트 확인 후 `SERIAL_PORT` 수정
