@@ -89,22 +89,32 @@ python vision/src/main.py
 
 ```
 MERO_AI_ROBOT/
-├── vision/       # 비전팀 (Jetson Python)
+├── vision/                        # 비전팀 (Jetson Python)
 │   ├── src/
-│   │   ├── main.py             # 메인 실행 (트래킹 + 통신)
-│   │   ├── calibration.py              # 픽셀→mm 캘리브레이션 (1회)
-│   │   ├── trt_export.py            # TensorRT 변환 (Jetson 1회)
-│   │   └── video_to_frames.py  # 동영상 → 프레임 추출
+│   │   ├── main.py                # 메인 실행 (트래킹 + 통신)
+│   │   ├── calibration.py         # 픽셀→mm 캘리브레이션 (1회)
+│   │   ├── trt_export.py          # TensorRT 변환 (Jetson 1회)
+│   │   └── video_to_frames.py     # 동영상 → 프레임 추출
 │   ├── train/
 │   │   └── train.ipynb            # Colab 학습 노트북
 │   └── model/
-│       ├── best.pt                     # 학습 가중치 (현재 d8만)
-│       ├── best.engine                 # TensorRT 파일 (Jetson 변환 후)
-│       └── calibration.json            # 캘리브레이션 결과 (1회 실행 후)
-├── robot/        # 로봇팀 (OpenRB Arduino — 팔·그리퍼만)
-│   ├── main.ino      # JSON 수신 + 상태 머신
-│   ├── arm.ino       # XL430 × 6 팔 관절 (구성 확정 후)
-│   └── gripper.ino   # XL330 × 2 그리퍼 손가락
+│       ├── best.pt                # 학습 가중치 (d6/d8/d12/d20 전체)
+│       ├── best.engine            # TensorRT 파일 (Jetson 변환 후)
+│       └── calibration.json       # 캘리브레이션 결과 (1회 실행 후)
+├── robot/                         # 로봇팀 (OpenRB Arduino — 팔·그리퍼만)
+│   ├── main.ino                   # JSON 수신 + 상태 머신
+│   ├── arm.ino                    # XL430 × 6 팔 관절 (구성 확정 후)
+│   └── gripper.ino                # XL330 × 2 그리퍼 손가락
+├── ros2/                          # ROS2 패키지 (Jetson robot_ws/src/에 배포)
+│   └── mobility_pkg/
+│       ├── mobility_pkg/
+│       │   ├── camera_node.py         # 카메라 → /image_raw 발행
+│       │   ├── yolo_vision_node.py    # YOLO 추론 → /detected_objects 발행
+│       │   ├── main_decision_node.py  # 면적 기반 이동 판단 → /cmd_vel
+│       │   ├── ugv_controller_node.py # /cmd_vel → ESP32 시리얼
+│       │   └── gripper_node.py        # /gripper_cmd → OpenRB 시리얼 (미구현)
+│       └── launch/
+│           └── robot_bringup.launch.py
 └── progress.md
 ```
 
@@ -271,6 +281,22 @@ Colab 노트북 실행 전 필요한 것:
 
 ---
 
+## 2026-06-25 작업 내역
+
+- **ROS2 mobility_pkg 5개 노드 전체 실행 확인**
+  - camera, yolo_vision, ugv_controller, main_decision, gripper 노드 launch 성공
+  - yolo_vision_node에 best.pt 경로(`~/MERO_ROBOT_15/vision/model/best.pt`) 적용
+- **ROS2 방식 채택 결정** — `vision/src/main.py` 단독 방식 대신 ROS2 노드 구조로 진행
+- **main.py FPS 카운터 추가** — 1초마다 `[FPS] XX.X` 터미널 출력 + 화면 오버레이
+- **전원 구성 결정**
+  - 젯슨: 보조배터리(USB-C PD, 15V) — 5.5×2.1mm 배럴잭 확인 필요
+  - XL430 팔: UGV02 내장 12V 배터리 → OpenRB
+  - XL330 그리퍼: 5V 별도 공급 (벅컨버터 또는 5V USB)
+- **포트 정리** — ESP32: `/dev/ttyACM0`, OpenRB: `/dev/ttyACM1` (CH343 → ACM 확인)
+- **mobility_pkg 리포 추가** — `ros2/mobility_pkg/` 경로에 보관
+
+---
+
 ## 완료된 작업 ✅
 
 - [x] YOLOv8 실시간 트래킹 구현 (`model.track(persist=True)`)
@@ -309,8 +335,13 @@ Colab 노트북 실행 전 필요한 것:
 
 ## 남은 작업 ⬜
 
+### ROS2 (현재 채택된 방식)
+
 | 우선순위 | 작업 | 비고 |
 |----------|------|------|
+| 🔴 높음 | `gripper_node.py` 구현 | `/gripper_cmd` 구독 → OpenRB 시리얼 전송 |
+| 🔴 높음 | `main_decision_node.py` 수정 | 목표 도달 시 `/gripper_cmd` 발행 추가 |
+| 🔴 높음 | Jetson robot_ws 업데이트 + `colcon build` | 위 수정 후 배포 |
 | 🔴 높음 | OpenRB + Dynamixel 연결 및 동작 테스트 | 전원 구성 확정 후 |
 | 🔴 높음 | `arm.ino` 구현 | 팔 관절 구성 확정 후 역기구학 작성 |
 | 🔴 높음 | 전원 배선 완성 | 보조배터리(젯슨) + UGV배터리(팔) + 5V(그리퍼) |
@@ -319,10 +350,10 @@ Colab 노트북 실행 전 필요한 것:
 | 🟡 중간 | 캘리브레이션 실행 | 카메라 높이·위치 확정 후 |
 | 🟡 중간 | TensorRT 변환 (`best.pt` → `best.engine`) | Jetson에서 실행 |
 | 🟡 중간 | `gripper.ino` 각도 실측 | `FINGER_OPEN_DEG` / `FINGER_CLOSE_DEG` 수정 |
-| 🟡 중간 | 드롭존 좌표 실측 | main.py 또는 robot 코드 수정 |
+| 🟡 중간 | 드롭존 좌표 실측 | robot 코드 수정 |
 | 🟡 중간 | end-to-end 통합 테스트 | 탐지 → 이동 → pick → drop |
 | 🟢 낮음 | 과일 클래스 Roboflow 라벨링 + 재학습 | 데이터 촬영 후 |
-| 🟢 낮음 | FPS 최적화 | TensorRT 변환으로 해결 예상 |
+| 🟢 낮음 | FPS 확인 | TensorRT 변환으로 향상 예상 |
 
 ---
 
