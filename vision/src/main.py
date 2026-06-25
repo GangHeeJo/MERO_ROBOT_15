@@ -348,8 +348,6 @@ try:
             at_target = dist < ARRIVE_THRESHOLD_MM
 
         # ── 상태 머신 ────────────────────────────
-        global robot_state, pick_sent_at, openrb_done
-
         if robot_state == RobotState.WAITING:
             elapsed = time.time() - pick_sent_at
             # 완료 신호 수신 시 즉시 전환, 없으면 타이머로 fallback
