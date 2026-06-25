@@ -283,6 +283,11 @@ Colab 노트북 실행 전 필요한 것:
 
 ## 2026-06-25 작업 내역
 
+- **Jetson 실기기 연결 및 구동 확인**
+  - 핫스팟(172.20.10.5)으로 SSH 접속 성공
+  - Arducam USB 카메라 동작 확인 (`/dev/video0`)
+  - UGV02 바퀴 실제 구동 확인 (ESP32 `/dev/ttyACM0`, CH343 드라이버)
+  - YOLO best.pt 모델 로드 및 실시간 탐지 동작 확인
 - **ROS2 mobility_pkg 5개 노드 전체 실행 확인**
   - camera, yolo_vision, ugv_controller, main_decision, gripper 노드 launch 성공
   - yolo_vision_node에 best.pt 경로(`~/MERO_ROBOT_15/vision/model/best.pt`) 적용
