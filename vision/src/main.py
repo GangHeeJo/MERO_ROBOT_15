@@ -106,8 +106,8 @@ def select_target(objects: list) -> dict | None:
 #   sudo chmod 666 /dev/ttyUSB0
 #   sudo chmod 666 /dev/ttyACM0
 # ──────────────────────────────────────────────
-ESP32_PORT  = "/dev/ttyUSB0"   # ESP32 (UGV02 바퀴) — 라이다 있으면 ttyACM1일 수 있음
-OPENRB_PORT = "/dev/ttyACM0"   # OpenRB (Dynamixel 팔·그리퍼)
+ESP32_PORT  = "/dev/ttyACM0"   # ESP32 (UGV02 바퀴) — Jetson에서 CH343 드라이버로 ACM에 잡힘
+OPENRB_PORT = "/dev/ttyACM1"   # OpenRB (Dynamixel 팔·그리퍼)
 BAUD_RATE   = 115200
 
 # ──────────────────────────────────────────────
