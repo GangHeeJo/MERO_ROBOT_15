@@ -129,7 +129,7 @@ MERO_AI_ROBOT/
 | `vision/src/trt_export.py` | `best.pt` → `best.engine` TensorRT 변환 (Jetson에서만 실행) |
 | `vision/src/video_to_frames.py` | 동영상에서 프레임 추출해서 데이터셋 생성 |
 | `vision/train/train.ipynb` | Google Colab 학습 노트북 |
-| `vision/model/best.pt` | 학습된 모델 가중치 (현재 d8만 학습된 임시본) |
+| `vision/model/best.pt` | 학습된 모델 가중치 (d6/d8/d12/d20 전체 학습 완료, YOLOv8s) |
 
 ---
 
@@ -384,7 +384,7 @@ Colab 노트북 실행 전 필요한 것:
 
 이어서 작업하는 사람이 확인할 것:
 
-1. `vision/model/best.pt` GitHub에 포함 (현재 d8만 학습된 임시본)
+1. `vision/model/best.pt` GitHub에 포함 ✅ (d6/d8/d12/d20 전체 학습 완료)
 2. Roboflow 프로젝트 접근 권한 확인
 3. Colab 노트북 실행 전 Roboflow API 키 입력
 4. Jetson 연결 포트 확인:
