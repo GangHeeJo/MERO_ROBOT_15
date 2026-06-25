@@ -285,6 +285,10 @@ print("🚀 실시간 트래킹 시작! 종료하려면 Ctrl+C를 누르세요."
 if HEADLESS:
     print("ℹ️ 헤드리스 모드 — 화면 출력 없이 터미널 로그만 출력합니다.")
 
+fps_counter  = 0
+fps_display  = 0.0
+fps_timer    = time.time()
+
 # ──────────────────────────────────────────────
 # 메인 트래킹 루프
 # ──────────────────────────────────────────────
@@ -451,6 +455,18 @@ try:
             batt_text  = "BAT: --"
         cv2.putText(annotated_frame, batt_text,
                     (w - 150, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, batt_color, 2)
+
+        # FPS 계산
+        fps_counter += 1
+        elapsed_fps = time.time() - fps_timer
+        if elapsed_fps >= 1.0:
+            fps_display = fps_counter / elapsed_fps
+            fps_counter = 0
+            fps_timer   = time.time()
+            print(f"[FPS] {fps_display:.1f}")
+
+        cv2.putText(annotated_frame, f"FPS: {fps_display:.1f}",
+                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
 
         if not HEADLESS:
             cv2.imshow(WINDOW_NAME, annotated_frame)

@@ -1,6 +1,6 @@
 # MERO AI ROBOT — Progress
 
-> 최종 업데이트: 2026-06-22  
+> 최종 업데이트: 2026-06-25  
 > 비전 담당: 조강희
 
 ---
@@ -58,16 +58,15 @@ USB 케이블을 꽂거나 Jetson이 재부팅될 때마다 아래 명령을 실
 안 하면 Python에서 시리얼 포트 열기 실패.
 
 ```bash
-sudo chmod 666 /dev/ttyUSB0   # ESP32 (UGV02 바퀴)
-sudo chmod 666 /dev/ttyACM0   # OpenRB (팔·그리퍼)
+sudo chmod 666 /dev/ttyACM0   # ESP32 (UGV02 바퀴) — CH343 드라이버 → ACM으로 잡힘
+sudo chmod 666 /dev/ttyACM1   # OpenRB (팔·그리퍼)
 ```
 
 포트 번호 확인:
 ```bash
-ls /dev/ttyUSB*
 ls /dev/ttyACM*
-# 라이다가 ttyACM0을 점유하면 ESP32가 ttyACM1 또는 ttyUSB0으로 잡힘
-# main.py 상단 ESP32_PORT 값을 확인된 포트로 수정할 것
+# ESP32(UGV)가 ttyACM0, OpenRB가 ttyACM1 으로 잡히는 것이 기본
+# 꽂는 순서에 따라 바뀔 수 있으니 main.py 상단 ESP32_PORT / OPENRB_PORT 확인
 ```
 
 ---
@@ -170,7 +169,8 @@ MERO_AI_ROBOT/
 
 ### 1. Jetson → ESP32 (바퀴 제어)
 
-**연결**: `/dev/ttyUSB0`, 115200 baud, JSON per line
+**연결**: `/dev/ttyACM0`, 115200 baud, JSON per line  
+> ⚠️ Jetson에서 CH343 USB 드라이버는 ttyUSB가 아닌 **ttyACM**으로 잡힘
 
 매 프레임 아래 형식으로 전송:
 
@@ -187,7 +187,7 @@ MERO_AI_ROBOT/
 
 ### 2. Jetson → OpenRB (팔·그리퍼 제어)
 
-**연결**: `/dev/ttyACM0`, 115200 baud, JSON per line
+**연결**: `/dev/ttyACM1`, 115200 baud, JSON per line
 
 ```json
 {"cmd": "pick",  "cls": "d8", "mx": 12.3, "my": -5.1}
@@ -239,7 +239,7 @@ OpenRB 내장 Dynamixel 포트 (`Serial1`) 사용 — 방향핀 별도 불필요
 |--------|------|------|
 | d6 | 85장 | 파일명 정리 완료 (d6_1 ~ d6_85) |
 | d8 | 150장 | |
-| d12 | 136장 | |
+| d12 | 136장 | d12_2.mp4가 실제로는 d20이었음 → d20으로 이동 완료 |
 | d20 | 185장 | |
 | apple | 0장 | 미수집 |
 | banana | 0장 | 미수집 |
@@ -247,7 +247,7 @@ OpenRB 내장 Dynamixel 포트 (`Serial1`) 사용 — 방향핀 별도 불필요
 | pineapple | 0장 | 미수집 |
 
 > ⚠️ 현재 데이터 전부 집에서 촬영. 대회 환경(바닥색, 조명)과 달라 재촬영 필요.  
-> ⚠️ 현재 `best.pt`는 d8만 학습된 임시 가중치. 전체 클래스 재학습 필요.
+> ✅ `best.pt` d6/d8/d12/d20 전체 클래스 학습 완료 (22.5MB, YOLOv8s, imgsz=640)
 
 ---
 
@@ -275,30 +275,35 @@ Colab 노트북 실행 전 필요한 것:
 
 - [x] YOLOv8 실시간 트래킹 구현 (`model.track(persist=True)`)
 - [x] 타겟 선택 로직 (신뢰도 최고 물체 1개 자동 선정)
-- [x] 화면 시각화 (바운딩박스 + TARGET 노란 강조)
-- [x] 카메라 캘리브레이션 코드 (`vision/src/calibration.py`)
+- [x] 화면 시각화 (바운딩박스 + TARGET 노란 강조 + FPS 표시)
+- [x] 카메라 캘리브레이션 코드 (`vision/src/calibration.py`) — 헤드리스 모드 지원
 - [x] TensorRT 변환 스크립트 (`vision/src/trt_export.py`)
 - [x] Colab 학습 노트북 (`vision/train/train.ipynb`)
-- [x] d6 이미지 파일명 정리 (d6_1 ~ d6_85)
-- [x] pyserial 설치 및 통신 코드 작성
+- [x] d6/d8/d12/d20 이미지 촬영 및 파일명 정리 (총 581장)
+- [x] Roboflow 라벨링 완료 (d6/d8/d12/d20)
+- [x] **YOLOv8s 전체 클래스 학습** — `vision/model/best.pt` (22.5MB)
 - [x] **듀얼 시리얼 통신 구현** (`vision/src/main.py`)
-  - ESP32 `/dev/ttyUSB0` — 바퀴 제어용 전체 탐지 JSON 전송
-  - OpenRB `/dev/ttyACM0` — 팔·그리퍼 pick/idle 명령 전송
+  - ESP32 `/dev/ttyACM0` — 바퀴 직접 제어 (Waveshare JSON)
+  - OpenRB `/dev/ttyACM1` — 팔·그리퍼 pick/idle 명령 전송
+- [x] **헤드리스 모드** — SSH 환경에서 DISPLAY 없이 실행 가능
+- [x] **Jetson 실기기 테스트 완료** (2026-06-25)
+  - SSH 접속: 핫스팟 172.20.10.5
+  - Arducam USB 카메라 동작 확인 (`/dev/video0`, index 0)
+  - UGV02 바퀴 동작 확인 (ESP32: `/dev/ttyACM0`, CH343 드라이버)
+  - YOLO 모델 로드 및 탐지 확인
 - [x] **OpenRB 메인 제어 코드** (`robot/main.ino`)
   - Jetson JSON 수신·파싱 (ArduinoJson)
-  - 상태 머신 (IDLE → APPROACH → PICK → CARRY → DROP → RETURN)
-- [x] **모빌리티 코드** (`robot/mobility.ino`)
-  - Waveshare JSON 포맷 `{"T":1,"L":...,"R":...}` 전송
-  - mx/my 기반 `moveToward()` 구현 (근접 감속 포함)
-  - 클래스별 드롭존 좌표 배열 (실측 후 수정 필요)
+  - 상태 머신 (IDLE → PICK → DROP → RETURN)
 - [x] **그리퍼 코드** (`robot/gripper.ino`)
-  - Dynamixel2Arduino 라이브러리 사용
   - XL330 × 2 위치 제어 (Protocol 2.0, 57600 baud)
-  - `gripperOpen()` / `gripperClose()` 구현
-  - 토크 제한 60% (물체 파손 방지)
 - [x] **팔 코드 스텁** (`robot/arm.ino`)
   - 함수 인터페이스 정의 완료
-  - 구현은 팔 관절 구성 확정 후 작성
+
+### 전원 구성 확정
+- 젯슨: **보조배터리 → USB-C PD (15V, 5.5×2.1mm 확인 필요)**  
+- XL430 팔: **UGV02 내장 12V 배터리 → OpenRB**  
+- XL330 그리퍼: **5V 별도 공급** (벅컨버터 또는 보조배터리 USB 5V)  
+- ⚠️ XL430은 최대 14.8V → 15V 직결 금지
 
 ---
 
@@ -306,18 +311,18 @@ Colab 노트북 실행 전 필요한 것:
 
 | 우선순위 | 작업 | 비고 |
 |----------|------|------|
+| 🔴 높음 | OpenRB + Dynamixel 연결 및 동작 테스트 | 전원 구성 확정 후 |
+| 🔴 높음 | `arm.ino` 구현 | 팔 관절 구성 확정 후 역기구학 작성 |
+| 🔴 높음 | 전원 배선 완성 | 보조배터리(젯슨) + UGV배터리(팔) + 5V(그리퍼) |
 | 🔴 높음 | 과일 데이터 촬영 (4종) | 현재 0장 |
-| 🔴 높음 | 대회 환경에서 재촬영 | d6 우선 |
-| 🔴 높음 | Roboflow 라벨링 (전체) | |
-| 🟡 중간 | Colab 전체 클래스 학습 | 라벨링 완료 후 |
-| 🟡 중간 | 모델 성능 확인 (mAP, confusion matrix) | |
-| 🟡 중간 | `arm.ino` 구현 | 팔 관절 구성 확정 후 역기구학 작성 |
-| 🟡 중간 | `mobility.ino` 드롭존 좌표 실측 | `DROP_ZONES[]` 값 수정 |
+| 🔴 높음 | 대회 환경에서 전체 재촬영 | 현재 데이터는 집 환경 |
+| 🟡 중간 | 캘리브레이션 실행 | 카메라 높이·위치 확정 후 |
+| 🟡 중간 | TensorRT 변환 (`best.pt` → `best.engine`) | Jetson에서 실행 |
 | 🟡 중간 | `gripper.ino` 각도 실측 | `FINGER_OPEN_DEG` / `FINGER_CLOSE_DEG` 수정 |
-| 🟢 낮음 | Jetson 도착 후 TensorRT 변환 | |
-| 🟢 낮음 | 캘리브레이션 실행 (1회) | 카메라 높이 확정 후 |
-| 🟢 낮음 | ESP32 + OpenRB 실물 연동 테스트 | Jetson 도착 후 |
-| 🟢 낮음 | 멀티스레딩 (비전 / 제어 분리) | 필요 시 |
+| 🟡 중간 | 드롭존 좌표 실측 | main.py 또는 robot 코드 수정 |
+| 🟡 중간 | end-to-end 통합 테스트 | 탐지 → 이동 → pick → drop |
+| 🟢 낮음 | 과일 클래스 Roboflow 라벨링 + 재학습 | 데이터 촬영 후 |
+| 🟢 낮음 | FPS 최적화 | TensorRT 변환으로 해결 예상 |
 
 ---
 
