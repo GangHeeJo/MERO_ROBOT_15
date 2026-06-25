@@ -274,11 +274,16 @@ if not cap.isOpened():
         print("❌ 사용 가능한 카메라를 찾을 수 없습니다.")
         exit()
 
+# DISPLAY 환경변수 없으면 헤드리스 모드 (SSH 실행 시)
+HEADLESS = os.environ.get("DISPLAY") is None
 WINDOW_NAME = "MERO_AI_ROBOT_TEST"
-cv2.destroyAllWindows()
-cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_AUTOSIZE)
+if not HEADLESS:
+    cv2.destroyAllWindows()
+    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_AUTOSIZE)
 
-print("🚀 실시간 트래킹 시작! 종료하려면 'q'를 누르거나 Ctrl+C를 누르세요.")
+print("🚀 실시간 트래킹 시작! 종료하려면 Ctrl+C를 누르세요.")
+if HEADLESS:
+    print("ℹ️ 헤드리스 모드 — 화면 출력 없이 터미널 로그만 출력합니다.")
 
 # ──────────────────────────────────────────────
 # 메인 트래킹 루프
@@ -447,11 +452,10 @@ try:
         cv2.putText(annotated_frame, batt_text,
                     (w - 150, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, batt_color, 2)
 
-        cv2.imshow(WINDOW_NAME, annotated_frame)
-
-        # 'q' 누르면 루프 종료
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+        if not HEADLESS:
+            cv2.imshow(WINDOW_NAME, annotated_frame)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
 
 finally:
     # 'q' 종료든 Ctrl+C든 예외 발생이든 반드시 자원 해제
