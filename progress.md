@@ -30,7 +30,7 @@
 | 1 | SSD | SK하이닉스 Gold P31 M.2 NVMe 1TB | 125,636원 |
 | 2 | 카메라 | ArduCAM 2.3MP AR0234 글로벌 셔터 USB 3.0 [B0495C] | 276,540원 |
 | 3 | 모빌리티 | Waveshare 6x4 Off-Road UGV (Extension Rails, ESP32) 6WD | 262,190원 |
-| 4 | 배터리 | 삼성 INR18650-30Q 리튬이온 3.6V 3000mAh | 48,000원 |
+| 4 | 배터리 | 삼성 INR18650-30Q 리튬이온 3.6V 3000mAh (UGV용, 설치 완료) | 48,000원 |
 | 5 | 다이나믹셀 | XL430 × 6 + XL330 × 2 | 190,000원 |
 | 6 | 필라멘트 | BambuLab PLA Basic 1kg (흰색) | 22,000원 |
 | | | **합계** | **924,366원** |
