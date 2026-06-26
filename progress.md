@@ -14,7 +14,7 @@
 - 보드: NVIDIA Jetson Orin Nano
 - 로봇 플랫폼: Waveshare UGV02 (내장 컨트롤러: ESP32 — 바퀴 제어)
 - 팔·그리퍼 컨트롤러: ROBOTIS OpenRB-150 (Dynamixel 제어)
-- 다이나믹셀: XL430 × 6 (팔 관절), XL330 × 2 (그리퍼 손가락)
+- 다이나믹셀: XL430 × 6 (팔 관절), XC330 × 2 (그리퍼 손가락)
 - 카메라: Arducam USB
 
 **대회 태스크**
@@ -31,7 +31,7 @@
 | 2 | 카메라 | ArduCAM 2.3MP AR0234 글로벌 셔터 USB 3.0 [B0495C] | 276,540원 |
 | 3 | 모빌리티 | Waveshare 6x4 Off-Road UGV (Extension Rails, ESP32) 6WD | 262,190원 |
 | 4 | 배터리 | 삼성 INR18650-30Q 리튬이온 3.6V 3000mAh (UGV용, 설치 완료) | 48,000원 |
-| 5 | 다이나믹셀 | XL430 × 6 + XL330 × 2 | 190,000원 |
+| 5 | 다이나믹셀 | XL430 × 6 + XC330 × 2 | 190,000원 |
 | 6 | 필라멘트 | BambuLab PLA Basic 1kg (흰색) | 22,000원 |
 | | | **합계** | **924,366원** |
 
@@ -46,7 +46,7 @@
 │  (vision/    │
 │  src/main.py)│     /dev/ttyACM1                   ┌─────────────┐
 │              │ ──── {"cmd":"grip"/"drop"} ────────▶ │  OpenRB-150 │ → XL430 × 6 (팔)
-│              │ ◀─── {"status":"gripped"/"done"} ── │             │ → XL330 × 2 (그리퍼)
+│              │ ◀─── {"status":"gripped"/"done"} ── │             │ → XC330 × 2 (그리퍼)
 └──────────────┘                                    └─────────────┘
       ▲
       │ Arducam USB (/dev/video0)
@@ -120,7 +120,7 @@ MERO_AI_ROBOT/
 ├── robot/                         # 로봇팀 (OpenRB Arduino — 팔·그리퍼만)
 │   ├── main.ino                   # JSON 수신 + 상태 머신
 │   ├── arm.ino                    # XL430 × 6 팔 관절 (구성 확정 후)
-│   └── gripper.ino                # XL330 × 2 그리퍼 손가락
+│   └── gripper.ino                # XC330 × 2 그리퍼 손가락
 ├── ros2/                          # ROS2 패키지 (Jetson robot_ws/src/에 배포)
 │   └── mobility_pkg/
 │       ├── mobility_pkg/
@@ -155,7 +155,7 @@ MERO_AI_ROBOT/
 |------|------|
 | `robot/main.ino` | Jetson pick 명령 수신 → 팔·그리퍼 상태 머신 실행 |
 | `robot/arm.ino` | XL430 × 6 팔 관절 제어 (구성 확정 대기 중, 스텁 상태) |
-| `robot/gripper.ino` | XL330 × 2 그리퍼 손가락 제어. Dynamixel2Arduino 사용 |
+| `robot/gripper.ino` | XC330 × 2 그리퍼 손가락 제어. Dynamixel2Arduino 사용 |
 
 > 바퀴 제어(ESP32)는 `vision/src/main.py`의 `control_wheels()`가 직접 담당.
 
@@ -240,8 +240,8 @@ OpenRB 내장 Dynamixel 포트 (`Serial1`) 사용 — 방향핀 별도 불필요
 
 | 서보 | ID | 모델 | 전원 |
 |------|-----|------|------|
-| 그리퍼 좌측 손가락 | 1 | XL330 | 5V |
-| 그리퍼 우측 손가락 | 2 | XL330 | 5V |
+| 그리퍼 좌측 손가락 | 1 | XC330 | 12V |
+| 그리퍼 우측 손가락 | 2 | XC330 | 12V |
 | 팔 관절 1~6 | 3~8 (TBD) | XL430 | **12V** |
 
 > ⚠️ XL430은 동작 전압 12V. OpenRB 초록 단자에 12V 배터리 직결 필수.  
@@ -330,7 +330,7 @@ Colab 노트북 실행 전 필요한 것:
 
 - **`robot/gripper.ino` 수정**
   - extern dxl 참조로 변경 (중복 정의 제거)
-  - 헤더 오타 수정: XL430 → XL330
+  - 헤더 오타 수정: XL430 → XC330
 
 - **`robot/arm.ino` 구조 정리**
   - `armTransport()` 추가: 물체 든 채 이동 자세 (주행 중 팔 접기)
@@ -356,7 +356,7 @@ Colab 노트북 실행 전 필요한 것:
 - **전원 구성 결정**
   - 젯슨: 보조배터리(USB-C PD, 15V) — 5.5×2.1mm 배럴잭 확인 필요
   - XL430 팔: UGV02 내장 12V 배터리 → OpenRB
-  - XL330 그리퍼: 5V 별도 공급 (벅컨버터 또는 5V USB)
+  - XC330 그리퍼: 12V (UGV 배터리 공유) (벅컨버터 또는 5V USB)
 - **포트 정리** — ESP32: `/dev/ttyACM0`, OpenRB: `/dev/ttyACM1` (CH343 → ACM 확인)
 - **mobility_pkg 리포 추가** — `ros2/mobility_pkg/` 경로에 보관
 
@@ -387,7 +387,7 @@ Colab 노트북 실행 전 필요한 것:
   - 상태 머신 (IDLE → GRIPPING → HOLDING → DROPPING → RETURNING)
   - grip/drop 명령 분리, gripped/done 응답 신호 전송
 - [x] **그리퍼 코드** (`robot/gripper.ino`)
-  - XL330 × 2 위치 제어 (Protocol 2.0, 57600 baud)
+  - XC330 × 2 위치 제어 (Protocol 2.0, 57600 baud)
 - [x] **팔 코드 스텁** (`robot/arm.ino`)
   - armPickUp / armTransport / armDrop / armHome 인터페이스 정의
 - [x] **`vision/src/main.py` 완성** (2026-06-26)
@@ -399,7 +399,7 @@ Colab 노트북 실행 전 필요한 것:
 ### 전원 구성 확정
 - 젯슨: **보조배터리 → USB-C PD (15V, 5.5×2.1mm 확인 필요)**  
 - XL430 팔: **UGV02 내장 12V 배터리 → OpenRB**  
-- XL330 그리퍼: **5V 별도 공급** (벅컨버터 또는 보조배터리 USB 5V)  
+- XC330 그리퍼: **5V 별도 공급** (벅컨버터 또는 보조배터리 USB 5V)  
 - ⚠️ XL430은 최대 14.8V → 15V 직결 금지
 
 ---

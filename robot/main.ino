@@ -6,7 +6,7 @@
  *
  * 연결:
  *   Jetson → OpenRB: USB-C (/dev/ttyACM1, 115200)
- *   OpenRB → Dynamixel: 내장 포트 (XL430 × 6, XL330 × 2)
+ *   OpenRB → Dynamixel: 내장 포트 (XL430 × 6, XC330 × 2)
  *
  * Jetson이 보내는 명령:
  *   {"cmd":"grip", "cls":"d8", "mx":12.3, "my":-5.1}  ← 물체 집기
@@ -23,7 +23,7 @@
  * 파일 구성:
  *   main.ino    — 시리얼 수신, 상태 머신 (이 파일)
  *   arm.ino     — 팔 관절 XL430 × 6 (구성 확정 후 구현)
- *   gripper.ino — 그리퍼 손가락 XL330 × 2
+ *   gripper.ino — 그리퍼 손가락 XC330 × 2
  *
  * 필요 라이브러리: ArduinoJson, Dynamixel2Arduino
  */
