@@ -1,6 +1,6 @@
 # MERO AI ROBOT — Progress
 
-> 최종 업데이트: 2026-06-25  
+> 최종 업데이트: 2026-06-26  
 > 비전 담당: 조강희
 
 ---
@@ -26,21 +26,22 @@
 ## 시스템 아키텍처
 
 ```
-┌──────────────┐     USB Serial (/dev/ttyUSB0)    ┌─────────────┐
-│              │ ──────────── JSON ───────────────▶ │    ESP32    │ → 바퀴 모터
-│   Jetson     │                                    └─────────────┘
-│  Orin Nano   │
-│  (vision/    │     USB-C (/dev/ttyACM0)           ┌─────────────┐
-│  main.py)    │ ──────────── JSON ───────────────▶ │  OpenRB-150 │ → XL430 × 6 (팔)                                    │             │ → XL330 × 2 (그리퍼)
+┌──────────────┐     /dev/ttyACM0 (CH343→ACM)      ┌─────────────┐
+│   Jetson     │ ──── {"T":1,"L":spd,"R":spd} ────▶ │    ESP32    │ → 바퀴 모터
+│  Orin Nano   │                                    └─────────────┘
+│  (vision/    │
+│  src/main.py)│     /dev/ttyACM1                   ┌─────────────┐
+│              │ ──── {"cmd":"grip"/"drop"} ────────▶ │  OpenRB-150 │ → XL430 × 6 (팔)
+│              │ ◀─── {"status":"gripped"/"done"} ── │             │ → XL330 × 2 (그리퍼)
 └──────────────┘                                    └─────────────┘
       ▲
-      │ Arducam USB
+      │ Arducam USB (/dev/video0)
   카메라
 ```
 
 **Jetson에서 나가는 신호 두 가지:**
-1. `/dev/ttyUSB0` → ESP32: 바퀴 속도 명령 `{"T":1,"L":...,"R":...}` (Waveshare 포맷, Python이 직접 계산)
-2. `/dev/ttyACM0` → OpenRB: 팔·그리퍼 명령 (pick / idle)
+1. `/dev/ttyACM0` → ESP32: 바퀴 속도 명령 `{"T":1,"L":...,"R":...}` (CH343 드라이버 → ACM)
+2. `/dev/ttyACM1` → OpenRB: 팔·그리퍼 명령 (`grip` / `drop` / `idle`)
 
 ---
 
@@ -75,12 +76,13 @@ ls /dev/ttyACM*
 
 ```bash
 # Jetson 최초 세팅 시 (순서대로)
-python vision/src/calibration.py    # 1. 카메라 캘리브레이션 (1회)
-python vision/src/trt_export.py  # 2. TensorRT 변환 (1회)
-python vision/src/main.py   # 3. 메인 실행
+python vision/src/calibration.py      # 1. 카메라 캘리브레이션 (1회, 선택)
+python vision/src/trt_export.py       # 2. TensorRT 변환 (1회, 선택)
+python vision/src/main.py             # 3. 메인 실행 (캘리브 없어도 동작)
 
-# 이후 실행은 항상
-python vision/src/main.py
+# 경기 당일 — 타겟 클래스 지정 (오전 공지 후)
+python vision/src/main.py --cls d8    # 예: d8만 픽업
+python vision/src/main.py --cls apple # 예: apple만 픽업
 ```
 
 ---
@@ -145,28 +147,34 @@ MERO_AI_ROBOT/
 
 ### 상태 머신 흐름
 
-바퀴 이동은 Python이 담당, OpenRB는 팔·그리퍼 시퀀스만 실행:
-
 ```
-[Python] 탐지 → 타겟 선택 → control_wheels()로 ESP32 직접 제어
-                           ↓ (타겟 30mm 이내 도달 시)
-                     OpenRB에 pick 명령 전송
-                           ↓
-[OpenRB] IDLE → PICK (팔 내리기 + 그리퍼 닫기)
-                  ↓
-               DROP (드롭존으로 팔 이동 + 그리퍼 열기)
-                  ↓
-               RETURN (팔 홈 복귀) → IDLE
+[Python main.py]                          [OpenRB main.ino]
+
+SEARCHING                                 IDLE
+  탐지 + 이동 (바퀴 제어)
+  ↓ 도달 (면적≥40000 또는 dist<30mm)
+  grip 명령 전송 ──────────────────────▶ GRIPPING
+GRIPPING                                  팔 집기 + 그리퍼 닫기 + 이동자세
+  바퀴 정지, gripped 신호 대기 ◀──────── {"status":"gripped"}
+  ↓                                       HOLDING (drop 명령 대기)
+GO_TO_STORAGE
+  ① 좌회전 N초 → ② 직진 N초
+  ↓ 도착
+  drop 명령 전송 ──────────────────────▶ DROPPING
+DROPPING                                  팔 드롭자세 + 그리퍼 열기
+  바퀴 정지, done 신호 대기 ◀─────────── RETURNING → armHome()
+  ↓                                       {"status":"done"} → IDLE
+SEARCHING (복귀)
 ```
 
 ### 로봇팀 TODO
 
 | 파일 | 항목 | 내용 |
 |------|------|------|
-| `main.py` | `ARRIVE_THRESHOLD_MM` | 실물 테스트 후 도착 판정 거리 조정 (현재 30mm) |
-| `main.py` | `DROP_ZONES` (추후) | 드롭존 이동이 필요하면 Python에서 cls별 좌표 관리 |
+| `main.py` | `AREA_THRESHOLD` | 실물 테스트 후 도착 면적 임계값 조정 (현재 40000) |
+| `main.py` | `STORAGE_TURN_SECS` / `STORAGE_DRIVE_SECS` | 보관함 고정 경로 시간 실측 조정 |
 | `gripper.ino` | `FINGER_OPEN_DEG` / `FINGER_CLOSE_DEG` | 실물 테스트 후 실제 각도 측정·수정 |
-| `arm.ino` | 전체 구현 | 팔 관절 구성 확정 후 역기구학 + 동작 시퀀스 작성 |
+| `arm.ino` | 전체 구현 | 팔 관절 구성 확정 후 각 자세 각도 입력 (armPickUp/armTransport/armDrop/armHome) |
 
 ### 필요 라이브러리 (Arduino IDE 라이브러리 매니저)
 
@@ -200,10 +208,15 @@ MERO_AI_ROBOT/
 **연결**: `/dev/ttyACM1`, 115200 baud, JSON per line
 
 ```json
-{"cmd": "pick",  "cls": "d8", "mx": 12.3, "my": -5.1}
-{"cmd": "drop",  "cls": "d8"}
-{"cmd": "home"}
-{"cmd": "idle"}
+{"cmd": "grip", "cls": "d8", "mx": 12.3, "my": -5.1}  ← 집기 (IDLE→GRIPPING)
+{"cmd": "drop"}                                          ← 내려놓기 (HOLDING→DROPPING)
+{"cmd": "idle"}                                          ← 대기
+```
+
+**OpenRB → Jetson 응답:**
+```json
+{"status": "gripped"}   ← 집기 완료 (Python GO_TO_STORAGE 전환)
+{"status": "done"}      ← 내려놓기+홈 복귀 완료 (Python SEARCHING 복귀)
 ```
 
 ### 3. OpenRB → Dynamixel (팔·그리퍼 직접)
@@ -281,6 +294,37 @@ Colab 노트북 실행 전 필요한 것:
 
 ---
 
+## 2026-06-26 작업 내역
+
+- **프레임워크 최종 결정: Python 단독 방식** (`vision/src/main.py`)
+  - ROS2 검토 후 러닝커브 부담으로 단독 Python 방식으로 결정
+  - `ros2/` 폴더는 레퍼런스로 보관, 메인 코드는 `vision/src/main.py`
+
+- **`main.py` 전면 재설계 완료**
+  - `--cls` 인수 추가: 경기 당일 타겟 클래스 지정 (`python main.py --cls d8`)
+  - **4단계 상태 머신 구현**: SEARCHING → GRIPPING → GO_TO_STORAGE → DROPPING
+  - **calibration 없이도 동작**: bbox 면적 기반 픽셀 모드 추가
+    - `calibration.json` 있으면 mm 기반, 없으면 자동으로 면적 기반 전환
+    - 도달 판단: 면적 ≥ 40000 (픽셀모드) 또는 거리 < 30mm (mm모드)
+  - 보관함 고정 경로 이동 구현: ① 좌회전 N초 → ② 직진 N초 (실측 조정 필요)
+  - grip / drop 명령 분리: gripped/done 완료 신호 각각 수신
+
+- **`robot/main.ino` 재설계**
+  - 상태 머신: IDLE → GRIPPING → HOLDING → DROPPING → RETURNING
+  - grip/drop 명령 분리 처리 (기존 단일 pick 명령에서 변경)
+  - Dynamixel 인스턴스(`dxl`)를 main.ino에서 선언해 arm/gripper 공유
+
+- **`robot/gripper.ino` 수정**
+  - extern dxl 참조로 변경 (중복 정의 제거)
+  - 헤더 오타 수정: XL430 → XL330
+
+- **`robot/arm.ino` 구조 정리**
+  - `armTransport()` 추가: 물체 든 채 이동 자세 (주행 중 팔 접기)
+  - 함수명 정리: `armPickUp` / `armTransport` / `armDrop` / `armHome`
+  - 관절 ID 상수 정의 (ID 3~8, 실측 후 수정)
+
+---
+
 ## 2026-06-25 작업 내역
 
 - **shape 전체 클래스 이미지 촬영 완료** — d6/d8/d12/d20 대회 환경에서 재촬영
@@ -326,11 +370,17 @@ Colab 노트북 실행 전 필요한 것:
   - YOLO 모델 로드 및 탐지 확인
 - [x] **OpenRB 메인 제어 코드** (`robot/main.ino`)
   - Jetson JSON 수신·파싱 (ArduinoJson)
-  - 상태 머신 (IDLE → PICK → DROP → RETURN)
+  - 상태 머신 (IDLE → GRIPPING → HOLDING → DROPPING → RETURNING)
+  - grip/drop 명령 분리, gripped/done 응답 신호 전송
 - [x] **그리퍼 코드** (`robot/gripper.ino`)
   - XL330 × 2 위치 제어 (Protocol 2.0, 57600 baud)
 - [x] **팔 코드 스텁** (`robot/arm.ino`)
-  - 함수 인터페이스 정의 완료
+  - armPickUp / armTransport / armDrop / armHome 인터페이스 정의
+- [x] **`vision/src/main.py` 완성** (2026-06-26)
+  - 4단계 상태 머신 (SEARCHING/GRIPPING/GO_TO_STORAGE/DROPPING)
+  - calibration 유무 자동 감지 (mm 모드 / 픽셀 면적 모드)
+  - `--cls` 인수로 경기 당일 타겟 클래스 지정
+  - 보관함 고정 경로 이동 구현 (시간 기반, 실측 조정 필요)
 
 ### 전원 구성 확정
 - 젯슨: **보조배터리 → USB-C PD (15V, 5.5×2.1mm 확인 필요)**  
@@ -352,31 +402,27 @@ Colab 노트북 실행 전 필요한 것:
 | **2. 고정 경로** | 픽업 후 왼쪽 회전 → 일정 시간 전진 → 드롭 | 즉시 구현 가능, 코드 단순 | 픽업 위치마다 오차 큼 |
 | **3. 벽 따라가기** | 왼쪽 벽 향해 이동 → 코너까지 → 드롭 | 위치 무관하게 안정적 | 벽 인식 로직 추가 필요 |
 
-**현재 방향**: 깃대 실물 공개 전까지 방법 2(고정 경로)로 구현 → 깃대 공개 후 방법 1으로 업그레이드
+**현재 방향**: 방법 2(고정 경로) **구현 완료** (2026-06-26) → 깃대 공개 후 방법 1으로 업그레이드 예정  
+- `STORAGE_TURN_SECS`, `STORAGE_DRIVE_SECS` 실측 후 조정 필요
 
 ---
 
 ## 남은 작업 ⬜
 
-### ROS2 (현재 채택된 방식)
-
 | 우선순위 | 작업 | 비고 |
 |----------|------|------|
-| 🔴 높음 | `gripper_node.py` 구현 | `/gripper_cmd` 구독 → OpenRB 시리얼 전송 |
-| 🔴 높음 | `main_decision_node.py` 수정 | 목표 도달 시 `/gripper_cmd` 발행 추가 |
-| 🔴 높음 | Jetson robot_ws 업데이트 + `colcon build` | 위 수정 후 배포 |
+| 🔴 높음 | `arm.ino` 구현 | 팔 관절 구성 확정 후 각 자세 각도 입력 |
 | 🔴 높음 | OpenRB + Dynamixel 연결 및 동작 테스트 | 전원 구성 확정 후 |
-| 🔴 높음 | `arm.ino` 구현 | 팔 관절 구성 확정 후 역기구학 작성 |
 | 🔴 높음 | 전원 배선 완성 | 보조배터리(젯슨) + UGV배터리(팔) + 5V(그리퍼) |
 | 🔴 높음 | 과일 데이터 촬영 (4종) | 현재 0장 |
 | 🔴 높음 | 과일 클래스 라벨링 + 재학습 | 촬영 후 Roboflow → Colab |
-| 🟡 중간 | 캘리브레이션 실행 | 카메라 높이·위치 확정 후 |
-| 🟡 중간 | TensorRT 변환 (`best.pt` → `best.engine`) | Jetson에서 실행 |
+| 🟡 중간 | `AREA_THRESHOLD` 실측 조정 | 실제 픽업 시 면적 값 확인 후 조정 |
+| 🟡 중간 | `STORAGE_TURN_SECS` / `STORAGE_DRIVE_SECS` 실측 | 보관함까지 고정 경로 시간 조정 |
 | 🟡 중간 | `gripper.ino` 각도 실측 | `FINGER_OPEN_DEG` / `FINGER_CLOSE_DEG` 수정 |
-| 🟡 중간 | 드롭존 좌표 실측 | robot 코드 수정 |
-| 🟡 중간 | end-to-end 통합 테스트 | 탐지 → 이동 → pick → drop |
-| 🟢 낮음 | 과일 클래스 Roboflow 라벨링 + 재학습 | 데이터 촬영 후 |
-| 🟢 낮음 | FPS 확인 | TensorRT 변환으로 향상 예상 |
+| 🟡 중간 | 캘리브레이션 실행 | 카메라 높이·위치 확정 후 (없어도 동작은 됨) |
+| 🟡 중간 | TensorRT 변환 (`best.pt` → `best.engine`) | Jetson에서 실행, FPS 향상 |
+| 🟡 중간 | end-to-end 통합 테스트 | 탐지 → 이동 → grip → 보관함 이동 → drop |
+| 🟢 낮음 | 깃대 인식 모드 추가 | 깃대 실물 공개 후 YOLO 학습 → GO_TO_STORAGE 업그레이드 |
 
 ---
 
@@ -388,9 +434,9 @@ Colab 노트북 실행 전 필요한 것:
 2. Roboflow 프로젝트 접근 권한 확인
 3. Colab 노트북 실행 전 Roboflow API 키 입력
 4. Jetson 연결 포트 확인:
-   - `ls /dev/tty*` 실행
-   - ESP32: `ttyUSB0` → `main.py`의 `ESP32_PORT` 맞춰 수정
-   - OpenRB: `ttyACM0` → `OPENRB_PORT` 맞춰 수정
+   - `ls /dev/ttyACM*` 실행
+   - ESP32: `ttyACM0` → `main.py`의 `ESP32_PORT` 확인 (CH343 드라이버, ttyUSB 아님)
+   - OpenRB: `ttyACM1` → `OPENRB_PORT` 확인 (꽂는 순서에 따라 바뀔 수 있음)
 5. OpenRB Arduino 업로드 시 보드: **OpenRB-150** 선택
 6. Dynamixel Wizard로 서보 ID 및 Baudrate 사전 설정 (57600 baud)
 7. XL430 전원: OpenRB 초록 단자에 12V 배터리 연결 (두꺼운 전선 필수)
