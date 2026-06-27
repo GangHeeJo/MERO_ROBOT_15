@@ -280,10 +280,15 @@ def send_drop():
         return
     ser_openrb.write((json.dumps({"cmd": "drop"}) + "\n").encode())
 
+_last_idle_t = 0.0
 def send_idle():
+    global _last_idle_t
     if ser_openrb is None or not ser_openrb.is_open:
         return
-    ser_openrb.write((json.dumps({"cmd": "idle"}) + "\n").encode())
+    now = time.time()
+    if now - _last_idle_t >= 1.0:
+        ser_openrb.write((json.dumps({"cmd": "idle"}) + "\n").encode())
+        _last_idle_t = now
 
 
 # ── 카메라 초기화 ────────────────────────────────────────
