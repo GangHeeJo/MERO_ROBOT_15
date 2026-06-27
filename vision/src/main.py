@@ -76,16 +76,25 @@ def pixel_to_mm(cx, cy):
     return round((cx - w / 2) * MM_PER_PIXEL, 1), round((cy - h / 2) * MM_PER_PIXEL, 1)
 
 
+CONF_THRESHOLD_SHAPE = 0.5   # shape 클래스 confidence 임계값
+CONF_THRESHOLD_FRUIT = 0.7   # 과일 클래스 — 오픽업 패널티 40점이라 높게 설정
+
 def select_target(objects: list) -> dict | None:
-    """--cls 필터 + 목표 개수 미달 클래스만, bbox area 최대(가장 가까운) 1개 반환."""
+    """--cls 필터 + 목표 개수 미달 + 클래스별 confidence 임계값 통과한 것 중 area 최대 반환."""
     if not objects:
         return None
-    if TARGET_CLS:
-        objects = [o for o in objects if o['cls'] in TARGET_CLS
-                   and pickup_counts.get(o['cls'], 0) < max_count(o['cls'])]
-    if not objects:
+    filtered = []
+    for o in objects:
+        if TARGET_CLS and o['cls'] not in TARGET_CLS:
+            continue
+        if pickup_counts.get(o['cls'], 0) >= max_count(o['cls']):
+            continue
+        threshold = CONF_THRESHOLD_FRUIT if o['cls'] in FRUIT_CLASSES else CONF_THRESHOLD_SHAPE
+        if o['conf'] >= threshold:
+            filtered.append(o)
+    if not filtered:
         return None
-    return max(objects, key=lambda o: o['area'])
+    return max(filtered, key=lambda o: o['area'])
 
 
 # ── 시리얼 포트 ──────────────────────────────────────────
