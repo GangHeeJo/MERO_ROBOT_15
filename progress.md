@@ -458,7 +458,7 @@ Colab 노트북 실행 전 필요한 것:
 | 🟡 중간 | `FINGER_OPEN_DEG` / `FINGER_CLOSE_DEG` 실측 | Wizard 토크 off 후 손으로 각도 확인 |
 | 🟡 중간 | `AREA_THRESHOLD` 실측 조정 | 실제 픽업 시 면적 값 확인 후 조정 (현재 40000) |
 | 🟡 중간 | `STORAGE_BACKUP_SECS` / `STORAGE_TURN_SECS` / `STORAGE_DRIVE_SECS` 실측 | 보관함까지 고정 경로 시간 조정 |
-| 🟡 중간 | 캘리브레이션 실행 | 카메라 높이·위치 확정 후 (없어도 동작은 됨) |
+| 🔴 높음 | 캘리브레이션 실행 | 카메라 위치 확정 후 `python vision/src/calibration.py` 1회 실행 — 미실행 시 픽셀 면적 모드로 동작하나 mm 정확도 없음 |
 | 🟡 중간 | TensorRT 변환 (`best.pt` → `best.engine`) | Jetson에서 실행, FPS 향상 |
 | 🟡 중간 | end-to-end 통합 테스트 | 탐지 → 이동 → grip → 보관함 이동 → drop |
 | 🟢 낮음 | 깃대 인식 모드 추가 | 깃대 실물 공개 후 YOLO 학습 → GO_TO_STORAGE 업그레이드 |
