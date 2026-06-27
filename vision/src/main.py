@@ -37,7 +37,12 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--cls', nargs='+', default=None,
                     help='타겟 클래스 목록 (예: --cls d8 apple). 미지정 시 모든 클래스 대상')
 args       = parser.parse_args()
-TARGET_CLS = set(args.cls) if args.cls else None
+TARGET_CLS    = set(args.cls) if args.cls else None
+SHAPE_CLASSES = {'d6', 'd8', 'd12', 'd20'}
+FRUIT_CLASSES = {'apple', 'banana', 'orange', 'pineapple'}
+
+def max_count(cls: str) -> int:
+    return 4 if cls in SHAPE_CLASSES else 3
 
 # ── 모델 로드 ────────────────────────────────────────────
 BASE_DIR   = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -72,11 +77,12 @@ def pixel_to_mm(cx, cy):
 
 
 def select_target(objects: list) -> dict | None:
-    """--cls 필터 후 bbox area 최대(가장 가까운) 1개 반환."""
+    """--cls 필터 + 목표 개수 미달 클래스만, bbox area 최대(가장 가까운) 1개 반환."""
     if not objects:
         return None
     if TARGET_CLS:
-        objects = [o for o in objects if o['cls'] in TARGET_CLS]
+        objects = [o for o in objects if o['cls'] in TARGET_CLS
+                   and pickup_counts.get(o['cls'], 0) < max_count(o['cls'])]
     if not objects:
         return None
     return max(objects, key=lambda o: o['area'])
@@ -134,6 +140,8 @@ storage_phase       = 0
 storage_phase_start = 0.0
 confirm_count       = 0
 last_target_id      = -1
+gripped_cls         = None
+pickup_counts       = {}   # {cls: 보관함에 넣은 개수}
 
 # ── 시리얼 연결 ──────────────────────────────────────────
 def _open_serial(port):
@@ -374,6 +382,7 @@ try:
                 if confirm_count >= CONFIRM_FRAMES:
                     confirm_count  = 0
                     last_target_id = -1
+                    gripped_cls    = target["cls"]
                     send_grip(target)
                     robot_state  = RobotState.GRIPPING
                     grip_sent_at = time.time()
@@ -429,7 +438,11 @@ try:
                 openrb_done    = False
                 confirm_count  = 0
                 last_target_id = -1
-                robot_state    = RobotState.SEARCHING
+                if gripped_cls:
+                    pickup_counts[gripped_cls] = pickup_counts.get(gripped_cls, 0) + 1
+                    print(f"[스코어] {gripped_cls}: {pickup_counts[gripped_cls]}/{max_count(gripped_cls)}")
+                    gripped_cls = None
+                robot_state = RobotState.SEARCHING
                 print(f"[상태] DROPPING → SEARCHING ({elapsed:.1f}s)")
             elif elapsed > DROP_TIMEOUT_SECS:
                 print(f"\n[경고] drop 타임아웃 → SEARCHING 복귀")
@@ -472,6 +485,17 @@ try:
         cv2.putText(annotated_frame, f"STATE: {robot_state.value}",
                     (10, h - 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
                     state_colors.get(robot_state, (255, 255, 255)), 2)
+
+        # 스코어 표시
+        if TARGET_CLS:
+            score_parts = [f"{c}:{pickup_counts.get(c,0)}/{max_count(c)}" for c in sorted(TARGET_CLS)]
+            all_done = all(pickup_counts.get(c, 0) >= max_count(c) for c in TARGET_CLS)
+            score_text = "  ".join(score_parts)
+            score_color = (0, 255, 255) if all_done else (255, 255, 255)
+            if all_done:
+                score_text += "  ★ 완료!"
+            cv2.putText(annotated_frame, score_text,
+                        (w // 2 - 80, h - 50), cv2.FONT_HERSHEY_SIMPLEX, 0.65, score_color, 2)
 
         if target:
             if target.get("mx") is not None:
