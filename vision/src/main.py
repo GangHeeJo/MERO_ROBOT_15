@@ -131,12 +131,14 @@ DROP_TIMEOUT_SECS   = 15.0   # drop 전송 후 done 신호 최대 대기
 
 # ── 보관함 이동 고정 경로 파라미터 ──────────────────────
 # 경기장: 4m×4m / 출발=우하단 / 보관함=좌하단
-# 순서: ① 좌회전(STORAGE_TURN_SECS초) → ② 직진(STORAGE_DRIVE_SECS초)
+# 순서: ① 후진(STORAGE_BACKUP_SECS초) → ② 좌회전(STORAGE_TURN_SECS초) → ③ 직진(STORAGE_DRIVE_SECS초)
 # TODO: 실측 후 조정
-STORAGE_TURN_SECS   = 2.0
-STORAGE_DRIVE_SECS  = 3.0
-STORAGE_TURN_SPEED  = 0.25
-STORAGE_DRIVE_SPEED = 0.3
+STORAGE_BACKUP_SECS  = 0.8    # 집은 자리에서 후진 (회전 공간 확보)
+STORAGE_BACKUP_SPEED = 0.2
+STORAGE_TURN_SECS    = 2.0
+STORAGE_DRIVE_SECS   = 3.0
+STORAGE_TURN_SPEED   = 0.25
+STORAGE_DRIVE_SPEED  = 0.3
 
 # ── 상태 머신 ────────────────────────────────────────────
 class RobotState(Enum):
@@ -394,8 +396,11 @@ try:
             if target:
                 control_wheels(target)
             else:
-                # 타겟 없으면 제자리 회전 탐색
-                control_wheels(None, override_l=-SEARCH_ROTATE_SPEED, override_r=SEARCH_ROTATE_SPEED)
+                all_done = TARGET_CLS and all(pickup_counts.get(c, 0) >= max_count(c) for c in TARGET_CLS)
+                if all_done:
+                    control_wheels(None)  # 목표 달성 → 정지
+                else:
+                    control_wheels(None, override_l=-SEARCH_ROTATE_SPEED, override_r=SEARCH_ROTATE_SPEED)
 
             if at_target:
                 confirm_count += 1
@@ -404,6 +409,8 @@ try:
                     confirm_count  = 0
                     last_target_id = -1
                     gripped_cls    = target["cls"]
+                    openrb_gripped = False   # stale 신호 초기화
+                    openrb_done    = False
                     send_grip(target)
                     robot_state  = RobotState.GRIPPING
                     grip_sent_at = time.time()
@@ -417,7 +424,8 @@ try:
             elapsed = time.time() - grip_sent_at
             if openrb_gripped:
                 openrb_gripped      = False
-                storage_phase       = 0
+                openrb_done         = False   # stale 신호 초기화
+                storage_phase       = -1      # 후진 phase 부터 시작
                 storage_phase_start = time.time()
                 robot_state         = RobotState.GO_TO_STORAGE
                 print(f"[상태] GRIPPING → GO_TO_STORAGE ({elapsed:.1f}s)")
@@ -433,7 +441,16 @@ try:
             now     = time.time()
             elapsed = now - storage_phase_start
 
-            if storage_phase == 0:
+            if storage_phase == -1:
+                # 후진 — 회전 공간 확보
+                control_wheels(None, override_l=-STORAGE_BACKUP_SPEED, override_r=-STORAGE_BACKUP_SPEED)
+                print(f"[상태] 후진중... ({elapsed:.1f}s / {STORAGE_BACKUP_SECS}s)", end="\r")
+                if elapsed >= STORAGE_BACKUP_SECS:
+                    storage_phase       = 0
+                    storage_phase_start = now
+                    print(f"\n[상태] 후진 완료 → 좌회전 시작")
+
+            elif storage_phase == 0:
                 # 좌회전
                 control_wheels(None, override_l=-STORAGE_TURN_SPEED, override_r=STORAGE_TURN_SPEED)
                 print(f"[상태] 회전중... ({elapsed:.1f}s / {STORAGE_TURN_SECS}s)", end="\r")
@@ -441,12 +458,14 @@ try:
                     storage_phase       = 1
                     storage_phase_start = now
                     print(f"\n[상태] 회전 완료 → 직진 시작")
+
             else:
                 # 직진
                 control_wheels(None, override_l=STORAGE_DRIVE_SPEED, override_r=STORAGE_DRIVE_SPEED)
                 print(f"[상태] 직진중... ({elapsed:.1f}s / {STORAGE_DRIVE_SECS}s)", end="\r")
                 if elapsed >= STORAGE_DRIVE_SECS:
                     control_wheels(None)
+                    openrb_done  = False   # stale 신호 초기화
                     send_drop()
                     drop_sent_at = time.time()
                     robot_state  = RobotState.DROPPING
