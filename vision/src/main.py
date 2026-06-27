@@ -1,7 +1,7 @@
 """
 MERO_AI_ROBOT 메인 실행 파일
 ─────────────────────────────
-실행: python vision/src/main.py [--cls d8]
+실행: python vision/src/main.py [--cls d8 apple]
 
 캘리브레이션 유무에 따라 자동 전환:
   - calibration.json 있음 → mm 기반 거리 판단 (정확)
@@ -34,10 +34,10 @@ from ultralytics import YOLO
 
 # ── 인수 파싱 ───────────────────────────────────────────
 parser = argparse.ArgumentParser()
-parser.add_argument('--cls', default=None,
-                    help='타겟 클래스 (예: d8, d12, apple). 미지정 시 모든 클래스 대상')
+parser.add_argument('--cls', nargs='+', default=None,
+                    help='타겟 클래스 목록 (예: --cls d8 apple). 미지정 시 모든 클래스 대상')
 args       = parser.parse_args()
-TARGET_CLS = args.cls
+TARGET_CLS = set(args.cls) if args.cls else None
 
 # ── 모델 로드 ────────────────────────────────────────────
 BASE_DIR   = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -72,14 +72,14 @@ def pixel_to_mm(cx, cy):
 
 
 def select_target(objects: list) -> dict | None:
-    """--cls 필터 후 최고 신뢰도 1개 반환."""
+    """--cls 필터 후 bbox area 최대(가장 가까운) 1개 반환."""
     if not objects:
         return None
     if TARGET_CLS:
-        objects = [o for o in objects if o['cls'] == TARGET_CLS]
+        objects = [o for o in objects if o['cls'] in TARGET_CLS]
     if not objects:
         return None
-    return max(objects, key=lambda o: o['conf'])
+    return max(objects, key=lambda o: o['area'])
 
 
 # ── 시리얼 포트 ──────────────────────────────────────────
@@ -273,7 +273,8 @@ if not HEADLESS:
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_AUTOSIZE)
 
 mode_str = "mm 모드" if MM_PER_PIXEL else "픽셀 모드 (캘리브 없음)"
-print(f"[시작] 타겟: {TARGET_CLS or '전체'} | {mode_str}")
+cls_str  = ' + '.join(sorted(TARGET_CLS)) if TARGET_CLS else '전체'
+print(f"[시작] 타겟: {cls_str} | {mode_str}")
 if HEADLESS:
     print("[시작] 헤드리스 모드")
 
