@@ -79,19 +79,22 @@ Roboflow 라벨링 → train.ipynb(Colab) → best.pt → trt_export.py → best
 Jetson main.py
   ├─→ /dev/ttyACM0 → ESP32 (UGV 바퀴)   {"T":1, "L":speed, "R":speed}
   └─→ /dev/ttyACM1 → OpenRB-150          {"cmd":"grip"/"drop"/"idle", ...}
-  └─← /dev/ttyACM1 ← OpenRB-150          {"status":"gripped"/"done"}
+  └─← /dev/ttyACM1 ← OpenRB-150          {"status":"gripped"/"grip_failed"/"done"}
 ```
 
 ## 상태 머신
 
 **Python (main.py):**
 ```
-SEARCHING → (도달) → GRIPPING → (gripped) → GO_TO_STORAGE → (직진완료) → DROPPING → (done) → SEARCHING
+SEARCHING → (도달) → GRIPPING → (gripped)     → GO_TO_STORAGE → (직진완료) → DROPPING → (done) → SEARCHING
+                                 (grip_failed) → SEARCHING
+                                 (timeout)     → SEARCHING
 ```
 
 **OpenRB (main.ino):**
 ```
-IDLE → (grip 수신) → GRIPPING → HOLDING → (drop 수신) → DROPPING → RETURNING → IDLE
+IDLE → (grip 수신) → GRIPPING → (집기성공) → HOLDING → (drop 수신) → DROPPING → RETURNING → IDLE
+                              → (전류미달) → IDLE (grip_failed 전송)
 ```
 
 ## 전원 구성

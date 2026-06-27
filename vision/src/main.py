@@ -126,8 +126,9 @@ CONFIRM_FRAMES      = 5       # 연속 N프레임 도달 조건 만족해야 gri
 SEARCH_ROTATE_SPEED = 0.2     # 타겟 없을 때 제자리 회전 속도
 
 # 타임아웃
-GRIP_TIMEOUT_SECS   = 15.0   # grip 전송 후 gripped 신호 최대 대기
-DROP_TIMEOUT_SECS   = 15.0   # drop 전송 후 done 신호 최대 대기
+GRIP_TIMEOUT_SECS    = 15.0   # grip 전송 후 gripped 신호 최대 대기
+DROP_TIMEOUT_SECS    = 15.0   # drop 전송 후 done 신호 최대 대기
+STORAGE_TIMEOUT_SECS = 15.0   # GO_TO_STORAGE 전체 최대 시간
 
 # ── 보관함 이동 고정 경로 파라미터 ──────────────────────
 # 경기장: 4m×4m / 출발=우하단 / 보관함=좌하단
@@ -147,11 +148,13 @@ class RobotState(Enum):
     GO_TO_STORAGE = "보관함이동"
     DROPPING      = "내려놓는중"
 
-robot_state         = RobotState.SEARCHING
-grip_sent_at        = 0.0
-drop_sent_at        = 0.0
+robot_state           = RobotState.SEARCHING
+grip_sent_at          = 0.0
+drop_sent_at          = 0.0
+_frame_fail_count     = 0
 storage_phase       = 0
 storage_phase_start = 0.0
+storage_enter_time  = 0.0
 confirm_count       = 0
 last_target_id      = -1
 gripped_cls         = None
@@ -192,11 +195,12 @@ def _read_esp32_loop():
 threading.Thread(target=_read_esp32_loop, daemon=True).start()
 
 # ── OpenRB 수신 스레드 (팔 완료 신호) ───────────────────
-openrb_gripped = False
-openrb_done    = False
+openrb_gripped     = False
+openrb_done        = False
+openrb_grip_failed = False
 
 def _read_openrb_loop():
-    global openrb_gripped, openrb_done
+    global openrb_gripped, openrb_done, openrb_grip_failed
     while True:
         if ser_openrb is None or not ser_openrb.is_open:
             time.sleep(0.5); continue
@@ -209,6 +213,9 @@ def _read_openrb_loop():
                 elif data.get("status") == "done":
                     openrb_done = True
                     print("\n[OpenRB] 내려놓기 완료")
+                elif data.get("status") == "grip_failed":
+                    openrb_grip_failed = True
+                    print("\n[OpenRB] 집기 실패 (전류 미달)")
         except Exception:
             pass
         time.sleep(0.01)
@@ -335,8 +342,13 @@ try:
     while True:
         ret, frame = cap.read()
         if not ret:
-            print("[오류] 프레임 읽기 실패")
-            break
+            _frame_fail_count += 1
+            if _frame_fail_count >= 10:
+                print("[오류] 프레임 읽기 연속 10회 실패 — 종료")
+                break
+            print(f"[경고] 프레임 읽기 실패 ({_frame_fail_count}/10), 재시도...")
+            continue
+        _frame_fail_count = 0
 
         results  = model.track(frame, persist=True, conf=0.5, verbose=False)
         boxes    = results[0].boxes
@@ -409,8 +421,9 @@ try:
                     confirm_count  = 0
                     last_target_id = -1
                     gripped_cls    = target["cls"]
-                    openrb_gripped = False   # stale 신호 초기화
-                    openrb_done    = False
+                    openrb_gripped     = False   # stale 신호 초기화
+                    openrb_done        = False
+                    openrb_grip_failed = False
                     send_grip(target)
                     robot_state  = RobotState.GRIPPING
                     grip_sent_at = time.time()
@@ -424,11 +437,21 @@ try:
             elapsed = time.time() - grip_sent_at
             if openrb_gripped:
                 openrb_gripped      = False
-                openrb_done         = False   # stale 신호 초기화
-                storage_phase       = -1      # 후진 phase 부터 시작
+                openrb_done         = False
+                openrb_grip_failed  = False
+                storage_phase       = -1
                 storage_phase_start = time.time()
+                storage_enter_time  = time.time()
                 robot_state         = RobotState.GO_TO_STORAGE
                 print(f"[상태] GRIPPING → GO_TO_STORAGE ({elapsed:.1f}s)")
+            elif openrb_grip_failed:
+                openrb_grip_failed = False
+                openrb_gripped     = False
+                openrb_done        = False
+                confirm_count      = 0
+                last_target_id     = -1
+                robot_state        = RobotState.SEARCHING
+                print(f"\n[상태] GRIPPING → SEARCHING (집기 실패)")
             elif elapsed > GRIP_TIMEOUT_SECS:
                 print(f"\n[경고] grip 타임아웃 → SEARCHING 복귀")
                 confirm_count  = 0
@@ -438,10 +461,18 @@ try:
                 print(f"[상태] 집는중... ({elapsed:.1f}s)", end="\r")
 
         elif robot_state == RobotState.GO_TO_STORAGE:
-            now     = time.time()
-            elapsed = now - storage_phase_start
+            now             = time.time()
+            elapsed         = now - storage_phase_start
+            total_elapsed   = now - storage_enter_time
 
-            if storage_phase == -1:
+            if total_elapsed > STORAGE_TIMEOUT_SECS:
+                control_wheels(None)
+                print(f"\n[경고] GO_TO_STORAGE 타임아웃 → SEARCHING 복귀")
+                confirm_count  = 0
+                last_target_id = -1
+                robot_state    = RobotState.SEARCHING
+
+            elif storage_phase == -1:
                 # 후진 — 회전 공간 확보
                 control_wheels(None, override_l=-STORAGE_BACKUP_SPEED, override_r=-STORAGE_BACKUP_SPEED)
                 print(f"[상태] 후진중... ({elapsed:.1f}s / {STORAGE_BACKUP_SECS}s)", end="\r")

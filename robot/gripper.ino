@@ -35,6 +35,10 @@ extern Dynamixel2Arduino dxl;
 // 파손 방지 토크 제한 (%)
 #define GRIPPER_TORQUE_LIMIT_PCT 60
 
+// TODO: 실물 테스트 후 조정 — 빈 손 닫을 때 vs 물체 잡을 때 전류 차이 측정
+// XC330 전류 단위: 1 LSB ≈ 1 mA
+#define GRIP_CURRENT_THRESHOLD 30   // mA, 이 값 이상이면 뭔가 잡은 것으로 판단
+
 static bool initDxl(uint8_t id);
 static void setFingerPos(uint8_t id, float deg);
 
@@ -59,12 +63,27 @@ void gripperOpen() {
   Serial.println("[그리퍼] 열림");
 }
 
-// ── 그리퍼 닫기 ──────────────────────────────────────────
-void gripperClose() {
+// ── 그리퍼 닫기 — 성공 여부 반환 ────────────────────────
+// true: 전류 임계값 초과 → 물체 잡음
+// false: 전류 낮음 → 빈 손으로 닫힘 (미스)
+bool gripperClose() {
   setFingerPos(GRIPPER_ID_LEFT,  FINGER_CLOSE_DEG);
   setFingerPos(GRIPPER_ID_RIGHT, FINGER_RIGHT_CLOSE_DEG);
   delay(600);
-  Serial.println("[그리퍼] 닫힘");
+
+  int32_t current = dxl.readControlTableItem(PRESENT_CURRENT, GRIPPER_ID_LEFT);
+  bool gripped = abs(current) >= GRIP_CURRENT_THRESHOLD;
+
+  if (gripped) {
+    Serial.print("[그리퍼] 닫힘 — 전류: ");
+    Serial.print(current);
+    Serial.println("mA (잡음)");
+  } else {
+    Serial.print("[그리퍼] 닫힘 — 전류: ");
+    Serial.print(current);
+    Serial.println("mA (미스, 임계값 미달)");
+  }
+  return gripped;
 }
 
 // ── 내부: 다이나믹셀 초기화 ──────────────────────────────

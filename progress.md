@@ -1,6 +1,6 @@
 # MERO AI ROBOT — Progress
 
-> 최종 업데이트: 2026-06-26  
+> 최종 업데이트: 2026-06-27  
 > 비전 담당: 조강희
 
 ---
@@ -173,17 +173,20 @@ SEARCHING                                 IDLE
   탐지 + 이동 (바퀴 제어)
   ↓ 도달 (면적≥40000 또는 dist<30mm)
   grip 명령 전송 ──────────────────────▶ GRIPPING
-GRIPPING                                  팔 집기 + 그리퍼 닫기 + 이동자세
-  바퀴 정지, gripped 신호 대기 ◀──────── {"status":"gripped"}
-  ↓                                       HOLDING (drop 명령 대기)
+GRIPPING                                    팔 집기 + 그리퍼 닫기(전류 감지)
+  바퀴 정지, 신호 대기                 ◀── {"status":"gripped"}  → HOLDING
+  ├─ gripped → GO_TO_STORAGE           ◀── {"status":"grip_failed"} → IDLE
+  ├─ grip_failed → SEARCHING (복귀)
+  └─ timeout(15s) → SEARCHING (복귀)
 GO_TO_STORAGE
-  ① 좌회전 N초 → ② 직진 N초
+  ① 후진 0.8초 → ② 좌회전 N초 → ③ 직진 N초
+  (전체 15초 타임아웃 — 초과 시 SEARCHING 복귀)
   ↓ 도착
   drop 명령 전송 ──────────────────────▶ DROPPING
 DROPPING                                  팔 드롭자세 + 그리퍼 열기
   바퀴 정지, done 신호 대기 ◀─────────── RETURNING → armHome()
-  ↓                                       {"status":"done"} → IDLE
-SEARCHING (복귀)
+  ├─ done → SEARCHING (복귀)              {"status":"done"} → IDLE
+  └─ timeout(15s) → SEARCHING (복귀)
 ```
 
 ### 로봇팀 TODO
@@ -191,7 +194,8 @@ SEARCHING (복귀)
 | 파일 | 항목 | 내용 |
 |------|------|------|
 | `main.py` | `AREA_THRESHOLD` | 실물 테스트 후 도착 면적 임계값 조정 (현재 40000) |
-| `main.py` | `STORAGE_TURN_SECS` / `STORAGE_DRIVE_SECS` | 보관함 고정 경로 시간 실측 조정 |
+| `main.py` | `STORAGE_BACKUP_SECS` / `STORAGE_TURN_SECS` / `STORAGE_DRIVE_SECS` | 보관함 고정 경로 시간 실측 조정 |
+| `gripper.ino` | `GRIP_CURRENT_THRESHOLD` | 빈 손 닫기 vs 물체 잡기 전류 측정 후 중간값 설정 (현재 30mA) |
 | `gripper.ino` | `FINGER_OPEN_DEG` / `FINGER_CLOSE_DEG` | 실물 테스트 후 실제 각도 측정·수정 |
 | `arm.ino` | 전체 구현 | 팔 관절 구성 확정 후 각 자세 각도 입력 (armPickUp/armTransport/armDrop/armHome) |
 
@@ -234,8 +238,9 @@ SEARCHING (복귀)
 
 **OpenRB → Jetson 응답:**
 ```json
-{"status": "gripped"}   ← 집기 완료 (Python GO_TO_STORAGE 전환)
-{"status": "done"}      ← 내려놓기+홈 복귀 완료 (Python SEARCHING 복귀)
+{"status": "gripped"}      ← 집기 완료 (Python GO_TO_STORAGE 전환)
+{"status": "grip_failed"}  ← 집기 실패 — 전류 미달 (Python SEARCHING 복귀)
+{"status": "done"}         ← 내려놓기+홈 복귀 완료 (Python SEARCHING 복귀)
 ```
 
 ### 3. OpenRB → Dynamixel (팔·그리퍼 직접)
@@ -310,6 +315,20 @@ OpenRB 내장 Dynamixel 포트 (`Serial1`) 사용 — 방향핀 별도 불필요
 Colab 노트북 실행 전 필요한 것:
 - Roboflow API 키
 - Google Drive 마운트
+
+---
+
+## 2026-06-27 작업 내역
+
+- **전류 기반 집기 성공 감지 추가** (`robot/gripper.ino`, `robot/main.ino`, `vision/src/main.py`)
+  - `gripperClose()` → `bool gripperClose()`: 닫힌 후 XC330 전류 읽어 임계값 비교
+  - 전류 ≥ `GRIP_CURRENT_THRESHOLD`(현재 30mA) → 잡음, 미달 → 미스
+  - 집기 실패 시: 그리퍼 열고 `armHome()` → `{"status":"grip_failed"}` 전송 → Python SEARCHING 복귀
+  - `GRIP_CURRENT_THRESHOLD` 실측 조정 필요 (빈 손 vs 물체 잡기 전류 차이 측정)
+
+- **안전장치 2종 추가** (`vision/src/main.py`)
+  - `GO_TO_STORAGE` 전체 타임아웃 15초: 이동 중 로봇 stuck 시 SEARCHING 자동 복귀
+  - 카메라 프레임 실패 처리: 1회 실패 시 즉시 종료 → 연속 10회 실패 시 종료로 변경 (글리치 내성)
 
 ---
 
@@ -399,7 +418,14 @@ Colab 노트북 실행 전 필요한 것:
   - 4단계 상태 머신 (SEARCHING/GRIPPING/GO_TO_STORAGE/DROPPING)
   - calibration 유무 자동 감지 (mm 모드 / 픽셀 면적 모드)
   - `--cls` 인수로 경기 당일 타겟 클래스 지정
-  - 보관함 고정 경로 이동 구현 (시간 기반, 실측 조정 필요)
+  - 보관함 고정 경로 이동 구현 (후진→좌회전→직진, 시간 기반)
+- [x] **전류 기반 집기 감지** (2026-06-27)
+  - `gripper.ino`: `gripperClose()` bool 반환, PRESENT_CURRENT 읽어 임계값 비교
+  - `main.ino`: 집기 실패 시 `grip_failed` 신호 전송, IDLE 복귀
+  - `main.py`: `grip_failed` 수신 처리 → SEARCHING 복귀
+- [x] **안전장치** (2026-06-27)
+  - GO_TO_STORAGE 전체 타임아웃 (15초, stuck 방지)
+  - 카메라 프레임 연속 실패 10회 시 종료 (글리치 내성)
 
 ### 전원 구성 확정
 - 젯슨: **보조배터리 → USB-C PD (15V, 5.5×2.1mm 확인 필요)**  
@@ -432,12 +458,13 @@ Colab 노트북 실행 전 필요한 것:
 |----------|------|------|
 | 🔴 높음 | `arm.ino` 구현 | 팔 관절 구성 확정 후 각 자세 각도 입력 |
 | 🔴 높음 | OpenRB + Dynamixel 연결 및 동작 테스트 | 전원 구성 확정 후 |
-| 🔴 높음 | 전원 배선 완성 | 보조배터리(젯슨) + UGV배터리(팔) + 5V(그리퍼) |
-| 🔴 높음 | 과일 데이터 촬영 (4종) | 현재 0장 |
+| 🔴 높음 | 전원 배선 완성 | 보조배터리(젯슨) + UGV배터리(팔·그리퍼) |
+| 🔴 높음 | 과일 데이터 촬영 (4종) | 현재 0장 — 폰으로 과일 프린트 후 ArduCAM 촬영 |
 | 🔴 높음 | 과일 클래스 라벨링 + 재학습 | 촬영 후 Roboflow → Colab |
-| 🟡 중간 | `AREA_THRESHOLD` 실측 조정 | 실제 픽업 시 면적 값 확인 후 조정 |
-| 🟡 중간 | `STORAGE_TURN_SECS` / `STORAGE_DRIVE_SECS` 실측 | 보관함까지 고정 경로 시간 조정 |
-| 🟡 중간 | `gripper.ino` 각도 실측 | `FINGER_OPEN_DEG` / `FINGER_CLOSE_DEG` 수정 |
+| 🟡 중간 | `GRIP_CURRENT_THRESHOLD` 실측 | 빈 손 닫기 vs 물체 잡기 전류 차이 측정 (현재 30mA) |
+| 🟡 중간 | `FINGER_OPEN_DEG` / `FINGER_CLOSE_DEG` 실측 | Wizard 토크 off 후 손으로 각도 확인 |
+| 🟡 중간 | `AREA_THRESHOLD` 실측 조정 | 실제 픽업 시 면적 값 확인 후 조정 (현재 40000) |
+| 🟡 중간 | `STORAGE_BACKUP_SECS` / `STORAGE_TURN_SECS` / `STORAGE_DRIVE_SECS` 실측 | 보관함까지 고정 경로 시간 조정 |
 | 🟡 중간 | 캘리브레이션 실행 | 카메라 높이·위치 확정 후 (없어도 동작은 됨) |
 | 🟡 중간 | TensorRT 변환 (`best.pt` → `best.engine`) | Jetson에서 실행, FPS 향상 |
 | 🟡 중간 | end-to-end 통합 테스트 | 탐지 → 이동 → grip → 보관함 이동 → drop |

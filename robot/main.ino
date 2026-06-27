@@ -102,13 +102,20 @@ void updateStateMachine() {
     case GRIPPING:
       // 1. 팔을 집기 위치로 하강
       armPickUp(currentTarget.mx, currentTarget.my);
-      // 2. 그리퍼 닫기
-      gripperClose();
-      // 3. 이동 자세로 팔 이동 (물체를 든 채 로봇이 주행할 수 있는 자세)
-      armTransport();
-      // 집기 완료 → Jetson에 신호 → Python GO_TO_STORAGE 전환
-      JETSON_SERIAL.println("{\"status\":\"gripped\"}");
-      currentState = HOLDING;
+      // 2. 그리퍼 닫기 — 전류로 성공 여부 확인
+      if (gripperClose()) {
+        // 집기 성공 → 이동 자세로 팔 이동
+        armTransport();
+        JETSON_SERIAL.println("{\"status\":\"gripped\"}");
+        currentState = HOLDING;
+      } else {
+        // 집기 실패 → 그리퍼 열고 홈 복귀 후 IDLE
+        gripperOpen();
+        armHome();
+        currentTarget.valid = false;
+        JETSON_SERIAL.println("{\"status\":\"grip_failed\"}");
+        currentState = IDLE;
+      }
       break;
 
     case HOLDING:
