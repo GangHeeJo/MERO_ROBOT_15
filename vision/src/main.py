@@ -113,6 +113,9 @@ TURN_ONLY_SPEED     = 0.2     # 제자리 회전 속도
 # 오인식 방지
 CONFIRM_FRAMES      = 5       # 연속 N프레임 도달 조건 만족해야 grip 전송
 
+# 탐색 회전
+SEARCH_ROTATE_SPEED = 0.2     # 타겟 없을 때 제자리 회전 속도
+
 # 타임아웃
 GRIP_TIMEOUT_SECS   = 15.0   # grip 전송 후 gripped 신호 최대 대기
 DROP_TIMEOUT_SECS   = 15.0   # drop 전송 후 done 신호 최대 대기
@@ -379,7 +382,11 @@ try:
                 status = "도달" if at_target else f"이동중 ({info})"
                 print(f"[타겟] {target['cls']} | {status}")
 
-            control_wheels(target)
+            if target:
+                control_wheels(target)
+            else:
+                # 타겟 없으면 제자리 회전 탐색
+                control_wheels(None, override_l=-SEARCH_ROTATE_SPEED, override_r=SEARCH_ROTATE_SPEED)
 
             if at_target:
                 confirm_count += 1
