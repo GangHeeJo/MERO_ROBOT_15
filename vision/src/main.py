@@ -107,6 +107,10 @@ TURN_ONLY_SPEED     = 0.2     # 제자리 회전 속도
 # 오인식 방지
 CONFIRM_FRAMES      = 5       # 연속 N프레임 도달 조건 만족해야 grip 전송
 
+# 타임아웃
+GRIP_TIMEOUT_SECS   = 15.0   # grip 전송 후 gripped 신호 최대 대기
+DROP_TIMEOUT_SECS   = 15.0   # drop 전송 후 done 신호 최대 대기
+
 # ── 보관함 이동 고정 경로 파라미터 ──────────────────────
 # 경기장: 4m×4m / 출발=우하단 / 보관함=좌하단
 # 순서: ① 좌회전(STORAGE_TURN_SECS초) → ② 직진(STORAGE_DRIVE_SECS초)
@@ -125,9 +129,11 @@ class RobotState(Enum):
 
 robot_state         = RobotState.SEARCHING
 grip_sent_at        = 0.0
+drop_sent_at        = 0.0
 storage_phase       = 0
 storage_phase_start = 0.0
 confirm_count       = 0
+last_target_id      = -1
 
 # ── 시리얼 연결 ──────────────────────────────────────────
 def _open_serial(port):
@@ -219,21 +225,22 @@ def control_wheels(target: dict | None, override_l: float | None = None, overrid
 
     else:
         # ── 픽셀 모드 (calibration 없을 때) ──
-        frame_w = FRAME_W or 640
-        turn    = max(-1.0, min(1.0, (target["cx"] - frame_w / 2) / (frame_w / 2)))
-        area    = target.get("area", 0)
-        if area < AREA_THRESHOLD:
-            if abs(turn) > ALIGN_THRESHOLD:
-                # 물체가 많이 치우쳐 있으면 제자리 회전 먼저
-                L = max(-0.5, min(0.5,  TURN_ONLY_SPEED * turn))
-                R = max(-0.5, min(0.5, -TURN_ONLY_SPEED * turn))
-            else:
-                # 중앙에 가까우면 전진하면서 조향
-                speed = SLOW_SPEED if area > AREA_SLOW_THRESHOLD else MOVE_SPEED
-                L = max(-0.5, min(0.5, speed * (1.0 + turn)))
-                R = max(-0.5, min(0.5, speed * (1.0 - turn)))
+        frame_w  = FRAME_W or 640
+        turn     = max(-1.0, min(1.0, (target["cx"] - frame_w / 2) / (frame_w / 2)))
+        area     = target.get("area", 0)
+        centered = abs(target["cx"] - frame_w / 2) <= CENTER_MARGIN_PX
+
+        if area >= AREA_THRESHOLD and centered:
+            L, R = 0.0, 0.0  # 도달 + 중심 정렬 → 정지
+        elif abs(turn) > ALIGN_THRESHOLD or (area >= AREA_THRESHOLD and not centered):
+            # 많이 치우쳐 있거나 가까운데 중심 안 맞으면 제자리 회전
+            L = max(-0.5, min(0.5,  TURN_ONLY_SPEED * turn))
+            R = max(-0.5, min(0.5, -TURN_ONLY_SPEED * turn))
         else:
-            L, R = 0.0, 0.0
+            # 중앙에 가까우면 전진하면서 조향
+            speed = SLOW_SPEED if area > AREA_SLOW_THRESHOLD else MOVE_SPEED
+            L = max(-0.5, min(0.5, speed * (1.0 + turn)))
+            R = max(-0.5, min(0.5, speed * (1.0 - turn)))
 
     ser_esp32.write((json.dumps({"T": 1, "L": round(L, 2), "R": round(R, 2)}) + "\n").encode())
 
@@ -346,6 +353,11 @@ try:
         # ── 상태 머신 ──────────────────────────────────
         if robot_state == RobotState.SEARCHING:
             if target:
+                # 타겟 변경 시 confirm_count 리셋
+                if target["id"] != last_target_id:
+                    confirm_count  = 0
+                    last_target_id = target["id"]
+
                 if target.get("mx") is not None:
                     dist = (target["mx"] ** 2 + target["my"] ** 2) ** 0.5
                     info = f"dist={dist:.0f}mm"
@@ -360,7 +372,8 @@ try:
                 confirm_count += 1
                 print(f"[타겟] 도달 확인 {confirm_count}/{CONFIRM_FRAMES}", end="\r")
                 if confirm_count >= CONFIRM_FRAMES:
-                    confirm_count = 0
+                    confirm_count  = 0
+                    last_target_id = -1
                     send_grip(target)
                     robot_state  = RobotState.GRIPPING
                     grip_sent_at = time.time()
@@ -378,6 +391,11 @@ try:
                 storage_phase_start = time.time()
                 robot_state         = RobotState.GO_TO_STORAGE
                 print(f"[상태] GRIPPING → GO_TO_STORAGE ({elapsed:.1f}s)")
+            elif elapsed > GRIP_TIMEOUT_SECS:
+                print(f"\n[경고] grip 타임아웃 → SEARCHING 복귀")
+                confirm_count  = 0
+                last_target_id = -1
+                robot_state    = RobotState.SEARCHING
             else:
                 print(f"[상태] 집는중... ({elapsed:.1f}s)", end="\r")
 
@@ -400,19 +418,26 @@ try:
                 if elapsed >= STORAGE_DRIVE_SECS:
                     control_wheels(None)
                     send_drop()
-                    robot_state = RobotState.DROPPING
+                    drop_sent_at = time.time()
+                    robot_state  = RobotState.DROPPING
                     print(f"\n[상태] GO_TO_STORAGE → DROPPING (drop 전송)")
 
         elif robot_state == RobotState.DROPPING:
             control_wheels(None)
-            elapsed = time.time() - storage_phase_start
+            elapsed = time.time() - drop_sent_at
             if openrb_done:
-                openrb_done   = False
-                confirm_count = 0
-                robot_state   = RobotState.SEARCHING
+                openrb_done    = False
+                confirm_count  = 0
+                last_target_id = -1
+                robot_state    = RobotState.SEARCHING
                 print(f"[상태] DROPPING → SEARCHING ({elapsed:.1f}s)")
+            elif elapsed > DROP_TIMEOUT_SECS:
+                print(f"\n[경고] drop 타임아웃 → SEARCHING 복귀")
+                confirm_count  = 0
+                last_target_id = -1
+                robot_state    = RobotState.SEARCHING
             else:
-                print(f"[상태] 내려놓는중...", end="\r")
+                print(f"[상태] 내려놓는중... ({elapsed:.1f}s)", end="\r")
 
         # ── 시각화 ──────────────────────────────────────
         annotated_frame = results[0].plot()
