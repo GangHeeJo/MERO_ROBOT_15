@@ -100,6 +100,12 @@ MAX_MY              = 150.0
 # 픽셀 모드 (calibration 없을 때) — bbox 면적 기반
 AREA_THRESHOLD      = 40000   # 이 면적 이상이면 "도달"로 판단 (w×h px²)
 AREA_SLOW_THRESHOLD = 28000   # 이 면적 이상이면 감속 시작
+CENTER_MARGIN_PX    = 80      # 픽셀 모드: 화면 중심에서 이 픽셀 이내여야 도달 인정
+ALIGN_THRESHOLD     = 0.4     # 이 이상 turn값이면 전진 없이 제자리 회전 우선
+TURN_ONLY_SPEED     = 0.2     # 제자리 회전 속도
+
+# 오인식 방지
+CONFIRM_FRAMES      = 5       # 연속 N프레임 도달 조건 만족해야 grip 전송
 
 # ── 보관함 이동 고정 경로 파라미터 ──────────────────────
 # 경기장: 4m×4m / 출발=우하단 / 보관함=좌하단
@@ -121,6 +127,7 @@ robot_state         = RobotState.SEARCHING
 grip_sent_at        = 0.0
 storage_phase       = 0
 storage_phase_start = 0.0
+confirm_count       = 0
 
 # ── 시리얼 연결 ──────────────────────────────────────────
 def _open_serial(port):
@@ -212,14 +219,19 @@ def control_wheels(target: dict | None, override_l: float | None = None, overrid
 
     else:
         # ── 픽셀 모드 (calibration 없을 때) ──
-        # cx 오프셋으로 좌우 조향, bbox 면적으로 전후 판단
         frame_w = FRAME_W or 640
         turn    = max(-1.0, min(1.0, (target["cx"] - frame_w / 2) / (frame_w / 2)))
         area    = target.get("area", 0)
         if area < AREA_THRESHOLD:
-            speed = SLOW_SPEED if area > AREA_SLOW_THRESHOLD else MOVE_SPEED
-            L = max(-0.5, min(0.5, speed * (1.0 + turn)))
-            R = max(-0.5, min(0.5, speed * (1.0 - turn)))
+            if abs(turn) > ALIGN_THRESHOLD:
+                # 물체가 많이 치우쳐 있으면 제자리 회전 먼저
+                L = max(-0.5, min(0.5,  TURN_ONLY_SPEED * turn))
+                R = max(-0.5, min(0.5, -TURN_ONLY_SPEED * turn))
+            else:
+                # 중앙에 가까우면 전진하면서 조향
+                speed = SLOW_SPEED if area > AREA_SLOW_THRESHOLD else MOVE_SPEED
+                L = max(-0.5, min(0.5, speed * (1.0 + turn)))
+                R = max(-0.5, min(0.5, speed * (1.0 - turn)))
         else:
             L, R = 0.0, 0.0
 
@@ -227,11 +239,13 @@ def control_wheels(target: dict | None, override_l: float | None = None, overrid
 
 
 def _is_at_target(target: dict) -> bool:
-    """도달 여부 판단. mm 모드 → 거리, 픽셀 모드 → bbox 면적."""
+    """도달 여부 판단. mm 모드 → 거리, 픽셀 모드 → area + 중심 정렬."""
     if target.get("mx") is not None:
         dist = (target["mx"] ** 2 + target["my"] ** 2) ** 0.5
         return dist < ARRIVE_THRESHOLD_MM
-    return target.get("area", 0) >= AREA_THRESHOLD
+    frame_w  = FRAME_W or 640
+    centered = abs(target["cx"] - frame_w / 2) <= CENTER_MARGIN_PX
+    return centered and target.get("area", 0) >= AREA_THRESHOLD
 
 
 # ── OpenRB 명령 전송 ─────────────────────────────────────
@@ -343,11 +357,16 @@ try:
             control_wheels(target)
 
             if at_target:
-                send_grip(target)
-                robot_state  = RobotState.GRIPPING
-                grip_sent_at = time.time()
-                print(f"[상태] SEARCHING → GRIPPING (grip: {target['cls']})")
+                confirm_count += 1
+                print(f"[타겟] 도달 확인 {confirm_count}/{CONFIRM_FRAMES}", end="\r")
+                if confirm_count >= CONFIRM_FRAMES:
+                    confirm_count = 0
+                    send_grip(target)
+                    robot_state  = RobotState.GRIPPING
+                    grip_sent_at = time.time()
+                    print(f"\n[상태] SEARCHING → GRIPPING (grip: {target['cls']})")
             else:
+                confirm_count = 0
                 send_idle()
 
         elif robot_state == RobotState.GRIPPING:
@@ -388,8 +407,9 @@ try:
             control_wheels(None)
             elapsed = time.time() - storage_phase_start
             if openrb_done:
-                openrb_done = False
-                robot_state = RobotState.SEARCHING
+                openrb_done   = False
+                confirm_count = 0
+                robot_state   = RobotState.SEARCHING
                 print(f"[상태] DROPPING → SEARCHING ({elapsed:.1f}s)")
             else:
                 print(f"[상태] 내려놓는중...", end="\r")
