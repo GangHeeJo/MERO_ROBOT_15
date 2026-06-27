@@ -2,28 +2,28 @@
  * MERO_AI_ROBOT — OpenRB 메인 제어
  * ──────────────────────────────────
  * 실행 보드: OpenRB-150 (ROBOTIS)
- * 역할: Jetson JSON 수신 → 팔·그리퍼 제어
+ * 역할: Jetson JSON 수신 → 그리퍼 제어
  *
  * 연결:
  *   Jetson → OpenRB: USB-C (/dev/ttyACM1, 115200)
- *   OpenRB → Dynamixel: 내장 포트 (XL430 × 6, XC330 × 2)
+ *   OpenRB → Dynamixel: 내장 포트 (XC330 × 1 그리퍼)
  *
  * Jetson이 보내는 명령:
- *   {"cmd":"grip", "cls":"d8", "mx":12.3, "my":-5.1}  ← 물체 집기
- *   {"cmd":"drop"}                                       ← 보관함에 내려놓기
- *   {"cmd":"idle"}                                       ← 대기
+ *   {"cmd":"grip", "cls":"d8"}  ← 그리퍼 닫기
+ *   {"cmd":"drop"}              ← 그리퍼 열기
+ *   {"cmd":"idle"}              ← 대기
  *
  * OpenRB가 보내는 응답:
- *   {"status":"gripped"}  ← 집기 완료 (Python → GO_TO_STORAGE로 전환)
- *   {"status":"done"}     ← 내려놓기+홈 복귀 완료 (Python → SEARCHING 복귀)
+ *   {"status":"gripped"}     ← 집기 완료 (Python → GO_TO_STORAGE로 전환)
+ *   {"status":"grip_failed"} ← 전류 미달, 집기 실패 (Python → SEARCHING 복귀)
+ *   {"status":"done"}        ← 내려놓기 완료 (Python → SEARCHING 복귀)
  *
  * 상태 머신:
- *   IDLE → (grip) → GRIPPING → HOLDING → (drop) → DROPPING → RETURNING → IDLE
+ *   IDLE → (grip) → GRIPPING → HOLDING → (drop) → DROPPING → IDLE
  *
  * 파일 구성:
  *   main.ino    — 시리얼 수신, 상태 머신 (이 파일)
- *   arm.ino     — 팔 관절 XL430 × 6 (구성 확정 후 구현)
- *   gripper.ino — 그리퍼 손가락 XC330 × 2
+ *   gripper.ino — 그리퍼 XC330 × 1 (랙-피니언)
  *
  * 필요 라이브러리: ArduinoJson, Dynamixel2Arduino
  */
@@ -52,16 +52,8 @@ enum State {
   RETURNING  // 팔 홈 복귀
 };
 
-// ── 현재 타겟 정보 ────────────────────────────────────────
-struct Target {
-  char  cls[16];
-  float mx;     // 집기 위치 가로 오프셋 (mm, 양수=오른쪽)
-  float my;     // 집기 위치 세로 오프셋 (mm, 양수=앞쪽)
-  bool  valid;
-};
-
-State  currentState  = IDLE;
-Target currentTarget = {"", 0, 0, false};
+State currentState = IDLE;
+char  currentCls[16] = "";
 
 // ── JSON 파싱 ─────────────────────────────────────────────
 void parseCommand(const String& json) {
@@ -75,13 +67,10 @@ void parseCommand(const String& json) {
   }
 
   if (strcmp(cmd, "grip") == 0 && currentState == IDLE) {
-    strlcpy(currentTarget.cls, doc["cls"] | "unknown", sizeof(currentTarget.cls));
-    currentTarget.mx    = doc["mx"] | 0.0f;
-    currentTarget.my    = doc["my"] | 0.0f;
-    currentTarget.valid = true;
-    currentState        = GRIPPING;
+    strlcpy(currentCls, doc["cls"] | "unknown", sizeof(currentCls));
+    currentState = GRIPPING;
     JETSON_SERIAL.print("[OpenRB] grip 수신 → GRIPPING: ");
-    JETSON_SERIAL.println(currentTarget.cls);
+    JETSON_SERIAL.println(currentCls);
     return;
   }
 
@@ -100,19 +89,12 @@ void updateStateMachine() {
       break;   // parseCommand()에서 GRIPPING으로 전환
 
     case GRIPPING:
-      // 1. 팔을 집기 위치로 하강
-      armPickUp(currentTarget.mx, currentTarget.my);
-      // 2. 그리퍼 닫기 — 전류로 성공 여부 확인
       if (gripperClose()) {
-        // 집기 성공 → 이동 자세로 팔 이동
-        armTransport();
         JETSON_SERIAL.println("{\"status\":\"gripped\"}");
         currentState = HOLDING;
       } else {
-        // 집기 실패 → 그리퍼 열고 홈 복귀 후 IDLE
         gripperOpen();
-        armHome();
-        currentTarget.valid = false;
+        currentCls[0] = '\0';
         JETSON_SERIAL.println("{\"status\":\"grip_failed\"}");
         currentState = IDLE;
       }
@@ -122,20 +104,10 @@ void updateStateMachine() {
       break;   // parseCommand()에서 DROPPING으로 전환
 
     case DROPPING:
-      // 1. 보관함 드롭 자세로 팔 이동
-      armDrop();
-      // 2. 그리퍼 열기
       gripperOpen();
-      currentState = RETURNING;
-      break;
-
-    case RETURNING:
-      // 팔 홈 복귀
-      armHome();
-      currentTarget.valid = false;
-      currentState        = IDLE;
-      // 내려놓기+복귀 완료 → Jetson에 신호 → Python SEARCHING 복귀
+      currentCls[0] = '\0';
       JETSON_SERIAL.println("{\"status\":\"done\"}");
+      currentState = IDLE;
       break;
   }
 }
@@ -145,7 +117,6 @@ void setup() {
   JETSON_SERIAL.begin(115200);
   dxl.begin(DXL_BAUD_RATE);
   dxl.setPortProtocolVersion(DXL_PROTOCOL_VERSION);
-  armSetup();
   gripperSetup();
   JETSON_SERIAL.println("[OpenRB] 준비 완료. grip 명령 대기 중...");
 }

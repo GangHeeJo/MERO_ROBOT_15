@@ -14,7 +14,7 @@
 - 보드: NVIDIA Jetson Orin Nano
 - 로봇 플랫폼: Waveshare UGV02 (내장 컨트롤러: ESP32 — 바퀴 제어)
 - 팔·그리퍼 컨트롤러: ROBOTIS OpenRB-150 (Dynamixel 제어)
-- 다이나믹셀: XL430 × 6 (팔 관절), XC330 × 1 (그리퍼, 랙-피니언으로 양 손가락 구동)
+- 다이나믹셀: XC330 × 1 (그리퍼, 랙-피니언으로 양 손가락 구동) — 팔 없음
 - 카메라: Arducam USB
 
 **대회 태스크**
@@ -122,10 +122,9 @@ MERO_AI_ROBOT/
 │       ├── best.pt                # 학습 가중치 (d6/d8/d12/d20 전체)
 │       ├── best.engine            # TensorRT 파일 (Jetson 변환 후)
 │       └── calibration.json       # 캘리브레이션 결과 (1회 실행 후)
-├── robot/                         # 로봇팀 (OpenRB Arduino — 팔·그리퍼만)
+├── robot/                         # 로봇팀 (OpenRB Arduino — 그리퍼만)
 │   ├── main.ino                   # JSON 수신 + 상태 머신
-│   ├── arm.ino                    # XL430 × 6 팔 관절 (구성 확정 후)
-│   └── gripper.ino                # XC330 × 2 그리퍼 손가락
+│   └── gripper.ino                # XC330 × 1 그리퍼 (랙-피니언)
 ├── ros2/                          # ROS2 패키지 (Jetson robot_ws/src/에 배포)
 │   └── mobility_pkg/
 │       ├── mobility_pkg/
@@ -158,9 +157,8 @@ MERO_AI_ROBOT/
 
 | 파일 | 역할 |
 |------|------|
-| `robot/main.ino` | Jetson pick 명령 수신 → 팔·그리퍼 상태 머신 실행 |
-| `robot/arm.ino` | XL430 × 6 팔 관절 제어 (구성 확정 대기 중, 스텁 상태) |
-| `robot/gripper.ino` | XC330 × 2 그리퍼 손가락 제어. Dynamixel2Arduino 사용 |
+| `robot/main.ino` | Jetson grip/drop 명령 수신 → 그리퍼 상태 머신 실행 |
+| `robot/gripper.ino` | XC330 × 1 그리퍼 제어 (랙-피니언). Dynamixel2Arduino 사용 |
 
 > 바퀴 제어(ESP32)는 `vision/src/main.py`의 `control_wheels()`가 직접 담당.
 
@@ -173,8 +171,8 @@ SEARCHING                                 IDLE
   탐지 + 이동 (바퀴 제어)
   ↓ 도달 (면적≥40000 또는 dist<30mm)
   grip 명령 전송 ──────────────────────▶ GRIPPING
-GRIPPING                                    팔 집기 + 그리퍼 닫기(전류 감지)
-  바퀴 정지, 신호 대기                 ◀── {"status":"gripped"}  → HOLDING
+GRIPPING                                    그리퍼 닫기 (전류 감지)
+  바퀴 정지, 신호 대기                 ◀── {"status":"gripped"}     → HOLDING
   ├─ gripped → GO_TO_STORAGE           ◀── {"status":"grip_failed"} → IDLE
   ├─ grip_failed → SEARCHING (복귀)
   └─ timeout(15s) → SEARCHING (복귀)
@@ -183,9 +181,9 @@ GO_TO_STORAGE
   (전체 15초 타임아웃 — 초과 시 SEARCHING 복귀)
   ↓ 도착
   drop 명령 전송 ──────────────────────▶ DROPPING
-DROPPING                                  팔 드롭자세 + 그리퍼 열기
-  바퀴 정지, done 신호 대기 ◀─────────── RETURNING → armHome()
-  ├─ done → SEARCHING (복귀)              {"status":"done"} → IDLE
+DROPPING                                  그리퍼 열기
+  바퀴 정지, done 신호 대기 ◀─────────── {"status":"done"} → IDLE
+  ├─ done → SEARCHING (복귀)
   └─ timeout(15s) → SEARCHING (복귀)
 ```
 
@@ -197,7 +195,6 @@ DROPPING                                  팔 드롭자세 + 그리퍼 열기
 | `main.py` | `STORAGE_BACKUP_SECS` / `STORAGE_TURN_SECS` / `STORAGE_DRIVE_SECS` | 보관함 고정 경로 시간 실측 조정 |
 | `gripper.ino` | `GRIP_CURRENT_THRESHOLD` | 빈 손 닫기 vs 물체 잡기 전류 측정 후 중간값 설정 (현재 30mA) |
 | `gripper.ino` | `FINGER_OPEN_DEG` / `FINGER_CLOSE_DEG` | 실물 테스트 후 실제 각도 측정·수정 |
-| `arm.ino` | 전체 구현 | 팔 관절 구성 확정 후 각 자세 각도 입력 (armPickUp/armTransport/armDrop/armHome) |
 
 ### 필요 라이브러리 (Arduino IDE 라이브러리 매니저)
 
@@ -251,7 +248,6 @@ OpenRB 내장 Dynamixel 포트 (`Serial1`) 사용 — 방향핀 별도 불필요
 | 서보 | ID | 모델 | 전원 |
 |------|-----|------|------|
 | 그리퍼 (랙-피니언, 양 손가락) | 1 | XC330 | 12V |
-| 팔 관절 1~6 | 3~8 (TBD) | XL430 | **12V** |
 
 > ⚠️ XL430은 동작 전압 12V. OpenRB 초록 단자에 12V 배터리 직결 필수.  
 > ⚠️ 두꺼운 전선 사용 — 얇은 전선 사용 시 과열/합선 위험.
@@ -407,12 +403,11 @@ Colab 노트북 실행 전 필요한 것:
   - YOLO 모델 로드 및 탐지 확인
 - [x] **OpenRB 메인 제어 코드** (`robot/main.ino`)
   - Jetson JSON 수신·파싱 (ArduinoJson)
-  - 상태 머신 (IDLE → GRIPPING → HOLDING → DROPPING → RETURNING)
-  - grip/drop 명령 분리, gripped/done 응답 신호 전송
+  - 상태 머신 (IDLE → GRIPPING → HOLDING → DROPPING → IDLE)
+  - grip/drop 명령 분리, gripped/grip_failed/done 응답 신호 전송
 - [x] **그리퍼 코드** (`robot/gripper.ino`)
-  - XC330 × 2 위치 제어 (Protocol 2.0, 57600 baud)
-- [x] **팔 코드 스텁** (`robot/arm.ino`)
-  - armPickUp / armTransport / armDrop / armHome 인터페이스 정의
+  - XC330 × 1 위치 제어 (Protocol 2.0, 57600 baud), 랙-피니언 단일 모터
+  - 전류 기반 집기 감지 (gripperClose() bool 반환)
 - [x] **`vision/src/main.py` 완성** (2026-06-26)
   - 4단계 상태 머신 (SEARCHING/GRIPPING/GO_TO_STORAGE/DROPPING)
   - calibration 유무 자동 감지 (mm 모드 / 픽셀 면적 모드)
@@ -455,9 +450,8 @@ Colab 노트북 실행 전 필요한 것:
 
 | 우선순위 | 작업 | 비고 |
 |----------|------|------|
-| 🔴 높음 | `arm.ino` 구현 | 팔 관절 구성 확정 후 각 자세 각도 입력 |
 | 🔴 높음 | OpenRB + Dynamixel 연결 및 동작 테스트 | 전원 구성 확정 후 |
-| 🔴 높음 | 전원 배선 완성 | 보조배터리(젯슨) + UGV배터리(팔·그리퍼) |
+| 🔴 높음 | 전원 배선 완성 | 보조배터리(젯슨) + UGV배터리(그리퍼) |
 | 🔴 높음 | 과일 데이터 촬영 (4종) | 현재 0장 — 폰으로 과일 프린트 후 ArduCAM 촬영 |
 | 🔴 높음 | 과일 클래스 라벨링 + 재학습 | 촬영 후 Roboflow → Colab |
 | 🟡 중간 | `GRIP_CURRENT_THRESHOLD` 실측 | 빈 손 닫기 vs 물체 잡기 전류 차이 측정 (현재 30mA) |
