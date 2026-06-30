@@ -24,6 +24,7 @@ OpenRB 응답:
 
 import argparse
 import cv2
+import glob
 import os
 import json
 import time
@@ -36,6 +37,8 @@ from ultralytics import YOLO
 parser = argparse.ArgumentParser()
 parser.add_argument('--cls', nargs='+', default=None,
                     help='타겟 클래스 목록 (예: --cls d8 apple). 미지정 시 모든 클래스 대상')
+parser.add_argument('--timer', action='store_true',
+                    help='3분 경기 타이머 표시')
 args       = parser.parse_args()
 TARGET_CLS    = set(args.cls) if args.cls else None
 SHAPE_CLASSES = {'d6', 'd8', 'd12', 'd20'}
@@ -80,14 +83,20 @@ CONF_THRESHOLD_SHAPE = 0.5   # shape 클래스 confidence 임계값
 CONF_THRESHOLD_FRUIT = 0.7   # 과일 클래스 — 오픽업 패널티 40점이라 높게 설정
 
 def select_target(objects: list) -> dict | None:
-    """--cls 필터 + 목표 개수 미달 + 클래스별 confidence 임계값 통과한 것 중 area 최대 반환."""
+    """--cls 필터 + 목표 개수 미달 + 블랙리스트 제외 + confidence 통과한 것 중 area 최대 반환."""
     if not objects:
         return None
+    now = time.time()
+    expired = [k for k, v in _blacklist.items() if now - v >= BLACKLIST_SECS]
+    for k in expired:
+        del _blacklist[k]
     filtered = []
     for o in objects:
         if TARGET_CLS and o['cls'] not in TARGET_CLS:
             continue
         if pickup_counts.get(o['cls'], 0) >= max_count(o['cls']):
+            continue
+        if o['id'] in _blacklist:
             continue
         threshold = CONF_THRESHOLD_FRUIT if o['cls'] in FRUIT_CLASSES else CONF_THRESHOLD_SHAPE
         if o['conf'] >= threshold:
@@ -97,9 +106,20 @@ def select_target(objects: list) -> dict | None:
     return max(filtered, key=lambda o: o['area'])
 
 
-# ── 시리얼 포트 ──────────────────────────────────────────
-ESP32_PORT  = "/dev/ttyACM0"   # CH343 드라이버 → ACM
-OPENRB_PORT = "/dev/ttyACM1"
+# ── 시리얼 포트 자동 감지 ────────────────────────────────
+def _find_port(keywords, fallback):
+    """USB ID 키워드로 포트 자동 탐지 (Linux /dev/serial/by-id/ 기반)."""
+    for path in glob.glob("/dev/serial/by-id/*"):
+        name = path.lower()
+        if any(k.lower() in name for k in keywords):
+            detected = os.path.realpath(path)
+            print(f"[포트] {keywords[0]} → {detected}")
+            return detected
+    print(f"[포트] {keywords[0]} 자동 탐지 실패 → 기본값 {fallback}")
+    return fallback
+
+ESP32_PORT  = _find_port(["1a86", "ch343", "ch34"], "/dev/ttyACM0")   # CH343 드라이버
+OPENRB_PORT = _find_port(["openrb", "robotis", "2ecc"], "/dev/ttyACM1")
 BAUD_RATE   = 115200
 
 # ── 바퀴 제어 파라미터 ───────────────────────────────────
@@ -130,6 +150,14 @@ GRIP_TIMEOUT_SECS    = 15.0   # grip 전송 후 gripped 신호 최대 대기
 DROP_TIMEOUT_SECS    = 15.0   # drop 전송 후 done 신호 최대 대기
 STORAGE_TIMEOUT_SECS = 15.0   # GO_TO_STORAGE 전체 최대 시간
 
+# 집기 실패 블랙리스트
+BLACKLIST_SECS = 10.0   # 집기 실패한 track_id 무시 시간
+_blacklist: dict = {}   # {track_id: 실패 시각}
+
+# 경기 타이머
+MATCH_DURATION_SECS = 180.0
+match_start_time    = time.time() if args.timer else None
+
 # ── 보관함 이동 고정 경로 파라미터 ──────────────────────
 # 경기장: 4m×4m / 출발=우하단 / 보관함=좌하단
 # 순서: ① 후진(STORAGE_BACKUP_SECS초) → ② 좌회전(STORAGE_TURN_SECS초) → ③ 직진(STORAGE_DRIVE_SECS초)
@@ -158,6 +186,7 @@ storage_enter_time  = 0.0
 confirm_count       = 0
 last_target_id      = -1
 gripped_cls         = None
+gripped_id          = -1
 pickup_counts       = {}   # {cls: 보관함에 넣은 개수}
 
 # ── 시리얼 연결 ──────────────────────────────────────────
@@ -421,6 +450,7 @@ try:
                     confirm_count  = 0
                     last_target_id = -1
                     gripped_cls    = target["cls"]
+                    gripped_id     = target["id"]
                     openrb_gripped     = False   # stale 신호 초기화
                     openrb_done        = False
                     openrb_grip_failed = False
@@ -450,6 +480,9 @@ try:
                 openrb_done        = False
                 confirm_count      = 0
                 last_target_id     = -1
+                if gripped_id != -1:
+                    _blacklist[gripped_id] = time.time()
+                    print(f"\n[블랙리스트] ID={gripped_id} → {BLACKLIST_SECS:.0f}초 무시")
                 robot_state        = RobotState.SEARCHING
                 print(f"\n[상태] GRIPPING → SEARCHING (집기 실패)")
             elif elapsed > GRIP_TIMEOUT_SECS:
@@ -582,6 +615,15 @@ try:
             bc = (0, 255, 0) if battery_v >= 11.5 else (0, 165, 255) if battery_v >= 10.0 else (0, 0, 255)
             cv2.putText(annotated_frame, f"BAT: {battery_v:.2f}V",
                         (w - 150, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, bc, 2)
+
+        # 경기 타이머
+        if match_start_time is not None:
+            remaining = max(0.0, MATCH_DURATION_SECS - (time.time() - match_start_time))
+            mins = int(remaining // 60)
+            secs = int(remaining % 60)
+            tc = (0, 0, 255) if remaining < 30 else (0, 165, 255) if remaining < 60 else (0, 255, 255)
+            cv2.putText(annotated_frame, f"{mins}:{secs:02d}",
+                        (w // 2 - 25, 35), cv2.FONT_HERSHEY_SIMPLEX, 1.0, tc, 2)
 
         # FPS
         fps_counter += 1
