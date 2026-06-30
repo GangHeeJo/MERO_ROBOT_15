@@ -23,6 +23,104 @@
 
 ---
 
+## 로봇 테스트 당일 — 단계별 진행 순서
+
+> 처음 테스트하는 사람 기준. 순서대로 따라하면 됨.
+
+### STEP 1. 하드웨어 연결 (물리)
+
+1. **젯슨 전원**: 파워뱅크(모루이 MT-65) → USB-C PD 케이블(15V) → 젯슨 배럴잭
+2. **그리퍼 전원**: UGV 내장 12V 배터리 → OpenRB-150 초록 단자 (두꺼운 전선)
+3. **XC330 연결**: XC330 Dynamixel 케이블 → OpenRB-150 Dynamixel 포트
+4. **USB 연결**: 젯슨 ↔ ESP32(UGV), 젯슨 ↔ OpenRB-150 (USB-A to USB-B)
+5. **카메라**: ArduCAM USB → 젯슨 USB 3.0 포트
+
+### STEP 2. Dynamixel Wizard (PC, 처음 1회만)
+
+> 목적: XC330의 ID와 통신 속도가 맞는지 확인
+
+1. PC에 Dynamixel Wizard 2.0 설치 (ROBOTIS 공식 사이트)
+2. OpenRB-150을 PC에 USB 연결
+3. Scan → XC330이 **ID=1, Baudrate=57600** 으로 보이는지 확인
+4. 다르면 Wizard에서 ID=1, Baudrate=57600으로 변경 후 저장
+
+### STEP 3. Arduino 코드 업로드 (PC, 처음 1회만)
+
+> 목적: OpenRB-150에 그리퍼 제어 코드 올리기
+
+1. Arduino IDE 실행
+2. `robot/main.ino` 열기 (같은 폴더에 `gripper.ino` 있어야 함)
+3. **보드 선택**: Tools → Board → OpenRB-150
+4. **포트 선택**: Tools → Port → OpenRB-150 잡힌 COM 포트
+5. 업로드 (→ 버튼)
+6. 라이브러리 오류 시: Library Manager에서 `ArduinoJson`, `Dynamixel2Arduino` 설치
+
+### STEP 4. 젯슨 SSH 접속
+
+```bash
+# PC 터미널에서 (젯슨과 같은 와이파이/핫스팟 연결 필요)
+ssh mero@172.20.10.5
+```
+
+> 젯슨 핫스팟 이름/비번 확인 후 PC 연결. IP가 다를 경우 `hostname -I`로 확인.
+
+### STEP 5. USB 권한 열기 (매번 필요)
+
+```bash
+# 젯슨 터미널에서
+sudo chmod 666 /dev/ttyACM0   # ESP32 (UGV 바퀴)
+sudo chmod 666 /dev/ttyACM1   # OpenRB (그리퍼)
+
+# 포트 확인 (꽂는 순서에 따라 0/1 바뀔 수 있음)
+ls /dev/ttyACM*
+```
+
+### STEP 6. 메인 코드 실행
+
+```bash
+# 젯슨 터미널에서
+cd ~/MERO_AI_ROBOT
+python vision/src/main.py            # 기본 실행 (모든 클래스 탐지)
+python vision/src/main.py --cls d8   # d8만 픽업
+python vision/src/main.py --timer    # 3분 타이머 화면 표시
+```
+
+> 카메라 화면이 뜨고 탐지 박스가 보이면 정상.  
+> 포트 오류 시: `vision/src/main.py` 상단 `ESP32_PORT` / `OPENRB_PORT` 값 확인
+
+### STEP 7. 실측 및 값 조정
+
+연결 후 아래 값들을 실측해서 코드에 반영:
+
+| 항목 | 파일 | 현재 기본값 | 측정 방법 |
+|------|------|------------|-----------|
+| `FINGER_OPEN_DEG` | `robot/gripper.ino` | 150 | Wizard 토크 OFF → 손으로 완전히 열기 → Present Position |
+| `FINGER_CLOSE_DEG` | `robot/gripper.ino` | 90 | 손으로 물체 잡을 만큼 닫기 → Present Position |
+| `GRIP_CURRENT_THRESHOLD` | `robot/gripper.ino` | 30mA | 빈 손 닫기 전류 / 물체 잡기 전류 → 중간값 |
+| `AREA_THRESHOLD` | `vision/src/main.py` | 40000 | 실행 중 물체 바로 앞에서 터미널 area 값 확인 |
+| `STORAGE_BACKUP_SECS` | `vision/src/main.py` | 0.8s | 집은 후 후진 충분한 시간 |
+| `STORAGE_TURN_SECS` | `vision/src/main.py` | 2.0s | 보관함 방향 좌회전 완료 시간 |
+| `STORAGE_DRIVE_SECS` | `vision/src/main.py` | 3.0s | 보관함까지 직진 시간 |
+
+값 수정 후 Arduino 재업로드 또는 Python 재실행 필요.
+
+### STEP 8. 캘리브레이션 (선택, 카메라 위치 확정 후)
+
+```bash
+# 1. 사진 촬영 (SSH 환경)
+python vision/src/calibration.py --capture
+# → vision/model/calib_frame.jpg 생성됨
+
+# 2. PC에서 calib_frame.jpg 열어서 기준 물체 양 끝 픽셀 좌표 확인
+
+# 3. 좌표 입력해서 비율 계산
+python vision/src/calibration.py --calc x1 y1 x2 y2 실제거리mm
+# 예: python vision/src/calibration.py --calc 120 300 540 300 210
+# → vision/model/calibration.json 생성 → main.py 자동 적용
+```
+
+---
+
 ## 구매 내역
 
 ### 구매 내역
@@ -297,6 +395,7 @@ OpenRB 내장 Dynamixel 포트 (`Serial1`) 사용 — 방향핀 별도 불필요
 
 ## 학습 파이프라인
 
+**기본 (수동 라벨링):**
 ```
 1. Roboflow 라벨링 (바운딩박스)
       ↓
@@ -307,6 +406,31 @@ OpenRB 내장 Dynamixel 포트 (`Serial1`) 사용 — 방향핀 별도 불필요
 4. python vision/src/trt_export.py (Jetson)
       ↓
 5. vision/model/best.engine → main.py에서 자동 사용
+```
+
+**대안 — SAM2 자동 라벨링 (과일큐브 권장):**
+```
+1. 과일큐브 영상 촬영 (30초~1분짜리)
+      ↓
+2. Colab에서 SAM2 실행
+   - 1프레임에서 큐브 클릭 한 번
+   - → 나머지 전 프레임 자동 마스크 전파
+      ↓
+3. YOLO 포맷으로 annotation export
+      ↓
+4. train.ipynb에서 YOLOv8s fine-tuning (기존 방식 동일)
+      ↓
+5. vision/model/best.pt 교체
+```
+
+> 수동 Roboflow 라벨링 대비 시간 대폭 절감. 모델 자체는 YOLOv8s 유지 (Jetson TensorRT 호환).
+
+**성능 비교 방법 (old vs new best.pt):**
+```bash
+# 같은 validation 이미지로 두 모델 mAP 비교
+yolo val model=vision/model/best_old.pt data=data.yaml   # 기존
+yolo val model=vision/model/best.pt     data=data.yaml   # 신규
+# → mAP@50 수치 비교. 필드 테스트(대회 조명/배경)가 더 중요
 ```
 
 Colab 노트북 실행 전 필요한 것:
@@ -505,7 +629,7 @@ Colab 노트북 실행 전 필요한 것:
 | 우선순위 | 작업 | 방법 |
 |----------|------|------|
 | 🔴 높음 | 과일큐브 촬영 | 흰색 큐브에 과일 이미지 부착 후 ArduCAM으로 촬영 (실제 과일 X) — apple/banana 교체 + orange/pineapple 신규 |
-| 🔴 높음 | 과일 클래스 라벨링 + 재학습 | Roboflow 업로드 → 바운딩박스 라벨링 → `train.ipynb` (Colab) → `best.pt` 교체 |
+| 🔴 높음 | 과일 클래스 라벨링 + 재학습 | **SAM2 자동 라벨링 권장** (영상 1프레임 클릭 → 전체 자동 마스크) → YOLO 포맷 export → `train.ipynb` (Colab) → `best.pt` 교체. 또는 Roboflow 수동 라벨링 |
 | 🟡 중간 | TensorRT 변환 | Jetson에서: `python vision/src/trt_export.py` → `best.engine` 생성 (FPS 향상) |
 
 ### 테스트
