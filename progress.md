@@ -1,6 +1,6 @@
 # MERO AI ROBOT — Progress
 
-> 최종 업데이트: 2026-06-27  
+> 최종 업데이트: 2026-06-30  
 > 비전 담당: 조강희
 
 ---
@@ -42,6 +42,87 @@
 
 ---
 
+## 내일 할 일 ✅ (2026-07-01)
+
+> 이 순서대로 하면 됨. 각 단계 완료 후 체크.
+
+### Step 1 — OpenRB + XC330 연결 및 Arduino 업로드
+```
+1. OpenRB-150 USB-C → 컴퓨터 연결
+2. XC330 Dynamixel 케이블 → OpenRB Dynamixel 포트 연결
+3. 12V 전원 → OpenRB 초록 단자 연결 (UGV 내장 배터리)
+4. Dynamixel Wizard 실행
+   - XC330 ID = 1, Baudrate = 57600 확인 / 설정
+5. Arduino IDE → 보드: OpenRB-150 선택
+6. robot/main.ino + robot/gripper.ino 업로드
+```
+
+### Step 2 — 그리퍼 각도 실측 (`gripper.ino` 수정 필요)
+```
+현재 임시값: FINGER_OPEN_DEG=150, FINGER_CLOSE_DEG=90
+
+Dynamixel Wizard에서:
+1. 토크 OFF 상태로 손으로 그리퍼 끝까지 열기 → Present Position 값 기록 → FINGER_OPEN_DEG
+2. 손으로 물체 잡을 만큼 닫기 → Present Position 값 기록 → FINGER_CLOSE_DEG
+3. gripper.ino 상단 두 값 수정 후 재업로드
+```
+
+### Step 3 — 전류 임계값 실측 (`gripper.ino` 수정 필요)
+```
+현재 임시값: GRIP_CURRENT_THRESHOLD=30 (mA)
+
+Arduino 시리얼 모니터(115200) 열고:
+1. 빈 손으로 그리퍼 닫기 → "[그리퍼] 닫힘 — 전류: XXmA" 확인 → 값 기록
+2. 물체(d8 등) 잡고 그리퍼 닫기 → 전류값 기록
+3. 두 값의 중간값으로 GRIP_CURRENT_THRESHOLD 설정 후 재업로드
+
+Jetson에서 테스트:
+{"cmd":"grip","cls":"d8"} 전송 → gripped / grip_failed 확인
+```
+
+### Step 4 — UGV 바퀴 + Jetson 연결 및 main.py 실행
+```bash
+# Jetson SSH 접속 (핫스팟)
+ssh jetson@172.20.10.5
+
+# USB 권한
+sudo chmod 666 /dev/ttyACM0   # ESP32
+sudo chmod 666 /dev/ttyACM1   # OpenRB
+
+# 실행 (d8 타겟으로 테스트)
+cd ~/MERO_ROBOT_15
+python vision/src/main.py --cls d8
+
+# 확인할 것:
+# - [포트] 자동 탐지 메시지 뜨는지
+# - 카메라에서 d8 탐지되는지
+# - 탐지 후 바퀴 이동하는지
+```
+
+### Step 5 — AREA_THRESHOLD 실측 (`main.py` 수정 필요)
+```
+현재 임시값: AREA_THRESHOLD=40000
+
+main.py 실행 중 터미널에서:
+[탐지] ID=X | d8 conf=0.91 | (cx, cy) area=XXXXX
+
+로봇이 물체 바로 앞(집을 수 있는 거리)일 때 area 값 기록
+→ 그 값으로 AREA_THRESHOLD 수정
+```
+
+### Step 6 — 보관함 경로 실측 (`main.py` 수정 필요)
+```
+현재 임시값: STORAGE_BACKUP_SECS=0.8 / STORAGE_TURN_SECS=2.0 / STORAGE_DRIVE_SECS=3.0
+
+물체 집은 자리에서 보관함(좌측 하단)까지:
+1. 후진 몇 초? → STORAGE_BACKUP_SECS
+2. 좌회전 몇 초? → STORAGE_TURN_SECS
+3. 직진 몇 초? → STORAGE_DRIVE_SECS
+수동으로 바퀴 제어하면서 측정 후 수정
+```
+
+---
+
 ## 시스템 아키텍처
 
 ```
@@ -50,17 +131,18 @@
 │  Orin Nano   │                                    └─────────────┘
 │  (vision/    │
 │  src/main.py)│     /dev/ttyACM1                   ┌─────────────┐
-│              │ ──── {"cmd":"grip"/"drop"} ────────▶ │  OpenRB-150 │ → XL430 × 6 (팔)
-│              │ ◀─── {"status":"gripped"/"done"} ── │             │ → XC330 × 2 (그리퍼)
+│              │ ──── {"cmd":"grip"/"drop"} ────────▶ │  OpenRB-150 │ → XC330 × 1 (그리퍼)
+│              │ ◀─── {"status":"gripped"/           │             │   랙-피니언 구조
+│              │       "grip_failed"/"done"} ──────── │             │
 └──────────────┘                                    └─────────────┘
       ▲
-      │ Arducam USB (/dev/video0)
+      │ Arducam USB (/dev/video0 또는 video1)
   카메라
 ```
 
 **Jetson에서 나가는 신호 두 가지:**
 1. `/dev/ttyACM0` → ESP32: 바퀴 속도 명령 `{"T":1,"L":...,"R":...}` (CH343 드라이버 → ACM)
-2. `/dev/ttyACM1` → OpenRB: 팔·그리퍼 명령 (`grip` / `drop` / `idle`)
+2. `/dev/ttyACM1` → OpenRB: 그리퍼 명령 (`grip` / `drop` / `idle`)
 
 ---
 
@@ -279,17 +361,18 @@ OpenRB 내장 Dynamixel 포트 (`Serial1`) 사용 — 방향핀 별도 불필요
 
 | 클래스 | 장수 | 비고 |
 |--------|------|------|
-| d6 | 85장 | 파일명 정리 완료 (d6_1 ~ d6_85) |
+| d6 | 85장 | |
 | d8 | 150장 | |
-| d12 | 136장 | d12_2.mp4가 실제로는 d20이었음 → d20으로 이동 완료 |
+| d12 | 136장 | |
 | d20 | 185장 | |
-| apple | 0장 | 미수집 |
-| banana | 0장 | 미수집 |
+| apple | 163장 | ⚠️ 실제 과일 영상 추출 — 대회용 아님. 과일 이미지 붙인 **흰색 큐브** 촬영 후 교체 필요 |
+| banana | 146장 | ⚠️ 동일 |
 | orange | 0장 | 미수집 |
 | pineapple | 0장 | 미수집 |
 
 > ✅ 대회 환경에서 재촬영 완료 (2026-06-25)  
-> ✅ `best.pt` d6/d8/d12/d20 전체 클래스 학습 완료 (YOLOv8s, imgsz=640)
+> ✅ `best.pt` d6/d8/d12/d20 전체 클래스 학습 완료 (YOLOv8s, imgsz=640)  
+> ⚠️ `vision/DATASET/` 는 .gitignore 제외 — 깃에 올라가지 않음
 
 ---
 
@@ -310,6 +393,29 @@ OpenRB 내장 Dynamixel 포트 (`Serial1`) 사용 — 방향핀 별도 불필요
 Colab 노트북 실행 전 필요한 것:
 - Roboflow API 키
 - Google Drive 마운트
+
+---
+
+## 2026-06-30 작업 내역
+
+- **시리얼 포트 자동 감지 추가** (`vision/src/main.py`)
+  - `/dev/serial/by-id/` USB ID 기반 자동 매칭 (CH343 → ESP32, OpenRB → 그리퍼)
+  - 케이블 꽂는 순서 바뀌어도 자동으로 올바른 포트 사용
+  - 탐지 실패 시 기본값(`/dev/ttyACM0`, `/dev/ttyACM1`) fallback
+
+- **경기 타이머 추가** (`vision/src/main.py`)
+  - `--timer` 플래그로 화면 중앙 상단에 3분 카운트다운 표시
+  - 60초 미만 주황, 30초 미만 빨강으로 색상 변화
+  - 예: `python vision/src/main.py --cls d8 --timer`
+
+- **룰북 검토 완료**
+  - 세트1 4개(10점×4=40점) + 세트2 3개(20점×3=60점) = 100점 달성 조건 확인
+  - `--cls d8 apple` 처럼 두 클래스 동시 지정으로 100점 도전 가능
+  - 과일큐브 = d6와 외형 동일 → 모델이 과일 이미지로 구분해야 함
+
+- **과일 데이터 현황 파악**
+  - apple(163장)/banana(146장) 영상 프레임 추출 완료 (`vision/DATASET/image-based/`)
+  - ⚠️ 실제 과일 영상 — 대회 물체(과일 이미지 붙인 흰색 큐브)와 다름 → 큐브 촬영으로 교체 필요
 
 ---
 
