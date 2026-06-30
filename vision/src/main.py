@@ -83,20 +83,14 @@ CONF_THRESHOLD_SHAPE = 0.5   # shape 클래스 confidence 임계값
 CONF_THRESHOLD_FRUIT = 0.7   # 과일 클래스 — 오픽업 패널티 40점이라 높게 설정
 
 def select_target(objects: list) -> dict | None:
-    """--cls 필터 + 목표 개수 미달 + 블랙리스트 제외 + confidence 통과한 것 중 area 최대 반환."""
+    """--cls 필터 + 목표 개수 미달 + 클래스별 confidence 임계값 통과한 것 중 area 최대 반환."""
     if not objects:
         return None
-    now = time.time()
-    expired = [k for k, v in _blacklist.items() if now - v >= BLACKLIST_SECS]
-    for k in expired:
-        del _blacklist[k]
     filtered = []
     for o in objects:
         if TARGET_CLS and o['cls'] not in TARGET_CLS:
             continue
         if pickup_counts.get(o['cls'], 0) >= max_count(o['cls']):
-            continue
-        if o['id'] in _blacklist:
             continue
         threshold = CONF_THRESHOLD_FRUIT if o['cls'] in FRUIT_CLASSES else CONF_THRESHOLD_SHAPE
         if o['conf'] >= threshold:
@@ -150,10 +144,6 @@ GRIP_TIMEOUT_SECS    = 15.0   # grip 전송 후 gripped 신호 최대 대기
 DROP_TIMEOUT_SECS    = 15.0   # drop 전송 후 done 신호 최대 대기
 STORAGE_TIMEOUT_SECS = 15.0   # GO_TO_STORAGE 전체 최대 시간
 
-# 집기 실패 블랙리스트
-BLACKLIST_SECS = 10.0   # 집기 실패한 track_id 무시 시간
-_blacklist: dict = {}   # {track_id: 실패 시각}
-
 # 경기 타이머
 MATCH_DURATION_SECS = 180.0
 match_start_time    = time.time() if args.timer else None
@@ -186,7 +176,6 @@ storage_enter_time  = 0.0
 confirm_count       = 0
 last_target_id      = -1
 gripped_cls         = None
-gripped_id          = -1
 pickup_counts       = {}   # {cls: 보관함에 넣은 개수}
 
 # ── 시리얼 연결 ──────────────────────────────────────────
@@ -450,7 +439,6 @@ try:
                     confirm_count  = 0
                     last_target_id = -1
                     gripped_cls    = target["cls"]
-                    gripped_id     = target["id"]
                     openrb_gripped     = False   # stale 신호 초기화
                     openrb_done        = False
                     openrb_grip_failed = False
@@ -480,9 +468,6 @@ try:
                 openrb_done        = False
                 confirm_count      = 0
                 last_target_id     = -1
-                if gripped_id != -1:
-                    _blacklist[gripped_id] = time.time()
-                    print(f"\n[블랙리스트] ID={gripped_id} → {BLACKLIST_SECS:.0f}초 무시")
                 robot_state        = RobotState.SEARCHING
                 print(f"\n[상태] GRIPPING → SEARCHING (집기 실패)")
             elif elapsed > GRIP_TIMEOUT_SECS:
