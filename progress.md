@@ -42,87 +42,6 @@
 
 ---
 
-## 내일 할 일 ✅ (2026-07-01)
-
-> 이 순서대로 하면 됨. 각 단계 완료 후 체크.
-
-### Step 1 — OpenRB + XC330 연결 및 Arduino 업로드
-```
-1. OpenRB-150 USB-C → 컴퓨터 연결
-2. XC330 Dynamixel 케이블 → OpenRB Dynamixel 포트 연결
-3. 12V 전원 → OpenRB 초록 단자 연결 (UGV 내장 배터리)
-4. Dynamixel Wizard 실행
-   - XC330 ID = 1, Baudrate = 57600 확인 / 설정
-5. Arduino IDE → 보드: OpenRB-150 선택
-6. robot/main.ino + robot/gripper.ino 업로드
-```
-
-### Step 2 — 그리퍼 각도 실측 (`gripper.ino` 수정 필요)
-```
-현재 임시값: FINGER_OPEN_DEG=150, FINGER_CLOSE_DEG=90
-
-Dynamixel Wizard에서:
-1. 토크 OFF 상태로 손으로 그리퍼 끝까지 열기 → Present Position 값 기록 → FINGER_OPEN_DEG
-2. 손으로 물체 잡을 만큼 닫기 → Present Position 값 기록 → FINGER_CLOSE_DEG
-3. gripper.ino 상단 두 값 수정 후 재업로드
-```
-
-### Step 3 — 전류 임계값 실측 (`gripper.ino` 수정 필요)
-```
-현재 임시값: GRIP_CURRENT_THRESHOLD=30 (mA)
-
-Arduino 시리얼 모니터(115200) 열고:
-1. 빈 손으로 그리퍼 닫기 → "[그리퍼] 닫힘 — 전류: XXmA" 확인 → 값 기록
-2. 물체(d8 등) 잡고 그리퍼 닫기 → 전류값 기록
-3. 두 값의 중간값으로 GRIP_CURRENT_THRESHOLD 설정 후 재업로드
-
-Jetson에서 테스트:
-{"cmd":"grip","cls":"d8"} 전송 → gripped / grip_failed 확인
-```
-
-### Step 4 — UGV 바퀴 + Jetson 연결 및 main.py 실행
-```bash
-# Jetson SSH 접속 (핫스팟)
-ssh jetson@172.20.10.5
-
-# USB 권한
-sudo chmod 666 /dev/ttyACM0   # ESP32
-sudo chmod 666 /dev/ttyACM1   # OpenRB
-
-# 실행 (d8 타겟으로 테스트)
-cd ~/MERO_ROBOT_15
-python vision/src/main.py --cls d8
-
-# 확인할 것:
-# - [포트] 자동 탐지 메시지 뜨는지
-# - 카메라에서 d8 탐지되는지
-# - 탐지 후 바퀴 이동하는지
-```
-
-### Step 5 — AREA_THRESHOLD 실측 (`main.py` 수정 필요)
-```
-현재 임시값: AREA_THRESHOLD=40000
-
-main.py 실행 중 터미널에서:
-[탐지] ID=X | d8 conf=0.91 | (cx, cy) area=XXXXX
-
-로봇이 물체 바로 앞(집을 수 있는 거리)일 때 area 값 기록
-→ 그 값으로 AREA_THRESHOLD 수정
-```
-
-### Step 6 — 보관함 경로 실측 (`main.py` 수정 필요)
-```
-현재 임시값: STORAGE_BACKUP_SECS=0.8 / STORAGE_TURN_SECS=2.0 / STORAGE_DRIVE_SECS=3.0
-
-물체 집은 자리에서 보관함(좌측 하단)까지:
-1. 후진 몇 초? → STORAGE_BACKUP_SECS
-2. 좌회전 몇 초? → STORAGE_TURN_SECS
-3. 직진 몇 초? → STORAGE_DRIVE_SECS
-수동으로 바퀴 제어하면서 측정 후 수정
-```
-
----
-
 ## 시스템 아키텍처
 
 ```
@@ -554,20 +473,47 @@ Colab 노트북 실행 전 필요한 것:
 
 ## 남은 작업 ⬜
 
-| 우선순위 | 작업 | 비고 |
+### 하드웨어 연결
+
+| 우선순위 | 작업 | 방법 |
 |----------|------|------|
-| 🔴 높음 | OpenRB + Dynamixel 연결 및 동작 테스트 | 전원 구성 확정 후 |
-| 🔴 높음 | 전원 배선 완성 | 보조배터리(젯슨) + UGV배터리(그리퍼) |
-| 🔴 높음 | 과일 데이터 촬영 (4종) | 현재 0장 — 폰으로 과일 프린트 후 ArduCAM 촬영 |
-| 🔴 높음 | 과일 클래스 라벨링 + 재학습 | 촬영 후 Roboflow → Colab |
-| 🟡 중간 | `GRIP_CURRENT_THRESHOLD` 실측 | 빈 손 닫기 vs 물체 잡기 전류 차이 측정 (현재 30mA) |
-| 🟡 중간 | `FINGER_OPEN_DEG` / `FINGER_CLOSE_DEG` 실측 | Wizard 토크 off 후 손으로 각도 확인 |
-| 🟡 중간 | `AREA_THRESHOLD` 실측 조정 | 실제 픽업 시 면적 값 확인 후 조정 (현재 40000) |
-| 🟡 중간 | `STORAGE_BACKUP_SECS` / `STORAGE_TURN_SECS` / `STORAGE_DRIVE_SECS` 실측 | 보관함까지 고정 경로 시간 조정 |
-| 🔴 높음 | 캘리브레이션 실행 | 카메라 위치 확정 후 `python vision/src/calibration.py` 1회 실행 — 미실행 시 픽셀 면적 모드로 동작하나 mm 정확도 없음 |
-| 🟡 중간 | TensorRT 변환 (`best.pt` → `best.engine`) | Jetson에서 실행, FPS 향상 |
-| 🟡 중간 | end-to-end 통합 테스트 | 탐지 → 이동 → grip → 보관함 이동 → drop |
-| 🟢 낮음 | 깃대 인식 모드 추가 | 깃대 실물 공개 후 YOLO 학습 → GO_TO_STORAGE 업그레이드 |
+| 🔴 높음 | 전원 배선 완성 | 젯슨: 파워뱅크 → USB-C PD 15V → 배럴잭 / 그리퍼: UGV 12V 배터리 → OpenRB 초록 단자 |
+| 🔴 높음 | OpenRB + XC330 연결 | XC330 Dynamixel 케이블 → OpenRB 포트 / Arduino IDE에서 보드: OpenRB-150 선택 후 `robot/main.ino` + `robot/gripper.ino` 업로드 |
+| 🔴 높음 | Dynamixel Wizard로 XC330 확인 | ID=1, Baudrate=57600 설정 확인 |
+
+### 실측 (하드웨어 연결 후)
+
+| 우선순위 | 항목 | 현재값 | 측정 방법 | 수정 위치 |
+|----------|------|--------|-----------|-----------|
+| 🔴 높음 | `FINGER_OPEN_DEG` | 150 | Wizard 토크 OFF → 손으로 완전히 열기 → Present Position 값 | `gripper.ino` |
+| 🔴 높음 | `FINGER_CLOSE_DEG` | 90 | 손으로 물체 잡을 만큼 닫기 → Present Position 값 | `gripper.ino` |
+| 🔴 높음 | `GRIP_CURRENT_THRESHOLD` | 30mA | 시리얼 모니터로 빈 손 닫기 전류 / 물체 잡기 전류 측정 → 중간값 | `gripper.ino` |
+| 🟡 중간 | `AREA_THRESHOLD` | 40000 | `main.py` 실행 중 물체 바로 앞에서 터미널 area 값 확인 | `main.py` |
+| 🟡 중간 | `STORAGE_BACKUP_SECS` | 0.8s | 물체 집은 자리에서 후진 충분한 시간 실측 | `main.py` |
+| 🟡 중간 | `STORAGE_TURN_SECS` | 2.0s | 보관함 방향으로 좌회전 완료 시간 실측 | `main.py` |
+| 🟡 중간 | `STORAGE_DRIVE_SECS` | 3.0s | 보관함까지 직진 시간 실측 | `main.py` |
+
+### 캘리브레이션
+
+| 우선순위 | 작업 | 방법 |
+|----------|------|------|
+| 🔴 높음 | 카메라 위치 확정 | 위치 바뀌면 다시 해야 하므로 먼저 확정 |
+| 🔴 높음 | 캘리브레이션 실행 | 카메라 위치 확정 후: `python vision/src/calibration.py --capture` → PC에서 픽셀 좌표 확인 → `--calc x1 y1 x2 y2 실제거리mm` |
+
+### 데이터 / 학습
+
+| 우선순위 | 작업 | 방법 |
+|----------|------|------|
+| 🔴 높음 | 과일큐브 촬영 | 흰색 큐브에 과일 이미지 부착 후 ArduCAM으로 촬영 (실제 과일 X) — apple/banana 교체 + orange/pineapple 신규 |
+| 🔴 높음 | 과일 클래스 라벨링 + 재학습 | Roboflow 업로드 → 바운딩박스 라벨링 → `train.ipynb` (Colab) → `best.pt` 교체 |
+| 🟡 중간 | TensorRT 변환 | Jetson에서: `python vision/src/trt_export.py` → `best.engine` 생성 (FPS 향상) |
+
+### 테스트
+
+| 우선순위 | 작업 | 확인 항목 |
+|----------|------|-----------|
+| 🟡 중간 | end-to-end 통합 테스트 | 탐지 → 이동 → grip → 보관함 이동 → drop 전체 사이클 |
+| 🟢 낮음 | 깃대 인식 추가 | 깃대 실물 공개 후 — YOLO 학습 → GO_TO_STORAGE 비전 기반 업그레이드 |
 
 ---
 
