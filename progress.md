@@ -619,9 +619,10 @@ Colab 노트북 실행 전 필요한 것:
 
 | 우선순위 | 작업 | 방법 |
 |----------|------|------|
-| 🔴 높음 | 전원 배선 완성 | 젯슨: 파워뱅크 → USB-C PD 15V → 배럴잭 / 그리퍼: UGV 12V 배터리 → OpenRB 초록 단자 |
-| 🔴 높음 | OpenRB + XC330 연결 | XC330 Dynamixel 케이블 → OpenRB 포트 / Arduino IDE에서 보드: OpenRB-150 선택 후 `robot/main.ino` + `robot/gripper.ino` 업로드 |
-| 🔴 높음 | Dynamixel Wizard로 XC330 확인 | ID=1, Baudrate=57600 설정 확인 |
+| ✅ 완료 | 전원 배선 완성 | 젯슨: 파워뱅크 → USB-C PD 15V → 배럴잭 / 그리퍼: UGV 12V 배터리 → OpenRB 초록 단자 |
+| ✅ 완료 | OpenRB + XL430 연결 | Arduino IDE에서 `robot/main.ino` + `robot/gripper.ino` 업로드 완료 |
+| ✅ 완료 | Dynamixel Wizard로 XL430 확인 | ID=1, Baudrate=1000000 확인 완료 |
+| 🔴 높음 | OpenRB 전용 배터리 구매 | UGV 배터리 대신 별도 배터리 필요 |
 
 ### 실측 (하드웨어 연결 후)
 
