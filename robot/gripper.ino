@@ -23,8 +23,8 @@ extern Dynamixel2Arduino dxl;
 #define GRIPPER_ID  1
 
 // TODO: 실물 테스트 후 실제 각도로 조정
-#define FINGER_OPEN_DEG   150.0f
-#define FINGER_CLOSE_DEG   90.0f
+#define FINGER_OPEN_DEG   238.0f   // 실측: raw 2700
+#define FINGER_CLOSE_DEG   90.0f   // 닫힘 방향 한계 (load threshold로 감지)
 
 // 파손 방지 토크 제한 (%)
 #define GRIPPER_TORQUE_LIMIT_PCT 60
