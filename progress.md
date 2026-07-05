@@ -1,6 +1,6 @@
 # MERO AI ROBOT — Progress
 
-> 최종 업데이트: 2026-06-30  
+> 최종 업데이트: 2026-07-05  
 > 비전 담당: 조강희
 
 ---
@@ -14,7 +14,7 @@
 - 보드: NVIDIA Jetson Orin Nano
 - 로봇 플랫폼: Waveshare UGV02 (내장 컨트롤러: ESP32 — 바퀴 제어)
 - 팔·그리퍼 컨트롤러: ROBOTIS OpenRB-150 (Dynamixel 제어)
-- 다이나믹셀: XC330 × 1 (그리퍼, 랙-피니언으로 양 손가락 구동) — 팔 없음
+- 다이나믹셀: XL430 × 1 (그리퍼, Baudrate 1000000, 랙-피니언으로 양 손가락 구동) — 팔 없음
 - 카메라: Arducam USB
 
 **대회 태스크**
@@ -439,6 +439,24 @@ Colab 노트북 실행 전 필요한 것:
 
 ---
 
+## 2026-07-05 작업 내역
+
+- **하드웨어 정정**: 그리퍼 모터 XC330 → **XL430** (실물 확인), Baudrate 57600 → **1000000**
+- **그리퍼 실측 완료**
+  - `FINGER_OPEN_DEG` = 265° (raw 2700 측정)
+  - `FINGER_CLOSE_DEG` = 110° (실측)
+  - `GRIP_LOAD_THRESHOLD` = 200 (PRESENT_LOAD 기반, ~20%)
+- **gripper.ino 전류→Load 방식으로 변경** — `PRESENT_LOAD` 기반 집기 판별
+- **main.ino** — `using namespace ControlTableItem` 추가, baudrate 수정
+- **카메라 해상도 자동 감지** (`vision/src/main.py`) — calibration.json 없을 때 FRAME_W 640 고정 버그 수정 (실제 960×600)
+- **Jetson 실기기 연결 테스트**
+  - SSH: `aiwinners@172.20.10.5` (핫스팟)
+  - ArduCAM: `/dev/video0` (960×600), ESP32: `/dev/ttyACM0`, OpenRB: `/dev/ttyACM1`
+  - YOLO 탐지 + 바퀴 이동 동작 확인
+  - 그리퍼 집기 동작 확인
+
+---
+
 ## 2026-06-30 작업 내역
 
 - **시리얼 포트 자동 감지 추가** (`vision/src/main.py`)
@@ -609,9 +627,9 @@ Colab 노트북 실행 전 필요한 것:
 
 | 우선순위 | 항목 | 현재값 | 측정 방법 | 수정 위치 |
 |----------|------|--------|-----------|-----------|
-| 🔴 높음 | `FINGER_OPEN_DEG` | 150 | Wizard 토크 OFF → 손으로 완전히 열기 → Present Position 값 | `gripper.ino` |
-| 🔴 높음 | `FINGER_CLOSE_DEG` | 90 | 손으로 물체 잡을 만큼 닫기 → Present Position 값 | `gripper.ino` |
-| 🔴 높음 | `GRIP_CURRENT_THRESHOLD` | 30mA | 시리얼 모니터로 빈 손 닫기 전류 / 물체 잡기 전류 측정 → 중간값 | `gripper.ino` |
+| ✅ 완료 | `FINGER_OPEN_DEG` | ~~150~~ → **265°** | 실측 완료 (raw 2700) | `gripper.ino` |
+| ✅ 완료 | `FINGER_CLOSE_DEG` | ~~90~~ → **110°** | 실측 완료 | `gripper.ino` |
+| ✅ 완료 | `GRIP_LOAD_THRESHOLD` | ~~30mA~~ → **200** (Load 20%) | 실측 완료 | `gripper.ino` |
 | 🟡 중간 | `AREA_THRESHOLD` | 40000 | `main.py` 실행 중 물체 바로 앞에서 터미널 area 값 확인 | `main.py` |
 | 🟡 중간 | `STORAGE_BACKUP_SECS` | 0.8s | 물체 집은 자리에서 후진 충분한 시간 실측 | `main.py` |
 | 🟡 중간 | `STORAGE_TURN_SECS` | 2.0s | 보관함 방향으로 좌회전 완료 시간 실측 | `main.py` |
