@@ -340,6 +340,13 @@ if not cap.isOpened():
         print("[카메라] 사용 가능한 카메라 없음")
         exit()
 
+# 실제 카메라 해상도로 FRAME_W/H 보정 (calibration.json 없을 때)
+if FRAME_W is None:
+    _ret, _f = cap.read()
+    if _ret:
+        FRAME_H, FRAME_W = _f.shape[:2]
+        print(f"[카메라] 해상도 감지: {FRAME_W}×{FRAME_H}")
+
 HEADLESS    = os.environ.get("DISPLAY") is None
 WINDOW_NAME = "MERO_AI_ROBOT"
 if not HEADLESS:
