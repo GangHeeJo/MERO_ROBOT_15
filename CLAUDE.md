@@ -11,7 +11,7 @@ pick-and-place 로봇 대회. 카메라로 물체 분류·트래킹 → 집게�
 - 보드: NVIDIA Jetson Orin Nano
 - 로봇 플랫폼: Waveshare 6x4 UGV (내장 컨트롤러: ESP32 — 바퀴 제어)
 - 팔·그리퍼 컨트롤러: ROBOTIS OpenRB-150 (Dynamixel 제어)
-- 다이나믹셀: XC330 × 1 (그리퍼, 12V, 랙-피니언으로 양 손가락 구동) — 팔 없음
+- 다이나믹셀: XL430 × 1 (그리퍼, 12V, 랙-피니언으로 양 손가락 구동, Baudrate 1000000) — 팔 없음
 - 카메라: ArduCAM 2.3MP AR0234 글로벌 셔터 USB 3.0
 
 **대회 태스크**

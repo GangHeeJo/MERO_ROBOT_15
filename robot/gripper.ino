@@ -1,16 +1,16 @@
 /*
- * gripper.ino — 그리퍼 제어 (XC330 × 1)
+ * gripper.ino — 그리퍼 제어 (XL430 × 1)
  * ──────────────────────────────────────
  * 실행 보드: OpenRB-150 (ROBOTIS)
  *
  * 구성:
- *   ID 1: 그리퍼 모터 (XC330) — 단일 모터, 기계적 연동으로 양 손가락 구동
+ *   ID 1: 그리퍼 모터 (XL430) — 단일 모터, 기계적 연동으로 양 손가락 구동
  *
  * 전원:
- *   XC330 동작 전압 12V → UGV 내장 12V 배터리 → OpenRB 연결
+ *   XL430 동작 전압 12V → UGV 내장 12V 배터리 → OpenRB 연결
  *
  * 사전 설정 (Dynamixel Wizard):
- *   - Baudrate: 57600
+ *   - Baudrate: 1000000
  *   - ID: 1
  *
  * dxl 인스턴스는 main.ino 에서 정의됨 (extern 참조)
@@ -29,9 +29,9 @@ extern Dynamixel2Arduino dxl;
 // 파손 방지 토크 제한 (%)
 #define GRIPPER_TORQUE_LIMIT_PCT 60
 
-// TODO: 실물 테스트 후 조정 — 빈 손 닫을 때 vs 물체 잡을 때 전류 차이 측정
-// XC330 전류 단위: 1 LSB ≈ 1 mA
-#define GRIP_CURRENT_THRESHOLD 30   // mA, 이 값 이상이면 뭔가 잡은 것으로 판단
+// Load 기반 집기 감지 (실측: 물체 잡을 때 ~30%, 빈 손 ~0%)
+// PRESENT_LOAD 단위: 0.1% (200 = 20%)
+#define GRIP_LOAD_THRESHOLD 200
 
 // ── 초기화 ───────────────────────────────────────────────
 void gripperSetup() {
@@ -55,17 +55,23 @@ void gripperOpen() {
 }
 
 // ── 그리퍼 닫기 — 성공 여부 반환 ────────────────────────
-// true: 전류 임계값 초과 → 물체 잡음
-// false: 전류 낮음 → 빈 손으로 닫힘 (미스)
+// true: load 임계값 초과 → 물체 잡음
+// false: load 낮음 → 빈 손으로 닫힘 (미스)
 bool gripperClose() {
   dxl.setGoalPosition(GRIPPER_ID, FINGER_CLOSE_DEG, UNIT_DEGREE);
   delay(600);
 
-  int32_t current = dxl.readControlTableItem(PRESENT_CURRENT, GRIPPER_ID);
-  bool gripped = abs(current) >= GRIP_CURRENT_THRESHOLD;
+  int32_t load = dxl.readControlTableItem(
+    ControlTableItem::PRESENT_LOAD,
+    GRIPPER_ID
+  );
 
-  Serial.print("[그리퍼] 닫힘 — 전류: ");
-  Serial.print(current);
-  Serial.println(gripped ? "mA (잡음)" : "mA (미스, 임계값 미달)");
+  int32_t abs_load = load < 0 ? -load : load;
+  bool gripped = abs_load >= GRIP_LOAD_THRESHOLD;
+
+  Serial.print("[그리퍼] 닫힘 — 부하: ");
+  Serial.print(load);
+  Serial.println(gripped ? " (잡음)" : " (미스, 임계값 미달)");
+
   return gripped;
 }

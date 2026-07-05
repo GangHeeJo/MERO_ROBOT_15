@@ -6,7 +6,7 @@
  *
  * 연결:
  *   Jetson → OpenRB: USB-C (/dev/ttyACM1, 115200)
- *   OpenRB → Dynamixel: 내장 포트 (XC330 × 1 그리퍼)
+ *   OpenRB → Dynamixel: 내장 포트 (XL430 × 1 그리퍼)
  *
  * Jetson이 보내는 명령:
  *   {"cmd":"grip", "cls":"d8"}  ← 그리퍼 닫기
@@ -23,7 +23,7 @@
  *
  * 파일 구성:
  *   main.ino    — 시리얼 수신, 상태 머신 (이 파일)
- *   gripper.ino — 그리퍼 XC330 × 1 (랙-피니언)
+ *   gripper.ino — 그리퍼 XL430 × 1 (랙-피니언)
  *
  * 필요 라이브러리: ArduinoJson, Dynamixel2Arduino
  */
@@ -31,11 +31,13 @@
 #include <ArduinoJson.h>
 #include <Dynamixel2Arduino.h>
 
+using namespace ControlTableItem;
+
 // ── Dynamixel 공유 인스턴스 ──────────────────────────────
 // arm.ino, gripper.ino 에서 extern 으로 참조
 #define DXL_SERIAL           Serial1
 #define DXL_DIR_PIN          -1     // OpenRB는 방향핀 내장 처리
-#define DXL_BAUD_RATE        57600
+#define DXL_BAUD_RATE        1000000
 #define DXL_PROTOCOL_VERSION 2.0f
 
 Dynamixel2Arduino dxl(DXL_SERIAL, DXL_DIR_PIN);
