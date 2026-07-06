@@ -447,6 +447,11 @@ Colab 노트북 실행 전 필요한 것:
   - 버튼C: 시작/정지 (main.py subprocess 실행)
   - OLED 128×64: 선택 클래스 + 상태(READY/RUNNING/DONE) 표시
   - GPIO 없을 때 키보드(s/f/Enter)로 테스트 가능
+- **launcher 부품 구매 목록**
+  - SSD1306 OLED 0.96" 4핀 I2C (GND/VCC/SCL/SDA)
+  - 4핀 택트 스위치 × 3
+  - 미니 브레드보드 35×46mm
+  - 점퍼선 암수 × 10개
 - **OpenRB 배터리 구매** — 폴리트로닉스 PT-B2200N-SP35 (11.1V 3S LiPo, 2200mAh, XT60)
   - XT60 → OpenRB 터미널 블록 연결 필요
 
