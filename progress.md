@@ -439,6 +439,19 @@ Colab 노트북 실행 전 필요한 것:
 
 ---
 
+## 2026-07-06 작업 내역
+
+- **launcher.py 추가** (`vision/src/launcher.py`) — 물리 버튼 3개 + SSD1306 OLED로 독립 운용
+  - 버튼A: shape 순환 (d6→d8→d12→d20)
+  - 버튼B: fruit 순환 (apple→banana→orange→pineapple)
+  - 버튼C: 시작/정지 (main.py subprocess 실행)
+  - OLED 128×64: 선택 클래스 + 상태(READY/RUNNING/DONE) 표시
+  - GPIO 없을 때 키보드(s/f/Enter)로 테스트 가능
+- **OpenRB 배터리 구매** — 폴리트로닉스 PT-B2200N-SP35 (11.1V 3S LiPo, 2200mAh, XT60)
+  - XT60 → OpenRB 터미널 블록 연결 필요
+
+---
+
 ## 2026-07-05 작업 내역
 
 - **하드웨어 정정**: 그리퍼 모터 XC330 → **XL430** (실물 확인), Baudrate 57600 → **1000000**
