@@ -622,7 +622,7 @@ Colab 노트북 실행 전 필요한 것:
 | ✅ 완료 | 전원 배선 완성 | 젯슨: 파워뱅크 → USB-C PD 15V → 배럴잭 / 그리퍼: UGV 12V 배터리 → OpenRB 초록 단자 |
 | ✅ 완료 | OpenRB + XL430 연결 | Arduino IDE에서 `robot/main.ino` + `robot/gripper.ino` 업로드 완료 |
 | ✅ 완료 | Dynamixel Wizard로 XL430 확인 | ID=1, Baudrate=1000000 확인 완료 |
-| 🔴 높음 | OpenRB 전용 배터리 구매 | UGV 배터리 대신 별도 배터리 필요 |
+| ✅ 완료 | OpenRB 전용 배터리 구매 | 폴리트로닉스 PT-B2200N-SP35 (11.1V 3S LiPo, 2200mAh, XT60) — XT60→터미널 블록 연결 필요 |
 
 ### 실측 (하드웨어 연결 후)
 
