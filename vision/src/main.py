@@ -131,7 +131,7 @@ MAX_MY              = 150.0
 # 픽셀 모드 (calibration 없을 때) — bbox 면적 기반
 AREA_THRESHOLD      = 28000   # 이 면적 이상이면 "도달"로 판단 (w×h px²)
 AREA_SLOW_THRESHOLD = 20000   # 이 면적 이상이면 감속 시작
-CENTER_MARGIN_PX    = 80      # 픽셀 모드: 화면 중심에서 이 픽셀 이내여야 도달 인정
+CENTER_MARGIN_PX    = 150     # 픽셀 모드: 화면 중심에서 이 픽셀 이내여야 도달 인정
 ALIGN_THRESHOLD     = 0.4     # 이 이상 turn값이면 전진 없이 제자리 회전 우선
 TURN_ONLY_SPEED     = 0.2     # 제자리 회전 속도
 
@@ -527,7 +527,9 @@ try:
                     info = f"dist={dist:.0f}mm"
                 else:
                     info = f"area={target['area']}"
-                status = "도달" if at_target else f"이동중 ({info})"
+                frame_w = FRAME_W or 640
+                cx_off  = abs(target["cx"] - frame_w / 2)
+                status = f"도달 cx편차={cx_off:.0f}px" if at_target else f"이동중 ({info}) cx편차={cx_off:.0f}px"
                 print(f"[타겟] {target['cls']} | {status}")
 
             if target:
