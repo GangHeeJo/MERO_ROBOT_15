@@ -17,7 +17,7 @@ import threading
 
 BAUD_RATE   = 115200
 TURN_SPEED  = 0.25
-TARGET_DEG  = 74.0   # 관성 보정 (실제 ~90° 목표)
+TARGET_DEG  = 62.0   # 관성 보정 (실제 ~90° 목표)
 
 def find_port(keywords, default):
     for p in _glob.glob("/dev/serial/by-id/*"):
