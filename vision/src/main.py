@@ -31,6 +31,7 @@ import time
 import threading
 import serial
 from enum import Enum
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from ultralytics import YOLO
 
 # ── 인수 파싱 ───────────────────────────────────────────
@@ -404,6 +405,35 @@ print(f"[시작] 타겟: {cls_str} | {mode_str}")
 if HEADLESS:
     print("[시작] 헤드리스 모드")
 
+# ── MJPEG 스트리밍 서버 (브라우저에서 http://jetson_ip:8080 접속) ──
+_stream_frame = None
+_stream_lock  = threading.Lock()
+
+class _MJPEGHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'multipart/x-mixed-replace; boundary=frame')
+        self.end_headers()
+        try:
+            while True:
+                with _stream_lock:
+                    f = _stream_frame
+                if f is None:
+                    time.sleep(0.03)
+                    continue
+                _, jpg = cv2.imencode('.jpg', f, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                self.wfile.write(b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + jpg.tobytes() + b'\r\n')
+        except Exception:
+            pass
+    def log_message(self, *_):
+        pass
+
+threading.Thread(
+    target=lambda: HTTPServer(('0.0.0.0', 8080), _MJPEGHandler).serve_forever(),
+    daemon=True
+).start()
+print("[스트림] http://172.20.10.5:8080 에서 카메라 확인 가능")
+
 fps_counter = 0
 fps_display = 0.0
 fps_timer   = time.time()
@@ -706,6 +736,9 @@ try:
             print(f"[FPS] {fps_display:.1f}")
         cv2.putText(annotated_frame, f"FPS: {fps_display:.1f}",
                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+
+        with _stream_lock:
+            _stream_frame = annotated_frame.copy()
 
         if not HEADLESS:
             cv2.imshow(WINDOW_NAME, annotated_frame)
