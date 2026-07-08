@@ -394,7 +394,7 @@ if FRAME_W is None:
         FRAME_H, FRAME_W = _f.shape[:2]
         print(f"[카메라] 해상도 감지: {FRAME_W}×{FRAME_H}")
 
-HEADLESS    = os.environ.get("DISPLAY") is None
+HEADLESS    = not os.environ.get("DISPLAY")
 WINDOW_NAME = "MERO_AI_ROBOT"
 if not HEADLESS:
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_AUTOSIZE)
