@@ -24,6 +24,7 @@ OpenRB 응답:
 
 import argparse
 import cv2
+import math
 import glob
 import os
 import json
@@ -149,16 +150,16 @@ STORAGE_TIMEOUT_SECS = 15.0   # GO_TO_STORAGE 전체 최대 시간
 MATCH_DURATION_SECS = 180.0
 match_start_time    = time.time() if args.timer else None
 
-# ── 보관함 이동 고정 경로 파라미터 ──────────────────────
-# 경기장: 4m×4m / 출발=우하단 / 보관함=좌하단
-# 순서: ① 후진(STORAGE_BACKUP_SECS초) → ② 좌회전(STORAGE_TURN_SECS초) → ③ 직진(STORAGE_DRIVE_SECS초)
-# TODO: 실측 후 조정
-STORAGE_BACKUP_SECS  = 0.8    # 집은 자리에서 후진 (회전 공간 확보)
+# ── 보관함 이동 파라미터 ─────────────────────────────────
+# 순서: ① 후진 → ② IMU+오도메트리 회전 → ③ 오도메트리 직진
+STORAGE_BACKUP_SECS  = 0.8    # 후진 시간 (회전 공간 확보)
 STORAGE_BACKUP_SPEED = 0.2
-STORAGE_TURN_SECS    = 2.0
-STORAGE_DRIVE_SECS   = 3.0
+STORAGE_TURN_SECS    = 2.0    # IMU 없을 때 fallback 회전 시간
+STORAGE_DRIVE_SECS   = 4.0    # 오도메트리 없을 때 fallback 직진 시간
 STORAGE_TURN_SPEED   = 0.25
 STORAGE_DRIVE_SPEED  = 0.3
+STORAGE_DIST_M       = 3.6    # !! 실측: 출발지→보관함 거리(m)
+ARRIVE_STORAGE_M     = 0.25   # 이 거리 이내면 도착 판정
 
 # ── 상태 머신 ────────────────────────────────────────────
 class RobotState(Enum):
@@ -185,16 +186,16 @@ initial_yaw  = None   # 시작 시 기록
 storage_yaw  = None   # 보관함 방향 (initial_yaw - 90°)
 _last_imu_req = 0.0
 
-# 엔코더 오도메트리
-enc_l        = 0      # 최신 왼쪽 엔코더 (T=1001 lp 필드)
-enc_r        = 0      # 최신 오른쪽 엔코더 (T=1001 rp 필드)
-enc_l_start  = 0      # GO_TO_STORAGE 진입 시 기록
-enc_r_start  = 0
-
-# !! 실측 필요 !!
-# 바퀴 1m 이동 시 엔코더 카운트 변화량 — 직선 1m 주행 후 터미널에서 lp/rp 변화량 확인
-ENCODER_TICKS_PER_M = 1000
-STORAGE_MAX_DIST_M  = 4.5   # 보관함까지 최대 거리 (필드 대각선 ≈ 5.7m, 여유 있게)
+# 엔코더 오도메트리 (!! 실측: 1m 직진 후 lp/rp 변화량 확인)
+enc_l           = 0
+enc_r           = 0
+enc_l_prev      = 0
+enc_r_prev      = 0
+ENCODER_TICKS_PER_M = 1000  # placeholder
+odom_x          = 0.0   # 현재 위치 x (m, 시작점 기준)
+odom_y          = 0.0   # 현재 위치 y (m)
+storage_world_x = None  # 보관함 절대 위치 (_init_imu에서 설정)
+storage_world_y = None
 
 # ── 시리얼 연결 ──────────────────────────────────────────
 def _open_serial(port):
@@ -265,7 +266,7 @@ threading.Thread(target=_read_openrb_loop, daemon=True).start()
 
 # ── 초기 yaw 기록 (보관함 방향 계산용) ──────────────────
 def _init_imu():
-    global initial_yaw, storage_yaw
+    global initial_yaw, storage_yaw, storage_world_x, storage_world_y
     if ser_esp32 is None or not ser_esp32.is_open:
         print("[IMU] ESP32 연결 없음 — 고정 시간 회전 사용")
         return
@@ -274,8 +275,11 @@ def _init_imu():
         if imu_yaw is not None:
             initial_yaw = imu_yaw
             raw = (initial_yaw - 90.0) % 360
-            storage_yaw = raw if raw <= 180 else raw - 360   # -180~180 범위
-            print(f"[IMU] 초기 yaw={initial_yaw:.1f}°  보관함 방향={storage_yaw:.1f}°")
+            storage_yaw = raw if raw <= 180 else raw - 360
+            bearing_rad = math.radians(initial_yaw - 90.0)
+            storage_world_x = STORAGE_DIST_M * math.cos(bearing_rad)
+            storage_world_y = STORAGE_DIST_M * math.sin(bearing_rad)
+            print(f"[IMU] 초기 yaw={initial_yaw:.1f}° 보관함 방향={storage_yaw:.1f}° 위치=({storage_world_x:.1f}, {storage_world_y:.1f})m")
             return
         time.sleep(0.05)
     print("[IMU] 초기 yaw 읽기 실패 — 고정 시간 회전 사용")
@@ -286,6 +290,20 @@ _init_imu()
 # ── 각도 차이 계산 (-180~180) ────────────────────────────
 def _angle_diff(target_deg, current_deg):
     return (target_deg - current_deg + 180) % 360 - 180
+
+
+def update_odometry():
+    """엔코더(이동거리) + IMU(방향)로 현재 위치 추적. 메인 루프마다 호출."""
+    global odom_x, odom_y, enc_l_prev, enc_r_prev
+    dl = (enc_l - enc_l_prev) / ENCODER_TICKS_PER_M
+    dr = (enc_r - enc_r_prev) / ENCODER_TICKS_PER_M
+    enc_l_prev = enc_l
+    enc_r_prev = enc_r
+    dist = (dl + dr) / 2.0
+    if imu_yaw is not None and abs(dist) < 1.0:   # 비정상값 필터
+        yaw_rad = math.radians(imu_yaw)
+        odom_x += dist * math.cos(yaw_rad)
+        odom_y += dist * math.sin(yaw_rad)
 
 
 # ── 바퀴 제어 ────────────────────────────────────────────
@@ -490,6 +508,14 @@ try:
         target    = select_target(detected)
         at_target = _is_at_target(target) if target else False
 
+        # ── 오도메트리 + IMU 주기 요청 ─────────────────
+        _now_loop = time.time()
+        if _now_loop - _last_imu_req >= 0.15:
+            if ser_esp32 and ser_esp32.is_open:
+                ser_esp32.write((json.dumps({"T": 126}) + "\n").encode())
+            _last_imu_req = _now_loop
+        update_odometry()
+
         # ── 상태 머신 ──────────────────────────────────
         if robot_state == RobotState.SEARCHING:
             if target:
@@ -543,8 +569,6 @@ try:
                 storage_phase       = -1
                 storage_phase_start = time.time()
                 storage_enter_time  = time.time()
-                enc_l_start         = enc_l
-                enc_r_start         = enc_r
                 robot_state         = RobotState.GO_TO_STORAGE
                 print(f"[상태] GRIPPING → GO_TO_STORAGE ({elapsed:.1f}s)")
             elif openrb_grip_failed:
@@ -585,8 +609,8 @@ try:
                     print(f"\n[상태] 후진 완료 → 좌회전 시작")
 
             elif storage_phase == 0:
-                # IMU 기반 회전 (storage_yaw 미획득 시 고정 시간 fallback)
-                if storage_yaw is None or imu_yaw is None:
+                # IMU 기반 회전 — 현재 오도메트리 위치에서 보관함 방향 계산
+                if storage_world_x is None or imu_yaw is None:
                     control_wheels(None, override_l=-STORAGE_TURN_SPEED, override_r=STORAGE_TURN_SPEED)
                     print(f"[상태] 회전중(fallback)... ({elapsed:.1f}s / {STORAGE_TURN_SECS}s)", end="\r")
                     if elapsed >= STORAGE_TURN_SECS:
@@ -594,15 +618,11 @@ try:
                         storage_phase_start = now
                         print(f"\n[상태] 회전 완료 → 직진 시작")
                 else:
-                    # 주기적으로 IMU 요청
-                    if now - _last_imu_req >= 0.1:
-                        if ser_esp32 and ser_esp32.is_open:
-                            ser_esp32.write((json.dumps({"T": 126}) + "\n").encode())
-                        _last_imu_req = now
-
-                    diff = _angle_diff(storage_yaw, imu_yaw)
-                    print(f"[상태] IMU 회전중... yaw={imu_yaw:.1f}° 목표={storage_yaw:.1f}° diff={diff:.1f}°", end="\r")
-
+                    dx = storage_world_x - odom_x
+                    dy = storage_world_y - odom_y
+                    target_bearing = math.degrees(math.atan2(dy, dx))
+                    diff = _angle_diff(target_bearing, imu_yaw)
+                    print(f"[상태] IMU 회전중... yaw={imu_yaw:.1f}° 목표={target_bearing:.1f}° diff={diff:.1f}°", end="\r")
                     if abs(diff) <= 8.0:
                         control_wheels(None)
                         storage_phase       = 1
@@ -614,14 +634,13 @@ try:
                         control_wheels(None, override_l=STORAGE_TURN_SPEED, override_r=-STORAGE_TURN_SPEED)
 
             else:
-                # 직진 — 엔코더 기반 거리 측정 (fallback: 고정 시간)
-                traveled_ticks = abs(enc_l - enc_l_start) + abs(enc_r - enc_r_start)
-                traveled_m     = traveled_ticks / (2 * ENCODER_TICKS_PER_M)
-                enc_available  = (enc_l_start != 0 or enc_r_start != 0) or (enc_l != 0 or enc_r != 0)
-
-                if enc_available:
-                    arrived = traveled_m >= STORAGE_MAX_DIST_M
-                    print(f"[상태] 직진중... {traveled_m:.2f}m / {STORAGE_MAX_DIST_M}m", end="\r")
+                # 오도메트리 기반 직진 (fallback: 고정 시간)
+                if storage_world_x is not None:
+                    dx = storage_world_x - odom_x
+                    dy = storage_world_y - odom_y
+                    dist_to_storage = math.sqrt(dx**2 + dy**2)
+                    arrived = dist_to_storage <= ARRIVE_STORAGE_M
+                    print(f"[상태] 직진중... 보관함까지 {dist_to_storage:.2f}m", end="\r")
                 else:
                     arrived = elapsed >= STORAGE_DRIVE_SECS
                     print(f"[상태] 직진중(fallback)... ({elapsed:.1f}s / {STORAGE_DRIVE_SECS}s)", end="\r")
