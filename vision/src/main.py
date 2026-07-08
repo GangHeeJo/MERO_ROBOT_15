@@ -41,8 +41,11 @@ parser.add_argument('--cls', nargs='+', default=None,
                     help='타겟 클래스 목록 (예: --cls d8 apple). 미지정 시 모든 클래스 대상')
 parser.add_argument('--timer', action='store_true',
                     help='3분 경기 타이머 표시')
+parser.add_argument('--test', action='store_true',
+                    help='테스트 모드: 집으면 1초 직진 후 바로 drop')
 args       = parser.parse_args()
 TARGET_CLS    = set(args.cls) if args.cls else None
+TEST_MODE     = args.test
 SHAPE_CLASSES = {'d6', 'd8', 'd12', 'd20'}
 FRUIT_CLASSES = {'apple', 'banana', 'orange', 'pineapple'}
 
@@ -596,6 +599,19 @@ try:
                 confirm_count  = 0
                 last_target_id = -1
                 robot_state    = RobotState.SEARCHING
+
+            elif TEST_MODE:
+                # 테스트 모드: 1초 직진 후 drop
+                if total_elapsed < 1.0:
+                    control_wheels(None, override_l=0.2, override_r=0.2)
+                    print(f"[테스트] 직진중... ({total_elapsed:.1f}s)", end="\r")
+                else:
+                    control_wheels(None)
+                    openrb_done  = False
+                    send_drop()
+                    drop_sent_at = time.time()
+                    robot_state  = RobotState.DROPPING
+                    print(f"\n[테스트] drop 전송")
 
             elif storage_phase == -1:
                 # 후진 — 회전 공간 확보
