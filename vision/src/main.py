@@ -342,8 +342,8 @@ def control_wheels(target: dict | None, override_l: float | None = None, overrid
         area     = target.get("area", 0)
         centered = abs(target["cx"] - frame_w / 2) <= CENTER_MARGIN_PX
 
-        if abs(turn) > ALIGN_THRESHOLD or (area >= AREA_THRESHOLD and not centered):
-            # 많이 치우쳐 있거나 가까운데 중심 안 맞으면 제자리 회전
+        if abs(turn) > ALIGN_THRESHOLD and area < AREA_THRESHOLD:
+            # 멀리 있을 때만 제자리 회전 (가까우면 그냥 전진)
             L = max(-0.5, min(0.5,  TURN_ONLY_SPEED * turn))
             R = max(-0.5, min(0.5, -TURN_ONLY_SPEED * turn))
         else:
@@ -356,13 +356,11 @@ def control_wheels(target: dict | None, override_l: float | None = None, overrid
 
 
 def _is_at_target(target: dict) -> bool:
-    """도달 여부 판단. mm 모드 → 거리, 픽셀 모드 → area + 중심 정렬."""
+    """도달 여부 판단. mm 모드 → 거리, 픽셀 모드 → area 기반 (근접 시 centering 무시)."""
     if target.get("mx") is not None:
         dist = (target["mx"] ** 2 + target["my"] ** 2) ** 0.5
         return dist < ARRIVE_THRESHOLD_MM
-    frame_w  = FRAME_W or 640
-    centered = abs(target["cx"] - frame_w / 2) <= CENTER_MARGIN_PX
-    return centered and target.get("area", 0) >= AREA_THRESHOLD
+    return target.get("area", 0) >= AREA_THRESHOLD
 
 
 # ── OpenRB 명령 전송 ─────────────────────────────────────
