@@ -342,9 +342,7 @@ def control_wheels(target: dict | None, override_l: float | None = None, overrid
         area     = target.get("area", 0)
         centered = abs(target["cx"] - frame_w / 2) <= CENTER_MARGIN_PX
 
-        if area >= AREA_THRESHOLD and centered:
-            L, R = 0.0, 0.0  # 도달 + 중심 정렬 → 정지
-        elif abs(turn) > ALIGN_THRESHOLD or (area >= AREA_THRESHOLD and not centered):
+        if abs(turn) > ALIGN_THRESHOLD or (area >= AREA_THRESHOLD and not centered):
             # 많이 치우쳐 있거나 가까운데 중심 안 맞으면 제자리 회전
             L = max(-0.5, min(0.5,  TURN_ONLY_SPEED * turn))
             R = max(-0.5, min(0.5, -TURN_ONLY_SPEED * turn))
