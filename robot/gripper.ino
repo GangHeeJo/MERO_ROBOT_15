@@ -27,7 +27,7 @@ extern Dynamixel2Arduino dxl;
 #define FINGER_CLOSE_DEG  110.0f   // 실측
 
 // 파손 방지 토크 제한 (%)
-#define GRIPPER_TORQUE_LIMIT_PCT 40
+#define GRIPPER_TORQUE_LIMIT_PCT 60
 
 // Load 기반 집기 감지 (실측: 물체 잡을 때 ~30%, 빈 손 ~0%)
 // PRESENT_LOAD 단위: 0.1% (200 = 20%)
