@@ -83,8 +83,10 @@ def main():
     input(f"\nEnter → {TURN_SECS}초 제자리 회전 시작...")
 
     print(f"회전 중... ({TURN_SECS}s)")
-    send(ser, {"T": 1, "L": -TURN_SPEED, "R": TURN_SPEED})
-    time.sleep(TURN_SECS)
+    deadline = time.time() + TURN_SECS
+    while time.time() < deadline:
+        send(ser, {"T": 1, "L": -TURN_SPEED, "R": TURN_SPEED})
+        time.sleep(0.1)
     send(ser, {"T": 1, "L": 0, "R": 0})
     time.sleep(0.5)
 

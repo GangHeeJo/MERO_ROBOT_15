@@ -77,8 +77,10 @@ def main():
 
     # 직진
     print(f"직진 {DRIVE_SECS}초...")
-    send(ser, {"T": 1, "L": SPEED, "R": SPEED})
-    time.sleep(DRIVE_SECS)
+    deadline = time.time() + DRIVE_SECS
+    while time.time() < deadline:
+        send(ser, {"T": 1, "L": SPEED, "R": SPEED})
+        time.sleep(0.1)
     send(ser, {"T": 1, "L": 0, "R": 0})
     time.sleep(0.5)
 
