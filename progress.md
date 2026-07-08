@@ -117,21 +117,26 @@ python vision/src/main.py --timer    # 3분 타이머 화면 표시
 > 카메라 화면이 뜨고 탐지 박스가 보이면 정상.  
 > 포트 오류 시: `vision/src/main.py` 상단 `ESP32_PORT` / `OPENRB_PORT` 값 확인
 
-### STEP 7. 실측 및 값 조정
+### STEP 7. 실측값 현황 (2026-07-08 기준)
 
-연결 후 아래 값들을 실측해서 코드에 반영:
+| 항목 | 파일 | 확정값 | 상태 |
+|------|------|--------|------|
+| `FINGER_OPEN_DEG` | `robot/gripper.ino` | 265° | ✅ 완료 |
+| `FINGER_CLOSE_DEG` | `robot/gripper.ino` | 110° | ✅ 완료 |
+| `GRIP_LOAD_THRESHOLD` | `robot/gripper.ino` | 200 (20%) | ✅ 완료 |
+| `AREA_THRESHOLD` | `vision/src/main.py` | 28000 | ✅ 완료 |
+| `CENTER_MARGIN_PX` | `vision/src/main.py` | 120px | ✅ 완료 |
+| `ENCODER_TICKS_PER_M` | `vision/src/encoder_test.py` | **105.2** | ✅ 완료 |
+| 자이로 `GZ_SCALE` | `vision/src/imu_test.py` | **16.5** | 🟡 보정 중 |
+| `STORAGE_DRIVE_SECS` | `vision/src/main.py` | 4.0s | ⬜ 미실측 |
+| `STORAGE_BACKUP_SECS` | `vision/src/main.py` | 0.8s | ⬜ 미실측 |
 
-| 항목 | 파일 | 현재 기본값 | 측정 방법 |
-|------|------|------------|-----------|
-| `FINGER_OPEN_DEG` | `robot/gripper.ino` | 150 | Wizard 토크 OFF → 손으로 완전히 열기 → Present Position |
-| `FINGER_CLOSE_DEG` | `robot/gripper.ino` | 90 | 손으로 물체 잡을 만큼 닫기 → Present Position |
-| `GRIP_CURRENT_THRESHOLD` | `robot/gripper.ino` | 30mA | 빈 손 닫기 전류 / 물체 잡기 전류 → 중간값 |
-| `AREA_THRESHOLD` | `vision/src/main.py` | 40000 | 실행 중 물체 바로 앞에서 터미널 area 값 확인 |
-| `STORAGE_BACKUP_SECS` | `vision/src/main.py` | 0.8s | 집은 후 후진 충분한 시간 |
-| `STORAGE_TURN_SECS` | `vision/src/main.py` | 2.0s | 보관함 방향 좌회전 완료 시간 |
-| `STORAGE_DRIVE_SECS` | `vision/src/main.py` | 3.0s | 보관함까지 직진 시간 |
+### IMU 특성 (2026-07-08 실측)
 
-값 수정 후 Arduino 재업로드 또는 Python 재실행 필요.
+- **T=126 없음** — IMU 데이터 모두 T=1001에 포함 (gx/gy/gz/mx/my/mz)
+- **지자기(mx/my) 사용 불가** — 모터 전류 간섭으로 회전 중 값 뒤틀림
+- **자이로(gz) 적분 방식** — GZ_SCALE=16.5, 관성 오버슈트 ~17° 있음
+- **ESP32 watchdog** — 약 3초 명령 없으면 모터 자동 정지 → 0.1s 주기 재전송 필수
 
 ### STEP 8. 캘리브레이션 (선택, 카메라 위치 확정 후)
 
