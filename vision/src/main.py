@@ -81,8 +81,8 @@ def pixel_to_mm(cx, cy):
     return round((cx - w / 2) * MM_PER_PIXEL, 1), round((cy - h / 2) * MM_PER_PIXEL, 1)
 
 
-CONF_THRESHOLD_SHAPE = 0.5   # shape 클래스 confidence 임계값
-CONF_THRESHOLD_FRUIT = 0.7   # 과일 클래스 — 오픽업 패널티 40점이라 높게 설정
+CONF_THRESHOLD_SHAPE = 0.35  # shape 클래스 confidence 임계값
+CONF_THRESHOLD_FRUIT = 0.6   # 과일 클래스 — 오픽업 패널티 40점이라 높게 설정
 
 def select_target(objects: list) -> dict | None:
     """--cls 필터 + 목표 개수 미달 + 클래스별 confidence 임계값 통과한 것 중 area 최대 반환."""
@@ -469,7 +469,7 @@ try:
             continue
         _frame_fail_count = 0
 
-        results  = model.track(frame, persist=True, conf=0.5, verbose=False)
+        results  = model.track(frame, persist=True, conf=0.3, verbose=False)
         boxes    = results[0].boxes
         detected = []
 
