@@ -15,7 +15,7 @@ import os
 import threading
 
 BAUD_RATE  = 115200
-DRIVE_SECS = 1.2
+DRIVE_SECS = 3.0
 SPEED      = 0.3
 
 def find_port(keywords, default):
