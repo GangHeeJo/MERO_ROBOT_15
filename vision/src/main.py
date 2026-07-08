@@ -653,6 +653,14 @@ try:
         # ── 시각화 ──────────────────────────────────────
         annotated_frame = results[0].plot()
 
+        # 중앙 정렬 가이드라인
+        _fw = FRAME_W or 640
+        _fh = FRAME_H or 480
+        _cx = _fw // 2
+        cv2.line(annotated_frame, (_cx, 0), (_cx, _fh), (0, 255, 0), 1)  # 중심선
+        cv2.line(annotated_frame, (_cx - CENTER_MARGIN_PX, 0), (_cx - CENTER_MARGIN_PX, _fh), (0, 200, 255), 1)
+        cv2.line(annotated_frame, (_cx + CENTER_MARGIN_PX, 0), (_cx + CENTER_MARGIN_PX, _fh), (0, 200, 255), 1)
+
         # 타겟 노란 테두리
         if target and boxes is not None:
             ids = boxes.id
