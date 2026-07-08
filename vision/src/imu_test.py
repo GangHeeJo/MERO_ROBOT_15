@@ -17,7 +17,7 @@ import threading
 
 BAUD_RATE   = 115200
 TURN_SPEED  = 0.25
-TARGET_DEG  = 90.0
+TARGET_DEG  = 74.0   # 관성 보정 (실제 ~90° 목표)
 
 def find_port(keywords, default):
     for p in _glob.glob("/dev/serial/by-id/*"):
@@ -69,7 +69,7 @@ def main():
 
     # gz = 순간 각속도 (LSB), 적분해서 각도 계산
     # MPU9250 기본 ±250°/s → 131 LSB/(°/s)
-    GZ_SCALE = 18.3   # 실측 보정 6차
+    GZ_SCALE = 16.5   # 실측값
 
     # 정지 상태에서 바이어스 측정 (1초)
     print("바이어스 측정중 (1초 정지)...")
