@@ -134,6 +134,7 @@ MAX_MY              = 150.0
 # 픽셀 모드 (calibration 없을 때) — bbox 면적 기반
 AREA_THRESHOLD      = 28000   # 이 면적 이상이면 "도달"로 판단 (w×h px²)
 AREA_SLOW_THRESHOLD = 20000   # 이 면적 이상이면 감속 시작
+AREA_ROTATE_THRESHOLD = 15000 # 이 이하일 때만 제자리 회전 정렬
 CENTER_MARGIN_PX    = 150     # 픽셀 모드: 화면 중심에서 이 픽셀 이내여야 도달 인정
 ALIGN_THRESHOLD     = 0.4     # 이 이상 turn값이면 전진 없이 제자리 회전 우선
 TURN_ONLY_SPEED     = 0.2     # 제자리 회전 속도
@@ -345,8 +346,8 @@ def control_wheels(target: dict | None, override_l: float | None = None, overrid
         area     = target.get("area", 0)
         centered = abs(target["cx"] - frame_w / 2) <= CENTER_MARGIN_PX
 
-        if abs(turn) > ALIGN_THRESHOLD and area < AREA_THRESHOLD:
-            # 멀리 있을 때만 제자리 회전 (가까우면 그냥 전진)
+        if abs(turn) > ALIGN_THRESHOLD and area < AREA_ROTATE_THRESHOLD:
+            # 멀리 있을 때만 제자리 회전 정렬
             L = max(-0.5, min(0.5,  TURN_ONLY_SPEED * turn))
             R = max(-0.5, min(0.5, -TURN_ONLY_SPEED * turn))
         else:
