@@ -55,14 +55,43 @@
 5. 업로드 (→ 버튼)
 6. 라이브러리 오류 시: Library Manager에서 `ArduinoJson`, `Dynamixel2Arduino` 설치
 
-### STEP 4. 젯슨 SSH 접속
+### STEP 4. 젯슨 SSH 접속 (MobaXterm)
 
+> 핫스팟을 쓰면 접속자마다 IP가 달라짐. 아래 순서로 IP 먼저 확인.
+
+#### 4-1. IP 확인 방법
+
+**방법 A — 아이폰 핫스팟 사용 시 (가장 빠름)**
+1. 아이폰 설정 → 개인용 핫스팟 → 연결된 기기 목록에서 "aiwinners" IP 확인
+
+**방법 B — 젯슨에 모니터/키보드 직접 연결**
 ```bash
-# PC 터미널에서 (젯슨과 같은 와이파이/핫스팟 연결 필요)
-ssh mero@172.20.10.5
+hostname -I   # 첫 번째 IP가 핫스팟 IP
 ```
 
-> 젯슨 핫스팟 이름/비번 확인 후 PC 연결. IP가 다를 경우 `hostname -I`로 확인.
+**방법 C — PC에서 네트워크 스캔**
+```bash
+# 아이폰 핫스팟 기본 대역: 172.20.10.x
+# Windows PowerShell 또는 MobaXterm 터미널에서:
+nmap -sn 172.20.10.0/24
+# "aiwinners" 또는 "NVIDIA" 이름으로 찾기
+```
+
+#### 4-2. MobaXterm SSH 연결
+
+1. MobaXterm 실행 → **Session** → **SSH**
+2. Remote host: `172.20.10.x` (위에서 확인한 IP)
+3. Username: `aiwinners`
+4. Port: 22
+5. OK → 비밀번호 입력: `기계공학` (한글)
+
+#### 4-3. 카메라 스트림 보기 (브라우저)
+
+main.py 실행 후 PC 브라우저에서:
+```
+http://172.20.10.x:8080
+```
+> X는 젯슨 IP 마지막 자리
 
 ### STEP 5. USB 권한 열기 (매번 필요)
 
