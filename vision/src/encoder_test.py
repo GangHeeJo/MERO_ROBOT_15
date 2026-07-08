@@ -15,8 +15,8 @@ import os
 import threading
 
 BAUD_RATE  = 115200
-DRIVE_SECS = 3.0    # 1m 가는 데 걸리는 시간 (속도에 따라 조정)
-SPEED      = 0.3    # 직진 속도
+DRIVE_SECS = 3.0
+SPEED      = 0.3
 
 def find_port(keywords, default):
     for p in _glob.glob("/dev/serial/by-id/*"):
@@ -27,34 +27,52 @@ def find_port(keywords, default):
 def send(ser, msg):
     ser.write((json.dumps(msg) + "\n").encode())
 
-def read_encoder(ser, timeout=1.0):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            line = ser.readline().decode(errors="ignore").strip()
-            d = json.loads(line)
-            if d.get("T") == 1001 and "odl" in d:
-                return d["odl"], d["odr"]
-        except Exception:
-            pass
-    return None, None
-
 def main():
     esp_port = find_port(["1a86", "ch343", "ch34"], "/dev/ttyACM0")
     print(f"[연결] ESP32: {esp_port}")
-    ser = serial.Serial(esp_port, BAUD_RATE, timeout=0.1)
+    ser = serial.Serial(esp_port, BAUD_RATE, timeout=0.05)
     time.sleep(1.0)
+    ser.reset_input_buffer()
 
-    # 초기 엔코더 값
-    send(ser, {"T": 1001})
-    odl0, odr0 = read_encoder(ser, timeout=3.0)
+    # 최신 T=1001 계속 읽는 스레드
+    latest = {"odl": None, "odr": None}
+    lock = threading.Lock()
+
+    def reader():
+        while True:
+            try:
+                line = ser.readline().decode(errors="ignore").strip()
+                d = json.loads(line)
+                if d.get("T") == 1001 and "odl" in d:
+                    with lock:
+                        latest["odl"] = d["odl"]
+                        latest["odr"] = d["odr"]
+            except Exception:
+                pass
+
+    t = threading.Thread(target=reader, daemon=True)
+    t.start()
+
+    # 초기값 대기
+    print("초기 엔코더 대기중...")
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        with lock:
+            if latest["odl"] is not None:
+                break
+        time.sleep(0.1)
+
+    with lock:
+        odl0 = latest["odl"]
+        odr0 = latest["odr"]
+
     if odl0 is None:
-        print("[오류] 엔코더 수신 실패")
+        print("[오류] T=1001 수신 실패. ESP32 연결 확인.")
         ser.close()
         return
-    print(f"초기값: odl={odl0}  odr={odr0}")
 
-    input("\nEnter 누르면 1m 직진 시작...")
+    print(f"초기값: odl={odl0}  odr={odr0}")
+    input("\nEnter 누르면 직진 시작...")
 
     # 직진
     print(f"직진 {DRIVE_SECS}초...")
@@ -63,13 +81,9 @@ def main():
     send(ser, {"T": 1, "L": 0, "R": 0})
     time.sleep(0.5)
 
-    # 최종 엔코더 값
-    send(ser, {"T": 1001})
-    odl1, odr1 = read_encoder(ser, timeout=3.0)
-    if odl1 is None:
-        print("[오류] 엔코더 수신 실패")
-        ser.close()
-        return
+    with lock:
+        odl1 = latest["odl"]
+        odr1 = latest["odr"]
 
     dl = odl1 - odl0
     dr = odr1 - odr0
@@ -77,8 +91,7 @@ def main():
     print(f"  odl: {odl0} → {odl1}  (Δ{dl:+d})")
     print(f"  odr: {odr0} → {odr1}  (Δ{dr:+d})")
     print(f"  평균 ticks: {(dl+dr)//2}")
-    print(f"\n실제 이동 거리 자로 재서 비교하세요.")
-    print(f"  TICKS_PER_M = {(dl+dr)//2} / 실제거리(m)")
+    print(f"\n실제 거리 자로 재서 → TICKS_PER_M = {(dl+dr)//2} / 실제거리(m)")
 
     ser.close()
 
