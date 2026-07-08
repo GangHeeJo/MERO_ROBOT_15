@@ -178,6 +178,23 @@ last_target_id      = -1
 gripped_cls         = None
 pickup_counts       = {}   # {cls: 보관함에 넣은 개수}
 
+# IMU
+imu_yaw      = None   # 배경 스레드가 업데이트
+initial_yaw  = None   # 시작 시 기록
+storage_yaw  = None   # 보관함 방향 (initial_yaw - 90°)
+_last_imu_req = 0.0
+
+# 엔코더 오도메트리
+enc_l        = 0      # 최신 왼쪽 엔코더 (T=1001 lp 필드)
+enc_r        = 0      # 최신 오른쪽 엔코더 (T=1001 rp 필드)
+enc_l_start  = 0      # GO_TO_STORAGE 진입 시 기록
+enc_r_start  = 0
+
+# !! 실측 필요 !!
+# 바퀴 1m 이동 시 엔코더 카운트 변화량 — 직선 1m 주행 후 터미널에서 lp/rp 변화량 확인
+ENCODER_TICKS_PER_M = 1000
+STORAGE_MAX_DIST_M  = 4.5   # 보관함까지 최대 거리 (필드 대각선 ≈ 5.7m, 여유 있게)
+
 # ── 시리얼 연결 ──────────────────────────────────────────
 def _open_serial(port):
     try:
@@ -195,7 +212,7 @@ ser_openrb = _open_serial(OPENRB_PORT)
 battery_v = None
 
 def _read_esp32_loop():
-    global battery_v
+    global battery_v, imu_yaw, _last_imu_req, enc_l, enc_r
     while True:
         if ser_esp32 is None or not ser_esp32.is_open:
             time.sleep(0.5); continue
@@ -206,6 +223,11 @@ def _read_esp32_loop():
                     v_raw = data.get("v") or data.get("V")
                     if v_raw is not None:
                         battery_v = v_raw / 100.0
+                    # 엔코더 (필드명 lp/rp — 다를 경우 여기만 수정)
+                    if "lp" in data: enc_l = int(data["lp"])
+                    if "rp" in data: enc_r = int(data["rp"])
+                elif data.get("T") == 126 and "y" in data:
+                    imu_yaw = float(data["y"])
         except Exception:
             pass
         time.sleep(0.01)
@@ -239,6 +261,30 @@ def _read_openrb_loop():
         time.sleep(0.01)
 
 threading.Thread(target=_read_openrb_loop, daemon=True).start()
+
+# ── 초기 yaw 기록 (보관함 방향 계산용) ──────────────────
+def _init_imu():
+    global initial_yaw, storage_yaw
+    if ser_esp32 is None or not ser_esp32.is_open:
+        print("[IMU] ESP32 연결 없음 — 고정 시간 회전 사용")
+        return
+    ser_esp32.write((json.dumps({"T": 126}) + "\n").encode())
+    for _ in range(40):   # 최대 2초 대기
+        if imu_yaw is not None:
+            initial_yaw = imu_yaw
+            raw = (initial_yaw - 90.0) % 360
+            storage_yaw = raw if raw <= 180 else raw - 360   # -180~180 범위
+            print(f"[IMU] 초기 yaw={initial_yaw:.1f}°  보관함 방향={storage_yaw:.1f}°")
+            return
+        time.sleep(0.05)
+    print("[IMU] 초기 yaw 읽기 실패 — 고정 시간 회전 사용")
+
+_init_imu()
+
+
+# ── 각도 차이 계산 (-180~180) ────────────────────────────
+def _angle_diff(target_deg, current_deg):
+    return (target_deg - current_deg + 180) % 360 - 180
 
 
 # ── 바퀴 제어 ────────────────────────────────────────────
@@ -467,6 +513,8 @@ try:
                 storage_phase       = -1
                 storage_phase_start = time.time()
                 storage_enter_time  = time.time()
+                enc_l_start         = enc_l
+                enc_r_start         = enc_r
                 robot_state         = RobotState.GO_TO_STORAGE
                 print(f"[상태] GRIPPING → GO_TO_STORAGE ({elapsed:.1f}s)")
             elif openrb_grip_failed:
@@ -507,21 +555,52 @@ try:
                     print(f"\n[상태] 후진 완료 → 좌회전 시작")
 
             elif storage_phase == 0:
-                # 좌회전
-                control_wheels(None, override_l=-STORAGE_TURN_SPEED, override_r=STORAGE_TURN_SPEED)
-                print(f"[상태] 회전중... ({elapsed:.1f}s / {STORAGE_TURN_SECS}s)", end="\r")
-                if elapsed >= STORAGE_TURN_SECS:
-                    storage_phase       = 1
-                    storage_phase_start = now
-                    print(f"\n[상태] 회전 완료 → 직진 시작")
+                # IMU 기반 회전 (storage_yaw 미획득 시 고정 시간 fallback)
+                if storage_yaw is None or imu_yaw is None:
+                    control_wheels(None, override_l=-STORAGE_TURN_SPEED, override_r=STORAGE_TURN_SPEED)
+                    print(f"[상태] 회전중(fallback)... ({elapsed:.1f}s / {STORAGE_TURN_SECS}s)", end="\r")
+                    if elapsed >= STORAGE_TURN_SECS:
+                        storage_phase       = 1
+                        storage_phase_start = now
+                        print(f"\n[상태] 회전 완료 → 직진 시작")
+                else:
+                    # 주기적으로 IMU 요청
+                    if now - _last_imu_req >= 0.1:
+                        if ser_esp32 and ser_esp32.is_open:
+                            ser_esp32.write((json.dumps({"T": 126}) + "\n").encode())
+                        _last_imu_req = now
+
+                    diff = _angle_diff(storage_yaw, imu_yaw)
+                    print(f"[상태] IMU 회전중... yaw={imu_yaw:.1f}° 목표={storage_yaw:.1f}° diff={diff:.1f}°", end="\r")
+
+                    if abs(diff) <= 8.0:
+                        control_wheels(None)
+                        storage_phase       = 1
+                        storage_phase_start = now
+                        print(f"\n[상태] IMU 회전 완료 → 직진 시작")
+                    elif diff < 0:
+                        control_wheels(None, override_l=-STORAGE_TURN_SPEED, override_r=STORAGE_TURN_SPEED)
+                    else:
+                        control_wheels(None, override_l=STORAGE_TURN_SPEED, override_r=-STORAGE_TURN_SPEED)
 
             else:
-                # 직진
+                # 직진 — 엔코더 기반 거리 측정 (fallback: 고정 시간)
+                traveled_ticks = abs(enc_l - enc_l_start) + abs(enc_r - enc_r_start)
+                traveled_m     = traveled_ticks / (2 * ENCODER_TICKS_PER_M)
+                enc_available  = (enc_l_start != 0 or enc_r_start != 0) or (enc_l != 0 or enc_r != 0)
+
+                if enc_available:
+                    arrived = traveled_m >= STORAGE_MAX_DIST_M
+                    print(f"[상태] 직진중... {traveled_m:.2f}m / {STORAGE_MAX_DIST_M}m", end="\r")
+                else:
+                    arrived = elapsed >= STORAGE_DRIVE_SECS
+                    print(f"[상태] 직진중(fallback)... ({elapsed:.1f}s / {STORAGE_DRIVE_SECS}s)", end="\r")
+
                 control_wheels(None, override_l=STORAGE_DRIVE_SPEED, override_r=STORAGE_DRIVE_SPEED)
-                print(f"[상태] 직진중... ({elapsed:.1f}s / {STORAGE_DRIVE_SECS}s)", end="\r")
-                if elapsed >= STORAGE_DRIVE_SECS:
+
+                if arrived:
                     control_wheels(None)
-                    openrb_done  = False   # stale 신호 초기화
+                    openrb_done  = False
                     send_drop()
                     drop_sent_at = time.time()
                     robot_state  = RobotState.DROPPING
