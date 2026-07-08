@@ -498,20 +498,9 @@ try:
                 else:
                     info = f"area={target['area']}"
                 frame_w = FRAME_W or 640
-                cx_off  = target["cx"] - frame_w / 2  # 양수=오른쪽, 음수=왼쪽
-                # 터미널 중앙 게이지 (40칸, CENTER_MARGIN_PX 범위 표시)
-                _bar_w = 20
-                _pos = int(cx_off / (frame_w / 2) * _bar_w)
-                _pos = max(-_bar_w, min(_bar_w, _pos))
-                _margin_chars = int(CENTER_MARGIN_PX / (frame_w / 2) * _bar_w)
-                _bar = ['-'] * (2 * _bar_w + 1)
-                for i in range(max(0, _bar_w - _margin_chars), min(2*_bar_w+1, _bar_w + _margin_chars + 1)):
-                    _bar[i] = ' '
-                _bar[_bar_w] = '|'  # 중심
-                _bar[_bar_w + _pos] = 'O'
-                _gauge = '[' + ''.join(_bar) + ']'
-                status = f"도달" if at_target else f"이동중 ({info})"
-                print(f"[타겟] {target['cls']} | {status} {_gauge}")
+                cx_off  = abs(target["cx"] - frame_w / 2)
+                status = f"도달 cx편차={cx_off:.0f}px" if at_target else f"이동중 ({info}) cx편차={cx_off:.0f}px"
+                print(f"[타겟] {target['cls']} | {status}")
 
             if at_target:
                 control_wheels(None)  # 도달 시 정지 후 confirm
