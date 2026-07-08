@@ -134,7 +134,9 @@ MAX_MY              = 150.0
 AREA_THRESHOLD      = 28000   # 이 면적 이상이면 "도달"로 판단 (w×h px²)
 AREA_SLOW_THRESHOLD = 20000   # 이 면적 이상이면 감속 시작
 AREA_ROTATE_THRESHOLD = 15000 # 이 이하일 때만 제자리 회전 정렬
-CENTER_MARGIN_PX    = 150     # 픽셀 모드: 화면 중심에서 이 픽셀 이내여야 도달 인정
+CENTER_MARGIN_PX    = 120     # 픽셀 모드: 가로 중심에서 이 픽셀 이내여야 도달 인정
+CENTER_MARGIN_Y_PX  = 100     # 픽셀 모드: 세로 중심에서 이 픽셀 이내여야 도달 인정
+CENTER_OFFSET_Y_PX  = 20      # 세로 중심 오프셋 (양수=아래)
 ALIGN_THRESHOLD     = 0.25    # 이 이상 turn값이면 전진 없이 제자리 회전 우선
 TURN_ONLY_SPEED     = 0.2     # 제자리 회전 속도
 
@@ -332,8 +334,10 @@ def _is_at_target(target: dict) -> bool:
         dist = (target["mx"] ** 2 + target["my"] ** 2) ** 0.5
         return dist < ARRIVE_THRESHOLD_MM
     frame_w  = FRAME_W or 640
-    centered = abs(target["cx"] - frame_w / 2) <= CENTER_MARGIN_PX
-    return centered and target.get("area", 0) >= AREA_THRESHOLD
+    frame_h  = FRAME_H or 480
+    cx_ok = abs(target["cx"] - frame_w / 2) <= CENTER_MARGIN_PX
+    cy_ok = abs(target["cy"] - (frame_h / 2 + CENTER_OFFSET_Y_PX)) <= CENTER_MARGIN_Y_PX
+    return cx_ok and cy_ok and target.get("area", 0) >= AREA_THRESHOLD
 
 
 # ── OpenRB 명령 전송 ─────────────────────────────────────
@@ -498,8 +502,10 @@ try:
                 else:
                     info = f"area={target['area']}"
                 frame_w = FRAME_W or 640
+                frame_h = FRAME_H or 480
                 cx_off  = abs(target["cx"] - frame_w / 2)
-                status = f"도달 cx편차={cx_off:.0f}px" if at_target else f"이동중 ({info}) cx편차={cx_off:.0f}px"
+                cy_off  = abs(target["cy"] - (frame_h / 2 + CENTER_OFFSET_Y_PX))
+                status = f"도달" if at_target else f"이동중 ({info}) cx={cx_off:.0f} cy={cy_off:.0f}"
                 print(f"[타겟] {target['cls']} | {status}")
 
             if at_target:
@@ -653,13 +659,18 @@ try:
         # ── 시각화 ──────────────────────────────────────
         annotated_frame = results[0].plot()
 
-        # 중앙 정렬 가이드라인
+        # 중앙 정렬 가이드라인 (OK 박스)
         _fw = FRAME_W or 640
         _fh = FRAME_H or 480
         _cx = _fw // 2
-        cv2.line(annotated_frame, (_cx, 0), (_cx, _fh), (0, 255, 0), 1)  # 중심선
-        cv2.line(annotated_frame, (_cx - CENTER_MARGIN_PX, 0), (_cx - CENTER_MARGIN_PX, _fh), (0, 200, 255), 1)
-        cv2.line(annotated_frame, (_cx + CENTER_MARGIN_PX, 0), (_cx + CENTER_MARGIN_PX, _fh), (0, 200, 255), 1)
+        _cy = _fh // 2 + CENTER_OFFSET_Y_PX
+        _box_color = (0, 255, 0) if at_target else (0, 200, 255)
+        cv2.rectangle(annotated_frame,
+                      (_cx - CENTER_MARGIN_PX, _cy - CENTER_MARGIN_Y_PX),
+                      (_cx + CENTER_MARGIN_PX, _cy + CENTER_MARGIN_Y_PX),
+                      _box_color, 1)
+        cv2.line(annotated_frame, (_cx, _cy - 8), (_cx, _cy + 8), _box_color, 1)
+        cv2.line(annotated_frame, (_cx - 8, _cy), (_cx + 8, _cy), _box_color, 1)
 
         # 타겟 노란 테두리
         if target and boxes is not None:
