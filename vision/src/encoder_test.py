@@ -15,7 +15,7 @@ import os
 import threading
 
 BAUD_RATE  = 115200
-DRIVE_SECS     = 3.0
+DRIVE_SECS     = 1.2
 SPEED          = 0.3
 TICKS_PER_M    = 105.2   # 실측 보정값 (111 ticks / 1.055m)
 
