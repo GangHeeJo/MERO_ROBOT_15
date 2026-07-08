@@ -136,7 +136,7 @@ ALIGN_THRESHOLD     = 0.4     # 이 이상 turn값이면 전진 없이 제자리
 TURN_ONLY_SPEED     = 0.2     # 제자리 회전 속도
 
 # 오인식 방지
-CONFIRM_FRAMES      = 5       # 연속 N프레임 도달 조건 만족해야 grip 전송
+CONFIRM_FRAMES      = 3       # 연속 N프레임 도달 조건 만족해야 grip 전송
 
 # 탐색 회전
 SEARCH_ROTATE_SPEED = 0.2     # 타겟 없을 때 제자리 회전 속도
@@ -519,10 +519,10 @@ try:
         # ── 상태 머신 ──────────────────────────────────
         if robot_state == RobotState.SEARCHING:
             if target:
-                # 타겟 변경 시 confirm_count 리셋
-                if target["id"] != last_target_id:
+                # 클래스가 바뀔 때만 confirm_count 리셋 (ID 변경은 무시)
+                if target["cls"] != getattr(select_target, "_last_cls", None):
                     confirm_count  = 0
-                    last_target_id = target["id"]
+                    select_target._last_cls = target["cls"]
 
                 if target.get("mx") is not None:
                     dist = (target["mx"] ** 2 + target["my"] ** 2) ** 0.5
