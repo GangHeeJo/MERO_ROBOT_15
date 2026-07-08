@@ -16,9 +16,9 @@ import glob as _glob
 import os
 import threading
 
-BAUD_RATE  = 115200
-TURN_SPEED = 0.25
-TURN_SECS  = 20.0   # 10바퀴 예상 시간 (속도에 따라 조정)
+BAUD_RATE   = 115200
+TURN_SPEED  = 0.25
+TARGET_DEG  = 3600.0   # 10바퀴 = 3600°
 
 def find_port(keywords, default):
     for p in _glob.glob("/dev/serial/by-id/*"):
@@ -80,13 +80,26 @@ def main():
         return
 
     print(f"초기 yaw: {yaw0:.2f}°")
-    input(f"\nEnter → {TURN_SECS}초 제자리 회전 시작...")
+    input(f"\nEnter → {int(TARGET_DEG/360)}바퀴 제자리 회전 시작...")
 
-    print(f"회전 중... ({TURN_SECS}s)")
-    deadline = time.time() + TURN_SECS
-    while time.time() < deadline:
+    print(f"회전 중... (목표 {TARGET_DEG:.0f}°)")
+    prev_yaw = yaw0
+    cumulative = 0.0
+    start_time = time.time()
+
+    while cumulative < TARGET_DEG:
         send(ser, {"T": 1, "L": -TURN_SPEED, "R": TURN_SPEED})
-        time.sleep(0.1)
+        time.sleep(0.05)
+        with lock:
+            cur = latest["yaw"]
+        if cur is None:
+            continue
+        delta = angle_diff(cur, prev_yaw)
+        cumulative += abs(delta)
+        prev_yaw = cur
+        print(f"  누적: {cumulative:.1f}° / {TARGET_DEG:.0f}°", end="\r")
+
+    elapsed = time.time() - start_time
     send(ser, {"T": 1, "L": 0, "R": 0})
     time.sleep(0.5)
 
@@ -95,7 +108,8 @@ def main():
 
     diff = angle_diff(yaw1, yaw0)
 
-    print(f"\n── 결과 ──────────────────────────────")
+    print(f"\n\n── 결과 ──────────────────────────────")
+    print(f"  걸린 시간: {elapsed:.1f}s")
     print(f"  시작 yaw: {yaw0:.2f}°")
     print(f"  종료 yaw: {yaw1:.2f}°")
     print(f"  오차:     {diff:.2f}°  (0에 가까울수록 정확)")
