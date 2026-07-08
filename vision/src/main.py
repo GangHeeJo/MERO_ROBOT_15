@@ -166,10 +166,10 @@ STORAGE_DRIVE_SPEED  = 0.3
 
 # ── 상태 머신 ────────────────────────────────────────────
 class RobotState(Enum):
-    SEARCHING     = "탐색중"
-    GRIPPING      = "집는중"
-    GO_TO_STORAGE = "보관함이동"
-    DROPPING      = "내려놓는중"
+    SEARCHING     = "SEARCHING"
+    GRIPPING      = "GRIPPING"
+    GO_TO_STORAGE = "GO_TO_STORAGE"
+    DROPPING      = "DROPPING"
 
 robot_state           = RobotState.SEARCHING
 grip_sent_at          = 0.0
@@ -710,7 +710,7 @@ try:
             score_text = "  ".join(score_parts)
             score_color = (0, 255, 255) if all_done else (255, 255, 255)
             if all_done:
-                score_text += "  ★ 완료!"
+                score_text += "  DONE!"
             cv2.putText(annotated_frame, score_text,
                         (w // 2 - 80, h - 50), cv2.FONT_HERSHEY_SIMPLEX, 0.65, score_color, 2)
 
