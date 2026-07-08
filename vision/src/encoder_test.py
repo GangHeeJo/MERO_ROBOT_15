@@ -15,8 +15,9 @@ import os
 import threading
 
 BAUD_RATE  = 115200
-DRIVE_SECS = 3.0
-SPEED      = 0.3
+DRIVE_SECS     = 3.0
+SPEED          = 0.3
+TICKS_PER_M    = 105.2   # 실측 보정값 (111 ticks / 1.055m)
 
 def find_port(keywords, default):
     for p in _glob.glob("/dev/serial/by-id/*"):
@@ -87,11 +88,14 @@ def main():
 
     dl = odl1 - odl0
     dr = odr1 - odr0
+    avg = (dl + dr) / 2
+    calc_m = avg / TICKS_PER_M
     print(f"\n── 결과 ──────────────────────────")
     print(f"  odl: {odl0} → {odl1}  (Δ{dl:+d})")
     print(f"  odr: {odr0} → {odr1}  (Δ{dr:+d})")
-    print(f"  평균 ticks: {(dl+dr)//2}")
-    print(f"\n실제 거리 자로 재서 → TICKS_PER_M = {(dl+dr)//2} / 실제거리(m)")
+    print(f"  평균 ticks: {avg:.1f}")
+    print(f"  계산 거리:  {calc_m*100:.1f}cm  (TICKS_PER_M={TICKS_PER_M})")
+    print(f"\n실제 거리 자로 재서 비교하세요.")
 
     ser.close()
 
