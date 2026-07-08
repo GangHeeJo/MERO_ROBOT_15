@@ -129,7 +129,7 @@ MAX_MX              = 200.0
 MAX_MY              = 150.0
 
 # 픽셀 모드 (calibration 없을 때) — bbox 면적 기반
-AREA_THRESHOLD      = 27000   # 이 면적 이상이면 "도달"로 판단 (w×h px²)
+AREA_THRESHOLD      = 32000   # 이 면적 이상이면 "도달"로 판단 (w×h px²)
 AREA_SLOW_THRESHOLD = 20000   # 이 면적 이상이면 감속 시작
 CENTER_MARGIN_PX    = 80      # 픽셀 모드: 화면 중심에서 이 픽셀 이내여야 도달 인정
 ALIGN_THRESHOLD     = 0.4     # 이 이상 turn값이면 전진 없이 제자리 회전 우선
