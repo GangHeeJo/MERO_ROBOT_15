@@ -229,9 +229,9 @@ def _read_esp32_loop():
                     v_raw = data.get("v") or data.get("V")
                     if v_raw is not None:
                         battery_v = v_raw / 100.0
-                    # 엔코더 (필드명 lp/rp — 다를 경우 여기만 수정)
-                    if "lp" in data: enc_l = int(data["lp"])
-                    if "rp" in data: enc_r = int(data["rp"])
+                    # 엔코더 (odl/odr)
+                    if "odl" in data: enc_l = int(data["odl"])
+                    if "odr" in data: enc_r = int(data["odr"])
                 elif data.get("T") == 126 and "y" in data:
                     imu_yaw = float(data["y"])
         except Exception:
