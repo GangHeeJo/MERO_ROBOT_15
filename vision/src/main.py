@@ -312,7 +312,6 @@ def control_wheels(target: dict | None, override_l: float | None = None, overrid
         frame_w  = FRAME_W or 640
         turn     = max(-1.0, min(1.0, (target["cx"] - frame_w / 2) / (frame_w / 2)))
         area     = target.get("area", 0)
-        centered = abs(target["cx"] - frame_w / 2) <= CENTER_MARGIN_PX
 
         if abs(turn) > ALIGN_THRESHOLD and area < AREA_ROTATE_THRESHOLD:
             # 멀리 있을 때만 제자리 회전 정렬
@@ -503,12 +502,14 @@ try:
                 status = f"도달 cx편차={cx_off:.0f}px" if at_target else f"이동중 ({info}) cx편차={cx_off:.0f}px"
                 print(f"[타겟] {target['cls']} | {status}")
 
-            if target:
+            if at_target:
+                control_wheels(None)  # 도달 시 정지 후 confirm
+            elif target:
                 control_wheels(target)
             else:
                 all_done = TARGET_CLS and all(pickup_counts.get(c, 0) >= max_count(c) for c in TARGET_CLS)
                 if all_done:
-                    control_wheels(None)  # 목표 달성 → 정지
+                    control_wheels(None)
                 else:
                     control_wheels(None, override_l=-SEARCH_ROTATE_SPEED, override_r=SEARCH_ROTATE_SPEED)
 
