@@ -18,7 +18,7 @@ import threading
 
 BAUD_RATE   = 115200
 TURN_SPEED  = 0.25
-TARGET_DEG  = 3600.0   # 10바퀴 = 3600°
+TARGET_DEG  = 1800.0   # 5바퀴 = 1800°
 
 def find_port(keywords, default):
     for p in _glob.glob("/dev/serial/by-id/*"):
