@@ -67,38 +67,42 @@ def main():
         ser.close()
         return
 
-    # gz 스케일 팩터 추정: MPU9250 기본 ±250°/s → 131 LSB/(°/s)
-    GZ_SCALE = 131.0
+    # gz는 누적 적산값으로 추정 (odl/odr 방식과 동일)
+    # 스케일은 실측으로 보정
+    GZ_SCALE = 131.0   # LSB/° — 실측 후 조정
 
-    print(f"초기 gz: {latest['gz']}  (스케일: {GZ_SCALE} LSB/°/s)")
+    with lock:
+        gz0 = latest["gz"]
+
+    print(f"초기 gz: {gz0}")
     input(f"\nEnter → {TARGET_DEG:.0f}° 제자리 회전 시작...")
 
+    start_time = time.time()
     print(f"회전 중... (목표 {TARGET_DEG:.0f}°)")
-    cumulative = 0.0
-    prev_ts = time.time()
-    start_time = prev_ts
 
-    while cumulative < TARGET_DEG:
+    while True:
         send(ser, {"T": 1, "L": -TURN_SPEED, "R": TURN_SPEED})
         time.sleep(0.05)
         with lock:
-            gz = latest["gz"]
-            ts = latest["ts"]
-        if gz is None or ts is None:
-            continue
-        now = time.time()
-        dt = now - prev_ts
-        prev_ts = now
-        deg_per_sec = gz / GZ_SCALE
-        cumulative += abs(deg_per_sec) * dt
-        print(f"  누적: {cumulative:.1f}° / {TARGET_DEG:.0f}°  gz={gz}", end="\r")
+            gz_now = latest["gz"]
+        delta = abs(gz_now - gz0) / GZ_SCALE
+        print(f"  누적: {delta:.1f}° / {TARGET_DEG:.0f}°  gz={gz_now}", end="\r")
+        if delta >= TARGET_DEG:
+            break
 
     elapsed = time.time() - start_time
     send(ser, {"T": 1, "L": 0, "R": 0})
+    time.sleep(0.3)
 
+    with lock:
+        gz1 = latest["gz"]
+
+    total_ticks = gz1 - gz0
     print(f"\n\n── 결과 ──────────────────────────────")
     print(f"  걸린 시간: {elapsed:.1f}s")
-    print(f"  누적 회전: {cumulative:.1f}° (목표 {TARGET_DEG:.0f}°)")
+    print(f"  gz: {gz0} → {gz1}  (Δ{total_ticks:+d})")
+    print(f"  계산 각도: {total_ticks/GZ_SCALE:.1f}°  (GZ_SCALE={GZ_SCALE})")
+    print(f"\n실제 각도 측정 후: GZ_SCALE = {total_ticks} / 실제각도(°)")
 
     ser.close()
 
