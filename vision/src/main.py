@@ -122,8 +122,8 @@ OPENRB_PORT = _find_port(["openrb", "robotis", "2ecc"], "/dev/ttyACM1")
 BAUD_RATE   = 115200
 
 # ── 바퀴 제어 파라미터 ───────────────────────────────────
-MOVE_SPEED          = 0.3
-SLOW_SPEED          = 0.15
+MOVE_SPEED          = 0.2
+SLOW_SPEED          = 0.1
 
 # mm 모드 (calibration 있을 때)
 ARRIVE_THRESHOLD_MM = 30.0
