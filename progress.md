@@ -439,6 +439,16 @@ Colab 노트북 실행 전 필요한 것:
 
 ---
 
+## 2026-07-08 작업 내역
+
+- **보관함 이동 로직 개선** (`vision/src/main.py`)
+  - IMU 기반 방향 회전: 시작 시 yaw 기록 → GO_TO_STORAGE에서 `storage_yaw(=initial_yaw-90°)`까지 IMU로 회전
+  - 엔코더 기반 직진 거리 측정: T=1001 `lp`/`rp` 필드 파싱 → `ENCODER_TICKS_PER_M` 기준 4.5m 도달 시 정지
+  - IMU/엔코더 미획득 시 고정 시간 fallback 자동 적용
+- **실측 필요 항목** (아래 표 참고)
+
+---
+
 ## 2026-07-06 작업 내역
 
 - **launcher.py 추가** (`vision/src/launcher.py`) — 물리 버튼 3개 + SSD1306 OLED로 독립 운용
@@ -649,10 +659,13 @@ Colab 노트북 실행 전 필요한 것:
 | ✅ 완료 | `FINGER_OPEN_DEG` | ~~150~~ → **265°** | 실측 완료 (raw 2700) | `gripper.ino` |
 | ✅ 완료 | `FINGER_CLOSE_DEG` | ~~90~~ → **110°** | 실측 완료 | `gripper.ino` |
 | ✅ 완료 | `GRIP_LOAD_THRESHOLD` | ~~30mA~~ → **200** (Load 20%) | 실측 완료 | `gripper.ino` |
-| 🟡 중간 | `AREA_THRESHOLD` | 40000 | `main.py` 실행 중 물체 바로 앞에서 터미널 area 값 확인 | `main.py` |
-| 🟡 중간 | `STORAGE_BACKUP_SECS` | 0.8s | 물체 집은 자리에서 후진 충분한 시간 실측 | `main.py` |
-| 🟡 중간 | `STORAGE_TURN_SECS` | 2.0s | 보관함 방향으로 좌회전 완료 시간 실측 | `main.py` |
-| 🟡 중간 | `STORAGE_DRIVE_SECS` | 3.0s | 보관함까지 직진 시간 실측 | `main.py` |
+| 🔴 높음 | `AREA_THRESHOLD` | 40000 | 물체 바로 앞에서 area 값 확인 → 그 값으로 설정 (실측 max ~27000) | `main.py` |
+| 🔴 높음 | 엔코더 필드명 | `lp`/`rp` 추정 | T=1001 출력 직접 확인 (다르면 `_read_esp32_loop` 한 줄 수정) | `main.py` |
+| 🔴 높음 | `ENCODER_TICKS_PER_M` | 1000 (placeholder) | 1m 직진 후 lp/rp 변화량 측정 | `main.py` |
+| 🟡 중간 | `STORAGE_MAX_DIST_M` | 4.5m | 필드 가장 먼 위치에서 보관함까지 실측 | `main.py` |
+| 🟡 중간 | `STORAGE_BACKUP_SECS` | 0.8s | 집은 자리에서 후진 후 회전 공간 확인 | `main.py` |
+| 🟡 중간 | 로봇 초기 방향 | - | 매번 같은 방향으로 배치 기준 정하기 (IMU initial_yaw 기반) | 운용 |
+| 🟡 중간 | 카메라 감지 거리 | 미측정 | 출발점에서 물체 감지 되는지 확인 | 테스트 |
 
 ### 캘리브레이션
 
