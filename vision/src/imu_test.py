@@ -67,42 +67,56 @@ def main():
         ser.close()
         return
 
-    # gz는 누적 적산값으로 추정 (odl/odr 방식과 동일)
-    # 스케일은 실측으로 보정
-    GZ_SCALE = 131.0   # LSB/° — 실측 후 조정
+    # gz = 순간 각속도 (LSB), 적분해서 각도 계산
+    # MPU9250 기본 ±250°/s → 131 LSB/(°/s)
+    GZ_SCALE = 131.0
 
-    with lock:
-        gz0 = latest["gz"]
+    # 정지 상태에서 바이어스 측정 (1초)
+    print("바이어스 측정중 (1초 정지)...")
+    samples = []
+    deadline = time.time() + 1.0
+    prev_ts = None
+    while time.time() < deadline:
+        with lock:
+            gz = latest["gz"]
+            ts = latest["ts"]
+        if ts != prev_ts and gz is not None:
+            samples.append(gz)
+            prev_ts = ts
+        time.sleep(0.01)
+    bias = sum(samples) / len(samples) if samples else 0.0
+    print(f"바이어스: {bias:.1f}  (샘플 {len(samples)}개)")
 
-    print(f"초기 gz: {gz0}")
     input(f"\nEnter → {TARGET_DEG:.0f}° 제자리 회전 시작...")
 
-    start_time = time.time()
     print(f"회전 중... (목표 {TARGET_DEG:.0f}°)")
+    cumulative = 0.0
+    start_time = time.time()
+    prev_ts = None
 
-    while True:
+    while cumulative < TARGET_DEG:
         send(ser, {"T": 1, "L": -TURN_SPEED, "R": TURN_SPEED})
-        time.sleep(0.05)
+        time.sleep(0.02)
         with lock:
-            gz_now = latest["gz"]
-        delta = abs(gz_now - gz0) / GZ_SCALE
-        print(f"  누적: {delta:.1f}° / {TARGET_DEG:.0f}°  gz={gz_now}", end="\r")
-        if delta >= TARGET_DEG:
-            break
+            gz = latest["gz"]
+            ts = latest["ts"]
+        if ts is None or ts == prev_ts:
+            continue
+        dt = ts - prev_ts if prev_ts is not None else 0.0
+        prev_ts = ts
+        if dt <= 0 or dt > 0.5:
+            continue
+        deg = abs((gz - bias) / GZ_SCALE) * dt
+        cumulative += deg
+        print(f"  누적: {cumulative:.1f}° / {TARGET_DEG:.0f}°  gz={gz:.0f}  dt={dt*1000:.0f}ms", end="\r")
 
     elapsed = time.time() - start_time
     send(ser, {"T": 1, "L": 0, "R": 0})
-    time.sleep(0.3)
 
-    with lock:
-        gz1 = latest["gz"]
-
-    total_ticks = gz1 - gz0
     print(f"\n\n── 결과 ──────────────────────────────")
     print(f"  걸린 시간: {elapsed:.1f}s")
-    print(f"  gz: {gz0} → {gz1}  (Δ{total_ticks:+d})")
-    print(f"  계산 각도: {total_ticks/GZ_SCALE:.1f}°  (GZ_SCALE={GZ_SCALE})")
-    print(f"\n실제 각도 측정 후: GZ_SCALE = {total_ticks} / 실제각도(°)")
+    print(f"  적분 각도: {cumulative:.1f}°")
+    print(f"  실제 각도 재서 비교 → GZ_SCALE = {GZ_SCALE} × (적분값/실제각도)")
 
     ser.close()
 
