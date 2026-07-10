@@ -429,12 +429,13 @@ threading.Thread(
 print("[스트림] http://172.20.10.5:8080 에서 카메라 확인 가능")
 
 # ── 카메라 캡처 스레드 (cap.read 블로킹을 메인 루프에서 분리) ──
-_cam_frame = None
-_cam_lock  = threading.Lock()
+_cam_frame   = None
+_cam_lock    = threading.Lock()
+_cam_running = True
 
 def _cam_reader():
     global _cam_frame
-    while True:
+    while _cam_running:
         ret, f = cap.read()
         if ret:
             with _cam_lock:
@@ -776,6 +777,8 @@ try:
                 break
 
 finally:
+    _cam_running = False
+    time.sleep(0.15)
     cap.release()
     if ser_esp32  and ser_esp32.is_open:  ser_esp32.close()
     if ser_openrb and ser_openrb.is_open: ser_openrb.close()
