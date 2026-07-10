@@ -765,17 +765,21 @@ try:
         # FPS
         fps_counter += 1
         elapsed_fps = time.time() - fps_timer
+        _t4 = time.time()
         if elapsed_fps >= 1.0:
             fps_display = fps_counter / elapsed_fps
             fps_counter = 0
             fps_timer   = time.time()
-            _t4 = time.time()
-            print(f"[FPS] {fps_display:.1f} | track={(_t1-_t0)*1000:.0f}ms state={(_t2-_t1)*1000:.0f}ms plot={(_t3-_t2)*1000:.0f}ms draw={(_t4-_t3)*1000:.0f}ms")
+            print(f"[FPS] {fps_display:.1f} | total={(_t4-_t0)*1000:.0f}ms track={(_t1-_t0)*1000:.0f}ms state={(_t2-_t1)*1000:.0f}ms plot={(_t3-_t2)*1000:.0f}ms draw={(_t4-_t3)*1000:.0f}ms")
         cv2.putText(annotated_frame, f"FPS: {fps_display:.1f}",
                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
 
         with _stream_lock:
             _stream_frame = annotated_frame.copy()
+
+        _t5 = time.time()
+        if _t5 - _t0 > 0.15:
+            print(f"[SLOW] {(_t5-_t0)*1000:.0f}ms: track={(_t1-_t0)*1000:.0f} state={(_t2-_t1)*1000:.0f} plot={(_t3-_t2)*1000:.0f} draw={(_t4-_t3)*1000:.0f} rest={(_t5-_t4)*1000:.0f}")
 
         if not HEADLESS:
             cv2.imshow(WINDOW_NAME, annotated_frame)
