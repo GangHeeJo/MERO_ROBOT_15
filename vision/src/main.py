@@ -379,7 +379,9 @@ if not cap.isOpened():
         exit()
 
 cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('Y', 'U', 'Y', '2'))
-cap.set(cv2.CAP_PROP_FPS, 80)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1200)
+cap.set(cv2.CAP_PROP_FPS, 50)
 
 # 실제 카메라 해상도로 FRAME_W/H 보정 (calibration.json 없을 때)
 if FRAME_W is None:
