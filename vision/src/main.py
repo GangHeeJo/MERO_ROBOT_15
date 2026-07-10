@@ -428,6 +428,20 @@ threading.Thread(
 ).start()
 print("[스트림] http://172.20.10.5:8080 에서 카메라 확인 가능")
 
+# ── 카메라 캡처 스레드 (cap.read 블로킹을 메인 루프에서 분리) ──
+_cam_frame = None
+_cam_lock  = threading.Lock()
+
+def _cam_reader():
+    global _cam_frame
+    while True:
+        ret, f = cap.read()
+        if ret:
+            with _cam_lock:
+                _cam_frame = f
+
+threading.Thread(target=_cam_reader, daemon=True).start()
+
 fps_counter = 0
 fps_display = 0.0
 fps_timer   = time.time()
@@ -435,13 +449,10 @@ fps_timer   = time.time()
 # ── 메인 루프 ────────────────────────────────────────────
 try:
     while True:
-        ret, frame = cap.read()
-        if not ret:
-            _frame_fail_count += 1
-            if _frame_fail_count >= 10:
-                print("[오류] 프레임 읽기 연속 10회 실패 — 종료")
-                break
-            print(f"[경고] 프레임 읽기 실패 ({_frame_fail_count}/10), 재시도...")
+        with _cam_lock:
+            frame = _cam_frame
+        if frame is None:
+            time.sleep(0.005)
             continue
         _frame_fail_count = 0
 
