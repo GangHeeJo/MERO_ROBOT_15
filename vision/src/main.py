@@ -378,8 +378,8 @@ if not cap.isOpened():
         print("[카메라] 사용 가능한 카메라 없음")
         exit()
 
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1200)
+cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
+cap.set(cv2.CAP_PROP_FPS, 30)
 
 # 실제 카메라 해상도로 FRAME_W/H 보정 (calibration.json 없을 때)
 if FRAME_W is None:
