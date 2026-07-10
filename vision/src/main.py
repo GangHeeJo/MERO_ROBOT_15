@@ -445,6 +445,7 @@ threading.Thread(target=_cam_reader, daemon=True).start()
 fps_counter = 0
 fps_display = 0.0
 fps_timer   = time.time()
+_last_print_t = 0.0  # 탐지/타겟 로그 출력 주기 제어
 
 # ── 메인 루프 ────────────────────────────────────────────
 try:
@@ -490,7 +491,8 @@ try:
                     coord_str = f"({mx:.1f}mm, {my:.1f}mm) area={area:.0f}"
                 else:
                     coord_str = f"({cx:.1f}px, {cy:.1f}px) area={area:.0f}"
-                print(f"[탐지] ID={track_id} | {cls_name} conf={conf:.2f} | {coord_str}")
+                if time.time() - _last_print_t >= 0.5:
+                    print(f"[탐지] ID={track_id} | {cls_name} conf={conf:.2f} | {coord_str}")
 
         target    = select_target(detected)
         at_target = _is_at_target(target) if target else False
@@ -520,7 +522,9 @@ try:
                 cx_off  = abs(target["cx"] - frame_w / 2)
                 cy_off  = abs(target["cy"] - (frame_h / 2 + CENTER_OFFSET_Y_PX))
                 status = f"도달" if at_target else f"이동중 ({info}) cx={cx_off:.0f} cy={cy_off:.0f}"
-                print(f"[타겟] {target['cls']} | {status}")
+                if time.time() - _last_print_t >= 0.5:
+                    print(f"[타겟] {target['cls']} | {status}")
+                    _last_print_t = time.time()
 
             if at_target:
                 control_wheels(None)  # 도달 시 정지 후 confirm
