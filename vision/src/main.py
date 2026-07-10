@@ -388,7 +388,7 @@ if FRAME_W is None:
         FRAME_H, FRAME_W = _f.shape[:2]
         print(f"[카메라] 해상도 감지: {FRAME_W}×{FRAME_H}")
 
-HEADLESS    = not os.environ.get("DISPLAY")
+HEADLESS    = True  # X11 imshow 비활성화 (SSH+WiFi 병목 방지)
 WINDOW_NAME = "MERO_AI_ROBOT"
 if not HEADLESS:
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_AUTOSIZE)
@@ -434,15 +434,10 @@ fps_counter = 0
 fps_display = 0.0
 fps_timer   = time.time()
 _last_print_t = 0.0  # 탐지/타겟 로그 출력 주기 제어
-_dbg_t = 0.0
-_iter_end_t = None
 
 # ── 메인 루프 ────────────────────────────────────────────
 try:
     while True:
-        _t0 = time.time()
-        if _iter_end_t is not None and _t0 - _iter_end_t > 0.05:
-            print(f"[GAP] {(_t0-_iter_end_t)*1000:.0f}ms")
         ret, frame = cap.read()
         if not ret:
             _frame_fail_count += 1
@@ -453,7 +448,6 @@ try:
         _frame_fail_count = 0
 
         results  = model.track(frame, persist=True, conf=0.25, verbose=False, device="cuda", tracker="bytetrack.yaml")
-        _t1 = time.time()
         boxes    = results[0].boxes
         detected = []
 
@@ -671,9 +665,7 @@ try:
                 print(f"[상태] 내려놓는중... ({elapsed:.1f}s)", end="\r")
 
         # ── 시각화 ──────────────────────────────────────
-        _t2 = time.time()
         annotated_frame = results[0].plot()
-        _t3 = time.time()
 
         # 중앙 정렬 가이드라인 (OK 박스)
         _fw = FRAME_W or 640
@@ -757,22 +749,16 @@ try:
         # FPS
         fps_counter += 1
         elapsed_fps = time.time() - fps_timer
-        _t4 = time.time()
         if elapsed_fps >= 1.0:
             fps_display = fps_counter / elapsed_fps
             fps_counter = 0
             fps_timer   = time.time()
-            print(f"[FPS] {fps_display:.1f} | total={(_t4-_t0)*1000:.0f}ms track={(_t1-_t0)*1000:.0f}ms state={(_t2-_t1)*1000:.0f}ms plot={(_t3-_t2)*1000:.0f}ms draw={(_t4-_t3)*1000:.0f}ms")
+            print(f"[FPS] {fps_display:.1f}")
         cv2.putText(annotated_frame, f"FPS: {fps_display:.1f}",
                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
 
         with _stream_lock:
             _stream_frame = annotated_frame.copy()
-
-        _t5 = time.time()
-        _iter_end_t = _t5
-        if _t5 - _t0 > 0.15:
-            print(f"[SLOW] {(_t5-_t0)*1000:.0f}ms: track={(_t1-_t0)*1000:.0f} state={(_t2-_t1)*1000:.0f} plot={(_t3-_t2)*1000:.0f} draw={(_t4-_t3)*1000:.0f} rest={(_t5-_t4)*1000:.0f}")
 
         if not HEADLESS:
             cv2.imshow(WINDOW_NAME, annotated_frame)
