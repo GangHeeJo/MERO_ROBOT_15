@@ -448,11 +448,14 @@ fps_display = 0.0
 fps_timer   = time.time()
 _last_print_t = 0.0  # 탐지/타겟 로그 출력 주기 제어
 _dbg_t = 0.0
+_iter_end_t = None
 
 # ── 메인 루프 ────────────────────────────────────────────
 try:
     while True:
         _t0 = time.time()
+        if _iter_end_t is not None and _t0 - _iter_end_t > 0.05:
+            print(f"[GAP] {(_t0-_iter_end_t)*1000:.0f}ms")
         with _cam_lock:
             frame = _cam_frame
         if frame is None:
@@ -778,6 +781,7 @@ try:
             _stream_frame = annotated_frame.copy()
 
         _t5 = time.time()
+        _iter_end_t = _t5
         if _t5 - _t0 > 0.15:
             print(f"[SLOW] {(_t5-_t0)*1000:.0f}ms: track={(_t1-_t0)*1000:.0f} state={(_t2-_t1)*1000:.0f} plot={(_t3-_t2)*1000:.0f} draw={(_t4-_t3)*1000:.0f} rest={(_t5-_t4)*1000:.0f}")
 
