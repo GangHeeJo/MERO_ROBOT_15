@@ -378,6 +378,9 @@ if not cap.isOpened():
         print("[카메라] 사용 가능한 카메라 없음")
         exit()
 
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1200)
+
 # 실제 카메라 해상도로 FRAME_W/H 보정 (calibration.json 없을 때)
 if FRAME_W is None:
     _ret, _f = cap.read()
@@ -442,7 +445,7 @@ try:
             continue
         _frame_fail_count = 0
 
-        results  = model.track(frame, persist=True, conf=0.25, verbose=False)
+        results  = model.track(frame, persist=True, conf=0.25, verbose=False, device="cuda")
         boxes    = results[0].boxes
         detected = []
 
