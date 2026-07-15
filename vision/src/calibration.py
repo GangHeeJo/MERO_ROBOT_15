@@ -21,7 +21,7 @@ import sys
 BASE_DIR     = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CALIB_PATH   = os.path.join(BASE_DIR, "model", "calibration.json")
 CAPTURE_PATH = os.path.join(BASE_DIR, "model", "calib_frame.jpg")
-CAMERA_INDEX = 1
+CAMERA_INDEX = 0   # main.py CAMERA_INDEX_OBJ 와 동일해야 함
 
 def open_camera():
     cap = cv2.VideoCapture(CAMERA_INDEX)

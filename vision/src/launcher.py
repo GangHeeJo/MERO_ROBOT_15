@@ -17,6 +17,7 @@ launcher.py — 물리 버튼으로 main.py 실행/정지
   python3 vision/src/launcher.py
 """
 
+import os
 import subprocess
 import time
 import signal
@@ -49,7 +50,7 @@ BTN_START = 15   # 버튼C
 SHAPES = ['d6', 'd8', 'd12', 'd20']
 FRUITS = ['apple', 'banana', 'orange', 'pineapple']
 
-MAIN_PY = '/home/aiwinners/MERO_ROBOT_15/vision/src/main.py'
+MAIN_PY = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'src', 'main.py')
 
 # ── 폰트 경로 후보 ───────────────────────────────────────
 FONT_CANDIDATES = [
