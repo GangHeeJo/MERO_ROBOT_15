@@ -8,18 +8,21 @@ MERO_AI_ROBOT 메인 실행 파일
   - calibration.json 없음 → bbox 면적 기반 판단 (캘리브 전 테스트용)
 
 상태 머신:
-  SEARCHING      — 타겟 탐지 + 이동
-  GRIPPING       — grip 명령 전송 후 gripped 신호 대기 (바퀴 정지)
-  GO_TO_STORAGE  — 바퀴로 보관함까지 고정 경로 이동
-  DROPPING       — drop 명령 전송 후 done 신호 대기 (바퀴 정지)
+  SEARCHING      — 타겟 탐지 + 이동, 도달 시 grip 전송
+  GRIPPING       — grip 전송 후 gripped 신호 대기 (집기+팔올림+투하+팔내림 완료)
+                   → gripped 수신 시 SEARCHING 복귀 (반복 수집)
+                   → 모든 타겟 수집 완료 시 GO_TO_STORAGE
+  GO_TO_STORAGE  — 바퀴로 보관함까지 고정 경로 이동 → dump 전송
+  DROPPING       — dump 전송 후 dumped 신호 대기 (컨테이너 열어 쏟기 완료)
 
 시리얼:
   /dev/ttyACM0 → ESP32  (UGV02 바퀴)   {"T":1, "L":speed, "R":speed}
-  /dev/ttyACM1 → OpenRB (팔·그리퍼)    {"cmd":"grip"/"drop"/"idle"}
+  /dev/ttyACM1 → OpenRB (팔·그리퍼)    {"cmd":"grip"/"dump"/"idle"}
 
 OpenRB 응답:
-  {"status":"gripped"} — grip 시퀀스 완료
-  {"status":"done"}    — drop+return 완료
+  {"status":"gripped"}     — 집기+컨테이너 투하 완료 → SEARCHING 복귀
+  {"status":"grip_failed"} — 집기 실패 → SEARCHING 복귀
+  {"status":"dumped"}      — 컨테이너 열기 완료 → SEARCHING 복귀
 """
 
 import argparse
@@ -227,11 +230,11 @@ threading.Thread(target=_read_esp32_loop, daemon=True).start()
 
 # ── OpenRB 수신 스레드 (팔 완료 신호) ───────────────────
 openrb_gripped     = False
-openrb_done        = False
+openrb_dumped      = False
 openrb_grip_failed = False
 
 def _read_openrb_loop():
-    global openrb_gripped, openrb_done, openrb_grip_failed
+    global openrb_gripped, openrb_dumped, openrb_grip_failed
     while True:
         if ser_openrb is None or not ser_openrb.is_open:
             time.sleep(0.5); continue
@@ -240,10 +243,10 @@ def _read_openrb_loop():
                 data = json.loads(ser_openrb.readline().decode("utf-8", errors="ignore").strip())
                 if data.get("status") == "gripped":
                     openrb_gripped = True
-                    print("\n[OpenRB] 집기 완료")
-                elif data.get("status") == "done":
-                    openrb_done = True
-                    print("\n[OpenRB] 내려놓기 완료")
+                    print("\n[OpenRB] 집기+투하 완료")
+                elif data.get("status") == "dumped":
+                    openrb_dumped = True
+                    print("\n[OpenRB] 컨테이너 쏟기 완료")
                 elif data.get("status") == "grip_failed":
                     openrb_grip_failed = True
                     print("\n[OpenRB] 집기 실패 (전류 미달)")
@@ -352,10 +355,10 @@ def send_grip(target: dict):
     }) + "\n"
     ser_openrb.write(payload.encode())
 
-def send_drop():
+def send_dump():
     if ser_openrb is None or not ser_openrb.is_open:
         return
-    ser_openrb.write((json.dumps({"cmd": "drop"}) + "\n").encode())
+    ser_openrb.write((json.dumps({"cmd": "dump"}) + "\n").encode())
 
 _last_idle_t = 0.0
 def send_idle():
@@ -523,12 +526,9 @@ try:
             elif target:
                 control_wheels(target)
             else:
-                all_done = TARGET_CLS and all(pickup_counts.get(c, 0) >= max_count(c) for c in TARGET_CLS)
-                if all_done:
-                    control_wheels(None)
-                else:
-                    control_wheels(None, override_l=-SEARCH_ROTATE_SPEED, override_r=SEARCH_ROTATE_SPEED)
+                control_wheels(None, override_l=-SEARCH_ROTATE_SPEED, override_r=SEARCH_ROTATE_SPEED)
 
+            all_done = TARGET_CLS and all(pickup_counts.get(c, 0) >= max_count(c) for c in TARGET_CLS)
             if at_target:
                 confirm_count += 1
                 print(f"[타겟] 도달 확인 {confirm_count}/{CONFIRM_FRAMES}", end="\r")
@@ -536,13 +536,20 @@ try:
                     confirm_count  = 0
                     last_target_id = -1
                     gripped_cls    = target["cls"]
-                    openrb_gripped     = False   # stale 신호 초기화
-                    openrb_done        = False
+                    openrb_gripped     = False
+                    openrb_dumped      = False
                     openrb_grip_failed = False
                     send_grip(target)
                     robot_state  = RobotState.GRIPPING
                     grip_sent_at = time.time()
                     print(f"\n[상태] SEARCHING → GRIPPING (grip: {target['cls']})")
+            elif all_done:
+                control_wheels(None)
+                storage_phase       = -1
+                storage_phase_start = time.time()
+                storage_enter_time  = time.time()
+                robot_state         = RobotState.GO_TO_STORAGE
+                print(f"\n[상태] SEARCHING → GO_TO_STORAGE (전체 수집 완료)")
             else:
                 confirm_count = 0
                 send_idle()
@@ -552,17 +559,20 @@ try:
             elapsed = time.time() - grip_sent_at
             if openrb_gripped:
                 openrb_gripped      = False
-                openrb_done         = False
+                openrb_dumped       = False
                 openrb_grip_failed  = False
-                storage_phase       = -1
-                storage_phase_start = time.time()
-                storage_enter_time  = time.time()
-                robot_state         = RobotState.GO_TO_STORAGE
-                print(f"[상태] GRIPPING → GO_TO_STORAGE ({elapsed:.1f}s)")
+                if gripped_cls:
+                    pickup_counts[gripped_cls] = pickup_counts.get(gripped_cls, 0) + 1
+                    print(f"[스코어] {gripped_cls}: {pickup_counts[gripped_cls]}/{max_count(gripped_cls)}")
+                    gripped_cls = None
+                confirm_count  = 0
+                last_target_id = -1
+                robot_state    = RobotState.SEARCHING
+                print(f"[상태] GRIPPING → SEARCHING ({elapsed:.1f}s)")
             elif openrb_grip_failed:
                 openrb_grip_failed = False
                 openrb_gripped     = False
-                openrb_done        = False
+                openrb_dumped      = False
                 confirm_count      = 0
                 last_target_id     = -1
                 robot_state        = RobotState.SEARCHING
@@ -573,7 +583,7 @@ try:
                 last_target_id = -1
                 robot_state    = RobotState.SEARCHING
             else:
-                print(f"[상태] 집는중... ({elapsed:.1f}s)", end="\r")
+                print(f"[상태] 집어서 컨테이너 투하중... ({elapsed:.1f}s)", end="\r")
 
         elif robot_state == RobotState.GO_TO_STORAGE:
             now             = time.time()
@@ -594,11 +604,11 @@ try:
                     print(f"[테스트] 직진중... ({total_elapsed:.1f}s)", end="\r")
                 else:
                     control_wheels(None)
-                    openrb_done  = False
-                    send_drop()
-                    drop_sent_at = time.time()
-                    robot_state  = RobotState.DROPPING
-                    print(f"\n[테스트] drop 전송")
+                    openrb_dumped = False
+                    send_dump()
+                    drop_sent_at  = time.time()
+                    robot_state   = RobotState.DROPPING
+                    print(f"\n[테스트] dump 전송")
 
             elif storage_phase == -1:
                 # 후진 — 회전 공간 확보
@@ -639,32 +649,29 @@ try:
 
                 if arrived:
                     control_wheels(None)
-                    openrb_done  = False
-                    send_drop()
-                    drop_sent_at = time.time()
-                    robot_state  = RobotState.DROPPING
-                    print(f"\n[상태] GO_TO_STORAGE → DROPPING (drop 전송)")
+                    openrb_dumped = False
+                    send_dump()
+                    drop_sent_at  = time.time()
+                    robot_state   = RobotState.DROPPING
+                    print(f"\n[상태] GO_TO_STORAGE → DROPPING (dump 전송)")
 
         elif robot_state == RobotState.DROPPING:
             control_wheels(None)
             elapsed = time.time() - drop_sent_at
-            if openrb_done:
-                openrb_done    = False
+            if openrb_dumped:
+                openrb_dumped  = False
                 confirm_count  = 0
                 last_target_id = -1
-                if gripped_cls:
-                    pickup_counts[gripped_cls] = pickup_counts.get(gripped_cls, 0) + 1
-                    print(f"[스코어] {gripped_cls}: {pickup_counts[gripped_cls]}/{max_count(gripped_cls)}")
-                    gripped_cls = None
+                pickup_counts.clear()
                 robot_state = RobotState.SEARCHING
                 print(f"[상태] DROPPING → SEARCHING ({elapsed:.1f}s)")
             elif elapsed > DROP_TIMEOUT_SECS:
-                print(f"\n[경고] drop 타임아웃 → SEARCHING 복귀")
+                print(f"\n[경고] dump 타임아웃 → SEARCHING 복귀")
                 confirm_count  = 0
                 last_target_id = -1
                 robot_state    = RobotState.SEARCHING
             else:
-                print(f"[상태] 내려놓는중... ({elapsed:.1f}s)", end="\r")
+                print(f"[상태] 컨테이너 쏟는중... ({elapsed:.1f}s)", end="\r")
 
         # ── 시각화 ──────────────────────────────────────
         annotated_frame = results[0].plot()
