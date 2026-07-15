@@ -7,7 +7,7 @@
  * 연결:
  *   Jetson → OpenRB: USB-C (/dev/ttyACM1, 115200)
  *   OpenRB → Dynamixel: 내장 포트 (XL430 × 5)
- *     ID 1: 그리퍼  ID 2: 팔L  ID 3: 팔R  ID 4: 컨테이너L  ID 5: 컨테이너R
+ *     ID 1: 그리퍼  ID 2: 팔(양쪽, 한쪽 Reverse Mode)  ID 3: 바스켓 힌지(양쪽, 한쪽 Reverse Mode)
  *
  * Jetson이 보내는 명령:
  *   {"cmd":"grip", "cls":"d8"}  ← 집기 → 팔 올려 컨테이너 투하 → 팔 내림

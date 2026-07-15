@@ -60,7 +60,12 @@ MODEL_PATH      = os.path.join(BASE_DIR, "model", "best.pt")
 FLAG_MODEL_PATH = os.path.join(BASE_DIR, "model", "flag.pt")
 # Jetson TensorRT 변환 후: MODEL_PATH = os.path.join(BASE_DIR, "model", "best.engine")
 model      = YOLO(MODEL_PATH)
-flag_model = YOLO(FLAG_MODEL_PATH)
+if os.path.exists(FLAG_MODEL_PATH):
+    flag_model = YOLO(FLAG_MODEL_PATH)
+    print(f"[모델] flag.pt 로드 완료")
+else:
+    flag_model = None
+    print(f"[모델] flag.pt 없음 — GO_TO_STORAGE 태극기 감지 비활성화")
 
 # ── 카메라 인덱스 ────────────────────────────────────────
 CAMERA_INDEX_OBJ  = 0   # 물체 카메라 (1사분면 USB-A, USB 2.0)  ← 실제 확인 필요
@@ -158,7 +163,7 @@ SEARCH_ROTATE_SPEED = 0.2     # 타겟 없을 때 제자리 회전 속도
 # 타임아웃
 GRIP_TIMEOUT_SECS    = 15.0   # grip 전송 후 gripped 신호 최대 대기
 DROP_TIMEOUT_SECS    = 15.0   # drop 전송 후 done 신호 최대 대기
-STORAGE_TIMEOUT_SECS = 15.0   # GO_TO_STORAGE 전체 최대 시간
+STORAGE_TIMEOUT_SECS = 60.0   # GO_TO_STORAGE 전체 최대 시간 (태극기 탐색 포함)
 
 # 경기 타이머
 MATCH_DURATION_SECS = 180.0
@@ -431,7 +436,8 @@ print("[스트림] http://172.20.10.5:8080 에서 카메라 확인 가능")
 fps_counter = 0
 fps_display = 0.0
 fps_timer   = time.time()
-_last_print_t = 0.0  # 탐지/타겟 로그 출력 주기 제어
+_last_print_t = 0.0
+frame = None  # 최초 루프 진입 전 초기화
 
 # ── 메인 루프 ────────────────────────────────────────────
 try:
@@ -440,12 +446,11 @@ try:
         # 그 외 상태는 cap1+model로 물체 탐지
         if robot_state == RobotState.GO_TO_STORAGE:
             cap.read()  # 버퍼 비우기만
-            results  = None
-            boxes    = None
-            detected = []
-            target   = None
+            results   = None
+            boxes     = None
+            detected  = []
+            target    = None
             at_target = False
-            annotated_frame = frame if 'frame' in dir() else None
         else:
             ret, frame = cap.read()
             if not ret:
@@ -496,9 +501,9 @@ try:
         target    = select_target(detected)
         at_target = _is_at_target(target) if target else False
 
-        # ── IMU 주기 요청 ────────────────────────────────
+        # ── IMU 주기 요청 (GO_TO_STORAGE 제외) ──────────
         _now_loop = time.time()
-        if _now_loop - _last_imu_req >= 0.15:
+        if robot_state != RobotState.GO_TO_STORAGE and _now_loop - _last_imu_req >= 0.15:
             if ser_esp32 and ser_esp32.is_open:
                 ser_esp32.write((json.dumps({"T": 126}) + "\n").encode())
             _last_imu_req = _now_loop
@@ -600,8 +605,8 @@ try:
                 robot_state = RobotState.SEARCHING
 
             # 태극기 카메라로 플래그 감지
-            elif cap2 is None:
-                print("[경고] 태극기 카메라 없음 — SEARCHING 복귀")
+            elif cap2 is None or flag_model is None:
+                print("[경고] 태극기 카메라 또는 flag.pt 없음 — SEARCHING 복귀")
                 robot_state = RobotState.SEARCHING
 
             else:
