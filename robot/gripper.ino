@@ -41,7 +41,7 @@ void gripperSetup() {
   }
   dxl.torqueOff(GRIPPER_ID);
   dxl.setOperatingMode(GRIPPER_ID, OP_POSITION);
-  dxl.writeControlTableItem(PWM_LIMIT, GRIPPER_ID, 885 * GRIPPER_TORQUE_LIMIT_PCT / 100);
+  dxl.writeControlTableItem(ControlTableItem::PWM_LIMIT, GRIPPER_ID, 885 * GRIPPER_TORQUE_LIMIT_PCT / 100);
   dxl.torqueOn(GRIPPER_ID);
   gripperOpen();
   Serial.println("[그리퍼] ✅ 초기화 완료 (열림 상태)");

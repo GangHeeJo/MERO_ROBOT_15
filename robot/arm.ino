@@ -46,7 +46,7 @@ void armSetup() {
     }
     dxl.torqueOff(ids[i]);
     dxl.setOperatingMode(ids[i], OP_POSITION);
-    dxl.writeControlTableItem(PWM_LIMIT, ids[i], limits[i]);
+    dxl.writeControlTableItem(ControlTableItem::PWM_LIMIT, ids[i], limits[i]);
     dxl.torqueOn(ids[i]);
   }
   containerClose();

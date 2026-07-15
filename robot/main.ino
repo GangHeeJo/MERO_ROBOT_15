@@ -67,7 +67,8 @@ void parseCommand(const String& json) {
   const char* cmd = doc["cmd"] | "idle";
 
   if (strcmp(cmd, "grip") == 0 && currentState == IDLE) {
-    strlcpy(currentCls, doc["cls"] | "unknown", sizeof(currentCls));
+    strncpy(currentCls, doc["cls"] | "unknown", sizeof(currentCls) - 1);
+    currentCls[sizeof(currentCls) - 1] = '\0';
     currentState = GRIPPING;
     JETSON_SERIAL.print("[OpenRB] grip → GRIPPING: ");
     JETSON_SERIAL.println(currentCls);
