@@ -497,6 +497,7 @@ try:
                     coord_str = f"({cx:.1f}px, {cy:.1f}px) area={area:.0f}"
                 if time.time() - _last_print_t >= 0.5:
                     print(f"[탐지] ID={track_id} | {cls_name} conf={conf:.2f} | {coord_str}")
+                    _last_print_t = time.time()
 
         target    = select_target(detected)
         at_target = _is_at_target(target) if target else False
@@ -639,6 +640,7 @@ try:
                     # 태극기 후진 접근
                     if not flag_detected:
                         # 태극기 놓침 → 탐색으로 복귀
+                        control_wheels(None)
                         storage_phase       = 0
                         storage_phase_start = now
                         print(f"\n[상태] 태극기 놓침 → 탐색 복귀")
