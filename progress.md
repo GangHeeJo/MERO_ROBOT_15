@@ -1,6 +1,6 @@
 # MERO AI ROBOT — Progress
 
-> 최종 업데이트: 2026-07-05  
+> 최종 업데이트: 2026-07-15  
 > 비전 담당: 조강희
 
 ---
@@ -14,8 +14,11 @@
 - 보드: NVIDIA Jetson Orin Nano
 - 로봇 플랫폼: Waveshare UGV02 (내장 컨트롤러: ESP32 — 바퀴 제어)
 - 팔·그리퍼 컨트롤러: ROBOTIS OpenRB-150 (Dynamixel 제어)
-- 다이나믹셀: XL430 × 1 (그리퍼, Baudrate 1000000, 랙-피니언으로 양 손가락 구동) — 팔 없음
-- 카메라: Arducam USB
+- 다이나믹셀: XL430 × 5, 모두 12V, Baudrate 1000000
+  - ID 1: 그리퍼 (랙-피니언, 양 손가락 구동)
+  - ID 2: 팔 관절 모터 × 2 (같은 ID — 한쪽 Drive Mode Reverse 설정)
+  - ID 3: 바스켓 힌지 모터 × 2 (같은 ID — 동일 방식)
+- 카메라: ArduCAM 2.3MP AR0234 글로벌 셔터 USB 3.0
 
 **대회 태스크**
 - shape-based: d6, d8, d12, d20 (다면체 주사위)
@@ -37,19 +40,22 @@
 
 ### STEP 2. Dynamixel Wizard (PC, 처음 1회만)
 
-> 목적: XC330의 ID와 통신 속도가 맞는지 확인
+> 목적: XL430의 ID와 통신 속도가 맞는지 확인
 
 1. PC에 Dynamixel Wizard 2.0 설치 (ROBOTIS 공식 사이트)
 2. OpenRB-150을 PC에 USB 연결
-3. Scan → XC330이 **ID=1, Baudrate=57600** 으로 보이는지 확인
-4. 다르면 Wizard에서 ID=1, Baudrate=57600으로 변경 후 저장
+3. Scan → XL430들이 아래 ID와 Baudrate로 보이는지 확인:
+   - **ID=1, Baudrate=1000000** (그리퍼)
+   - **ID=2, Baudrate=1000000** (팔 관절 × 2 — 한쪽은 Drive Mode: Reverse 설정)
+   - **ID=3, Baudrate=1000000** (바스켓 힌지 × 2 — 동일)
+4. 다르면 Wizard에서 ID/Baudrate 변경 후 저장
 
 ### STEP 3. Arduino 코드 업로드 (PC, 처음 1회만)
 
 > 목적: OpenRB-150에 그리퍼 제어 코드 올리기
 
 1. Arduino IDE 실행
-2. `robot/main.ino` 열기 (같은 폴더에 `gripper.ino` 있어야 함)
+2. `robot/main.ino` 열기 (같은 폴더에 `gripper.ino`, `arm.ino` 있어야 함)
 3. **보드 선택**: Tools → Board → OpenRB-150
 4. **포트 선택**: Tools → Port → OpenRB-150 잡힌 COM 포트
 5. 업로드 (→ 버튼)
@@ -117,18 +123,23 @@ python vision/src/main.py --timer    # 3분 타이머 화면 표시
 > 카메라 화면이 뜨고 탐지 박스가 보이면 정상.  
 > 포트 오류 시: `vision/src/main.py` 상단 `ESP32_PORT` / `OPENRB_PORT` 값 확인
 
-### STEP 7. 실측값 현황 (2026-07-08 기준)
+### STEP 7. 실측값 현황 (2026-07-15 기준)
 
 | 항목 | 파일 | 확정값 | 상태 |
 |------|------|--------|------|
 | `FINGER_OPEN_DEG` | `robot/gripper.ino` | 265° | ✅ 완료 |
 | `FINGER_CLOSE_DEG` | `robot/gripper.ino` | 110° | ✅ 완료 |
 | `GRIP_LOAD_THRESHOLD` | `robot/gripper.ino` | 200 (20%) | ✅ 완료 |
-| `AREA_THRESHOLD` | `vision/src/main.py` | 28000 | ✅ 완료 |
+| `AREA_THRESHOLD` | `vision/src/main.py` | 28000 | ⬜ 실측 필요 |
+| `AREA_SLOW_THRESHOLD` | `vision/src/main.py` | 20000 | ⬜ 실측 필요 |
 | `CENTER_MARGIN_PX` | `vision/src/main.py` | 120px | ✅ 완료 |
 | `ENCODER_TICKS_PER_M` | `vision/src/encoder_test.py` | **105.2** | ✅ 완료 |
-| 자이로 `GZ_SCALE` | `vision/src/imu_test.py` | **16.5** | 🟡 보정 중 |
-| `STORAGE_DRIVE_SECS` | `vision/src/main.py` | 4.0s | ⬜ 미실측 |
+| `ARM_DOWN_RAW` | `robot/arm.ino` | 0 (placeholder) | ⬜ Wizard로 실측 |
+| `ARM_UP_RAW` | `robot/arm.ino` | 1706 (placeholder) | ⬜ Wizard로 실측 |
+| `CONTAINER_CLOSED_RAW` | `robot/arm.ino` | 0 (placeholder) | ⬜ Wizard로 실측 |
+| `CONTAINER_OPEN_RAW` | `robot/arm.ino` | 1024 (placeholder) | ⬜ Wizard로 실측 |
+| `FLAG_AREA_THRESHOLD` | `vision/src/main.py` | 60000 | ⬜ 3m 거리에서 실측 |
+| `FLAG_AREA_SLOW_THRESHOLD` | `vision/src/main.py` | 30000 | ⬜ 동일 |
 | `STORAGE_BACKUP_SECS` | `vision/src/main.py` | 0.8s | ⬜ 미실측 |
 
 ### IMU 특성 (2026-07-08 실측)
@@ -181,19 +192,20 @@ python vision/src/calibration.py --calc x1 y1 x2 y2 실제거리mm
 │   Jetson     │ ──── {"T":1,"L":spd,"R":spd} ────▶ │    ESP32    │ → 바퀴 모터
 │  Orin Nano   │                                    └─────────────┘
 │  (vision/    │
-│  src/main.py)│     /dev/ttyACM1                   ┌─────────────┐
-│              │ ──── {"cmd":"grip"/"drop"} ────────▶ │  OpenRB-150 │ → XC330 × 1 (그리퍼)
-│              │ ◀─── {"status":"gripped"/           │             │   랙-피니언 구조
-│              │       "grip_failed"/"done"} ──────── │             │
-└──────────────┘                                    └─────────────┘
-      ▲
-      │ Arducam USB (/dev/video0 또는 video1)
-  카메라
+│  src/main.py)│     /dev/ttyACM1                   ┌─────────────────────────────────┐
+│              │ ──── {"cmd":"grip"/"dump"} ────────▶ │  OpenRB-150                     │
+│              │ ◀─── {"status":"gripped"/           │  → ID1: XL430 그리퍼 (랙-피니언) │
+│              │       "grip_failed"/"dumped"} ─────  │  → ID2: XL430 팔 관절 × 2       │
+└──────────────┘                                    │  → ID3: XL430 바스켓 힌지 × 2   │
+      ▲▲                                            └─────────────────────────────────┘
+      ││ ArduCAM USB
+  전방 카메라 (/dev/video0, CAMERA_INDEX_OBJ=0)  — 물체 탐지
+  후방 카메라 (/dev/video2, CAMERA_INDEX_FLAG=2) — 태극기 탐지 (GO_TO_STORAGE)
 ```
 
 **Jetson에서 나가는 신호 두 가지:**
 1. `/dev/ttyACM0` → ESP32: 바퀴 속도 명령 `{"T":1,"L":...,"R":...}` (CH343 드라이버 → ACM)
-2. `/dev/ttyACM1` → OpenRB: 그리퍼 명령 (`grip` / `drop` / `idle`)
+2. `/dev/ttyACM1` → OpenRB: 명령 (`grip` / `dump` / `idle`)
 
 ---
 
@@ -290,8 +302,9 @@ MERO_AI_ROBOT/
 
 | 파일 | 역할 |
 |------|------|
-| `robot/main.ino` | Jetson grip/drop 명령 수신 → 그리퍼 상태 머신 실행 |
-| `robot/gripper.ino` | XC330 × 1 그리퍼 제어 (랙-피니언). Dynamixel2Arduino 사용 |
+| `robot/main.ino` | Jetson grip/dump 명령 수신 → 상태 머신 실행, Dynamixel 인스턴스 선언 |
+| `robot/gripper.ino` | ID1 XL430 그리퍼 제어 (랙-피니언). PRESENT_LOAD 기반 집기 감지 |
+| `robot/arm.ino` | ID2 XL430 팔 관절 + ID3 XL430 바스켓 힌지 제어 |
 
 > 바퀴 제어(ESP32)는 `vision/src/main.py`의 `control_wheels()`가 직접 담당.
 
@@ -302,32 +315,35 @@ MERO_AI_ROBOT/
 
 SEARCHING                                 IDLE
   탐지 + 이동 (바퀴 제어)
-  ↓ 도달 (면적≥40000 또는 dist<30mm)
+  ↓ 도달 (bbox 면적 ≥ AREA_THRESHOLD)
   grip 명령 전송 ──────────────────────▶ GRIPPING
-GRIPPING                                    그리퍼 닫기 (전류 감지)
-  바퀴 정지, 신호 대기                 ◀── {"status":"gripped"}     → HOLDING
-  ├─ gripped → GO_TO_STORAGE           ◀── {"status":"grip_failed"} → IDLE
+GRIPPING                                    그리퍼 닫기 (PRESENT_LOAD 감지)
+  바퀴 정지, 신호 대기                 ◀── {"status":"gripped"}     → LIFTING (팔 올리기 → 바스켓 투하 → 팔 내림 → IDLE)
+  ├─ gripped → SEARCHING (반복 수집)   ◀── {"status":"grip_failed"} → IDLE
   ├─ grip_failed → SEARCHING (복귀)
   └─ timeout(15s) → SEARCHING (복귀)
-GO_TO_STORAGE
-  ① 후진 0.8초 → ② 좌회전 N초 → ③ 직진 N초
-  (전체 15초 타임아웃 — 초과 시 SEARCHING 복귀)
-  ↓ 도착
-  drop 명령 전송 ──────────────────────▶ DROPPING
-DROPPING                                  그리퍼 열기
-  바퀴 정지, done 신호 대기 ◀─────────── {"status":"done"} → IDLE
-  ├─ done → SEARCHING (복귀)
-  └─ timeout(15s) → SEARCHING (복귀)
+
+  ※ 목표 클래스 전부 max_count 달성 시 → GO_TO_STORAGE
+
+GO_TO_STORAGE                             IDLE
+  phase 0: 제자리 회전하며 태극기 탐색 (후방 카메라 + flag.pt)
+  phase 1: 태극기 보이면 후진하며 접근 → FLAG_AREA_THRESHOLD 도달 시
+  dump 명령 전송 ──────────────────────▶ DUMPING (바스켓 힌지 열어 내용물 쏟기)
+DROPPING                                 ◀── {"status":"dumped"} → IDLE
+  바퀴 정지, dumped 신호 대기
+  ├─ dumped → SEARCHING (복귀)
+  └─ timeout(30s) → SEARCHING (복귀)
 ```
 
 ### 로봇팀 TODO
 
 | 파일 | 항목 | 내용 |
 |------|------|------|
-| `main.py` | `AREA_THRESHOLD` | 실물 테스트 후 도착 면적 임계값 조정 (현재 40000) |
-| `main.py` | `STORAGE_BACKUP_SECS` / `STORAGE_TURN_SECS` / `STORAGE_DRIVE_SECS` | 보관함 고정 경로 시간 실측 조정 |
-| `gripper.ino` | `GRIP_CURRENT_THRESHOLD` | 빈 손 닫기 vs 물체 잡기 전류 측정 후 중간값 설정 (현재 30mA) |
-| `gripper.ino` | `FINGER_OPEN_DEG` / `FINGER_CLOSE_DEG` | 실물 테스트 후 실제 각도 측정·수정 |
+| `main.py` | `AREA_THRESHOLD` | 실물 테스트 후 도착 면적 임계값 조정 (현재 28000) |
+| `arm.ino` | `ARM_DOWN_RAW` / `ARM_UP_RAW` | Dynamixel Wizard Present Position 읽어 실측 |
+| `arm.ino` | `CONTAINER_CLOSED_RAW` / `CONTAINER_OPEN_RAW` | 동일 방법 실측 |
+| `main.py` | `FLAG_AREA_THRESHOLD` | 3m 거리에서 태극기 bbox 면적 실측 |
+| `main.py` | `STORAGE_BACKUP_SECS` | 집은 자리에서 후진 후 회전 공간 확인 |
 
 ### 필요 라이브러리 (Arduino IDE 라이브러리 매니저)
 
@@ -356,31 +372,33 @@ DROPPING                                  그리퍼 열기
 
 탐지 없으면: `{"objects": [], "target": null}`
 
-### 2. Jetson → OpenRB (팔·그리퍼 제어)
+### 2. Jetson → OpenRB (팔·그리퍼·바스켓 제어)
 
 **연결**: `/dev/ttyACM1`, 115200 baud, JSON per line
 
 ```json
-{"cmd": "grip", "cls": "d8", "mx": 12.3, "my": -5.1}  ← 집기 (IDLE→GRIPPING)
-{"cmd": "drop"}                                          ← 내려놓기 (HOLDING→DROPPING)
-{"cmd": "idle"}                                          ← 대기
+{"cmd": "grip", "cls": "d8"}  ← 집기 (IDLE→GRIPPING→LIFTING→IDLE, 바스켓에 투하)
+{"cmd": "dump"}                ← 바스켓 힌지 열어 내용물 쏟기 (IDLE→DUMPING→IDLE)
+{"cmd": "idle"}                ← 대기
 ```
 
 **OpenRB → Jetson 응답:**
 ```json
-{"status": "gripped"}      ← 집기 완료 (Python GO_TO_STORAGE 전환)
-{"status": "grip_failed"}  ← 집기 실패 — 전류 미달 (Python SEARCHING 복귀)
-{"status": "done"}         ← 내려놓기+홈 복귀 완료 (Python SEARCHING 복귀)
+{"status": "gripped"}      ← 집기+바스켓 투하 완료 (Python SEARCHING 복귀)
+{"status": "grip_failed"}  ← 집기 실패 — Load 미달 (Python SEARCHING 복귀)
+{"status": "dumped"}       ← 바스켓 비우기 완료 (Python SEARCHING 복귀)
 ```
 
-### 3. OpenRB → Dynamixel (팔·그리퍼 직접)
+### 3. OpenRB → Dynamixel (팔·그리퍼·바스켓 직접)
 
-Dynamixel2Arduino 라이브러리 사용. Protocol 2.0, 57600 baud.  
+Dynamixel2Arduino 라이브러리 사용. Protocol 2.0, Baudrate 1000000.  
 OpenRB 내장 Dynamixel 포트 (`Serial1`) 사용 — 방향핀 별도 불필요.
 
-| 서보 | ID | 모델 | 전원 |
-|------|-----|------|------|
-| 그리퍼 (랙-피니언, 양 손가락) | 1 | XC330 | 12V |
+| 서보 | ID | 모델 | 전원 | 역할 |
+|------|-----|------|------|------|
+| 그리퍼 (랙-피니언, 양 손가락) | 1 | XL430 | 12V | gripper.ino |
+| 팔 관절 × 2 (같은 ID) | 2 | XL430 | 12V | arm.ino |
+| 바스켓 힌지 × 2 (같은 ID) | 3 | XL430 | 12V | arm.ino |
 
 > ⚠️ XL430은 동작 전압 12V. OpenRB 초록 단자에 12V 배터리 직결 필수.  
 > ⚠️ 두꺼운 전선 사용 — 얇은 전선 사용 시 과열/합선 위험.
@@ -470,6 +488,28 @@ yolo val model=vision/model/best.pt     data=data.yaml   # 신규
 Colab 노트북 실행 전 필요한 것:
 - Roboflow API 키
 - Google Drive 마운트
+
+---
+
+## 2026-07-15 작업 내역
+
+- **전체 코드 디버깅 완료** (OpenRB 3파일 + vision 3파일)
+  - `GOAL_PWM` → `ControlTableItem::PWM_LIMIT` (address 36): GOAL_PWM은 PWM Control Mode 전용 레지스터로 Position Control Mode에서 동작 안 함 — `robot/arm.ino`, `robot/gripper.ino`
+  - `using namespace ControlTableItem` 명시적 namespace: Arduino IDE가 .ino 파일을 알파벳순(arm→gripper→main) 병합하므로 main.ino의 namespace 선언이 arm/gripper에 미적용 — `ControlTableItem::PWM_LIMIT`으로 명시 수정
+  - `strlcpy` → `strncpy` + 수동 null terminator: STM32/newlib-nano 환경에서 `strlcpy` 미지원 — `robot/main.ino`
+  - GO_TO_STORAGE 태극기 놓침 시 정지 누락: phase 1→0 복귀 시 `control_wheels(None)` 없어 로봇이 계속 후진 — `vision/src/main.py`
+  - `_last_print_t` 미업데이트: 타겟 없을 때 탐지 print 매 루프 스팸 — `vision/src/main.py`
+  - `calibration.py` CAMERA_INDEX `1→0`: main.py CAMERA_INDEX_OBJ=0과 불일치
+  - `launcher.py` 하드코딩 경로 제거: `/home/aiwinners/MERO_ROBOT_15/...` → `__file__` 기반 동적 경로, `import os` 추가
+
+- **하드웨어 확정** (XL430 × 5, ID 1/2/3)
+  - ID1=그리퍼, ID2=팔 관절×2, ID3=바스켓 힌지×2
+  - 두 모터 같은 ID 방법: Dynamixel Wizard에서 한쪽 Drive Mode Reverse 설정
+
+- **설계 결정 확정**
+  - 거리 판단: 픽셀 면적 모드 (캘리브레이션 미사용)
+  - GO_TO_STORAGE: 후방 카메라 + flag.pt 태극기 탐지 방식
+  - 경기 시작: MobaXterm 명령 미리 입력 후 Enter
 
 ---
 
@@ -658,70 +698,67 @@ Colab 노트북 실행 전 필요한 것:
 
 ---
 
-## 미결 설계 이슈
+## 설계 확정 사항
 
-### 보관함 이동 알고리즘 (미결정)
+### GO_TO_STORAGE: 태극기 기반 후진 접근 (2026-07-15 확정)
 
-픽업 완료 후 보관함(좌측 하단 고정)까지 가는 방법 3가지 검토 중:
+- **후방 카메라** (CAMERA_INDEX_FLAG=2) + **flag.pt** 모델로 태극기 탐지
+- phase 0: 제자리 회전하며 태극기 탐색
+- phase 1: 태극기 보이면 후진하며 접근 → FLAG_AREA_THRESHOLD 도달 시 dump
+- **바닥 검정 선은 무시** — 구역 구분선일 뿐 경로 추적 불필요
+- flag.pt 미학습 시 GO_TO_STORAGE 진입 즉시 SEARCHING 복귀
 
-| 방법 | 설명 | 장점 | 단점 |
-|------|------|------|------|
-| **1. 깃대 인식** | YOLO로 보관함 옆 깃대 탐지 → 추적 이동 | 현재 구조에 자연스럽게 연결, robust | 깃대 데이터 촬영 + 재학습 필요, 실물 미공개 |
-| **2. 고정 경로** | 픽업 후 왼쪽 회전 → 일정 시간 전진 → 드롭 | 즉시 구현 가능, 코드 단순 | 픽업 위치마다 오차 큼 |
-| **3. 벽 따라가기** | 왼쪽 벽 향해 이동 → 코너까지 → 드롭 | 위치 무관하게 안정적 | 벽 인식 로직 추가 필요 |
+### 거리 판단: 픽셀 모드 (2026-07-15 확정)
 
-**현재 방향**: 방법 2(고정 경로) **구현 완료** (2026-06-26) → 깃대 공개 후 방법 1으로 업그레이드 예정  
-- `STORAGE_TURN_SECS`, `STORAGE_DRIVE_SECS` 실측 후 조정 필요
+- **캘리브레이션 미사용** — 카메라가 대각선 설치라 단일 mm_per_pixel로 정확한 매핑 불가
+- **bbox 면적(area) 기반** 도달 판단 → AREA_THRESHOLD 실측 조정
+
+### 경기 시작
+
+MobaXterm에서 명령 미리 입력 후 신호 오면 Enter:
+```bash
+python vision/src/main.py --cls d8 --timer
+```
 
 ---
 
 ## 남은 작업 ⬜
 
-### 하드웨어 연결
-
-| 우선순위 | 작업 | 방법 |
-|----------|------|------|
-| ✅ 완료 | 전원 배선 완성 | 젯슨: 파워뱅크 → USB-C PD 15V → 배럴잭 / 그리퍼: UGV 12V 배터리 → OpenRB 초록 단자 |
-| ✅ 완료 | OpenRB + XL430 연결 | Arduino IDE에서 `robot/main.ino` + `robot/gripper.ino` 업로드 완료 |
-| ✅ 완료 | Dynamixel Wizard로 XL430 확인 | ID=1, Baudrate=1000000 확인 완료 |
-| ✅ 완료 | OpenRB 전용 배터리 구매 | 폴리트로닉스 PT-B2200N-SP35 (11.1V 3S LiPo, 2200mAh, XT60) — XT60→터미널 블록 연결 필요 |
-
-### 실측 (하드웨어 연결 후)
+### 실측 (하드웨어 필요)
 
 | 우선순위 | 항목 | 현재값 | 측정 방법 | 수정 위치 |
 |----------|------|--------|-----------|-----------|
-| ✅ 완료 | `FINGER_OPEN_DEG` | ~~150~~ → **265°** | 실측 완료 (raw 2700) | `gripper.ino` |
-| ✅ 완료 | `FINGER_CLOSE_DEG` | ~~90~~ → **110°** | 실측 완료 | `gripper.ino` |
-| ✅ 완료 | `GRIP_LOAD_THRESHOLD` | ~~30mA~~ → **200** (Load 20%) | 실측 완료 | `gripper.ino` |
-| 🔴 높음 | `AREA_THRESHOLD` | 40000 | 물체 바로 앞에서 area 값 확인 → 그 값으로 설정 (실측 max ~27000) | `main.py` |
-| 🔴 높음 | 엔코더 필드명 | `lp`/`rp` 추정 | T=1001 출력 직접 확인 (다르면 `_read_esp32_loop` 한 줄 수정) | `main.py` |
-| 🔴 높음 | `ENCODER_TICKS_PER_M` | 1000 (placeholder) | 1m 직진 후 lp/rp 변화량 측정 | `main.py` |
-| 🟡 중간 | `STORAGE_MAX_DIST_M` | 4.5m | 필드 가장 먼 위치에서 보관함까지 실측 | `main.py` |
-| 🟡 중간 | `STORAGE_BACKUP_SECS` | 0.8s | 집은 자리에서 후진 후 회전 공간 확인 | `main.py` |
-| 🟡 중간 | 로봇 초기 방향 | - | 매번 같은 방향으로 배치 기준 정하기 (IMU initial_yaw 기반) | 운용 |
-| 🟡 중간 | 카메라 감지 거리 | 미측정 | 출발점에서 물체 감지 되는지 확인 | 테스트 |
-
-### 캘리브레이션
-
-| 우선순위 | 작업 | 방법 |
-|----------|------|------|
-| 🔴 높음 | 카메라 위치 확정 | 위치 바뀌면 다시 해야 하므로 먼저 확정 |
-| 🔴 높음 | 캘리브레이션 실행 | 카메라 위치 확정 후: `python vision/src/calibration.py --capture` → PC에서 픽셀 좌표 확인 → `--calc x1 y1 x2 y2 실제거리mm` |
+| ✅ 완료 | `FINGER_OPEN_DEG` | **265°** | 실측 완료 | `gripper.ino` |
+| ✅ 완료 | `FINGER_CLOSE_DEG` | **110°** | 실측 완료 | `gripper.ino` |
+| ✅ 완료 | `GRIP_LOAD_THRESHOLD` | **200** (Load 20%) | 실측 완료 | `gripper.ino` |
+| ✅ 완료 | `ENCODER_TICKS_PER_M` | **105.2** | 실측 완료 | `main.py` |
+| 🔴 높음 | `ARM_DOWN_RAW` | 0 (placeholder) | Dynamixel Wizard Present Position 확인 | `arm.ino` |
+| 🔴 높음 | `ARM_UP_RAW` | 1706 (placeholder) | 동일 | `arm.ino` |
+| 🔴 높음 | `CONTAINER_CLOSED_RAW` | 0 (placeholder) | 동일 | `arm.ino` |
+| 🔴 높음 | `CONTAINER_OPEN_RAW` | 1024 (placeholder) | 동일 | `arm.ino` |
+| 🔴 높음 | `AREA_THRESHOLD` | 28000 | 물체 바로 앞에서 터미널 area= 값 확인 | `main.py` |
+| 🔴 높음 | `FLAG_AREA_THRESHOLD` | 60000 | 보관함 3m 거리에서 태극기 bbox 면적 측정 | `main.py` |
+| 🔴 높음 | `FLAG_AREA_SLOW_THRESHOLD` | 30000 | 동일 | `main.py` |
+| 🟡 중간 | `CAMERA_INDEX_OBJ` | 0 | `/dev/video*` 번호 실제 확인 | `main.py` |
+| 🟡 중간 | `CAMERA_INDEX_FLAG` | 2 | 동일 | `main.py` |
+| 🟡 중간 | `STORAGE_BACKUP_SECS` | 0.8s | 집은 자리에서 후진 후 공간 확인 | `main.py` |
+| 🟡 중간 | 팔/바스켓 delay 값 | armUp 1200ms 등 | 실제 모터 속도와 맞는지 확인 후 조정 | `arm.ino` |
 
 ### 데이터 / 학습
 
 | 우선순위 | 작업 | 방법 |
 |----------|------|------|
+| 🔴 높음 | 태극기(flag.pt) 학습 | 태극기 사진 20~30장 촬영 → Roboflow Smart Polygon 라벨링 → Colab 학습 → `vision/model/flag.pt` |
 | 🔴 높음 | 과일큐브 촬영 | 흰색 큐브에 과일 이미지 부착 후 ArduCAM으로 촬영 (실제 과일 X) — apple/banana 교체 + orange/pineapple 신규 |
-| 🔴 높음 | 과일 클래스 라벨링 + 재학습 | **SAM2 자동 라벨링 권장** (영상 1프레임 클릭 → 전체 자동 마스크) → YOLO 포맷 export → `train.ipynb` (Colab) → `best.pt` 교체. 또는 Roboflow 수동 라벨링 |
+| 🔴 높음 | 과일 클래스 라벨링 + 재학습 | **Roboflow Smart Polygon (SAM 기반) 권장** → `train.ipynb` (Colab) → `best.pt` 교체 |
 | 🟡 중간 | TensorRT 변환 | Jetson에서: `python vision/src/trt_export.py` → `best.engine` 생성 (FPS 향상) |
 
 ### 테스트
 
 | 우선순위 | 작업 | 확인 항목 |
 |----------|------|-----------|
-| 🟡 중간 | end-to-end 통합 테스트 | 탐지 → 이동 → grip → 보관함 이동 → drop 전체 사이클 |
-| 🟢 낮음 | 깃대 인식 추가 | 깃대 실물 공개 후 — YOLO 학습 → GO_TO_STORAGE 비전 기반 업그레이드 |
+| 🔴 높음 | end-to-end 통합 테스트 | 탐지 → 이동 → grip → 팔 올리기 → 바스켓 투하 → SEARCHING 반복 → GO_TO_STORAGE → dump 전체 사이클 |
+| 🟡 중간 | 클래스 오인식 대응 | d8↔d12 flickering 발생 시 N-frame majority voting 구현 검토 |
 
 ---
 
@@ -730,13 +767,18 @@ Colab 노트북 실행 전 필요한 것:
 이어서 작업하는 사람이 확인할 것:
 
 1. `vision/model/best.pt` GitHub에 포함 ✅ (d6/d8/d12/d20 전체 학습 완료)
-2. Roboflow 프로젝트 접근 권한 확인
-3. Colab 노트북 실행 전 Roboflow API 키 입력
-4. Jetson 연결 포트 확인:
+2. `vision/model/flag.pt` — **미학습** ⬜ (태극기 20~30장 촬영 후 학습 필요)
+3. Roboflow 프로젝트 접근 권한 확인
+4. Colab 노트북 실행 전 Roboflow API 키 입력
+5. Jetson 연결 포트 확인:
    - `ls /dev/ttyACM*` 실행
    - ESP32: `ttyACM0` → `main.py`의 `ESP32_PORT` 확인 (CH343 드라이버, ttyUSB 아님)
    - OpenRB: `ttyACM1` → `OPENRB_PORT` 확인 (꽂는 순서에 따라 바뀔 수 있음)
-5. OpenRB Arduino 업로드 시 보드: **OpenRB-150** 선택
-6. Dynamixel Wizard로 서보 ID 및 Baudrate 사전 설정 (57600 baud)
-7. XL430 전원: OpenRB 초록 단자에 12V 배터리 연결 (두꺼운 전선 필수)
-8. 캘리브레이션은 카메라 설치 높이 확정 후 1회 실행
+   - 카메라: `/dev/video0` (전방), `/dev/video2` (후방) — 실제 번호 확인 후 `CAMERA_INDEX_OBJ`, `CAMERA_INDEX_FLAG` 수정
+6. OpenRB Arduino 업로드 시 보드: **OpenRB-150** 선택 (`main.ino` + `gripper.ino` + `arm.ino` 같은 폴더)
+7. Dynamixel Wizard로 서보 ID 및 Baudrate 사전 설정:
+   - ID1 (그리퍼), ID2 (팔 관절×2), ID3 (바스켓 힌지×2), 모두 **Baudrate=1000000**
+   - ID2/ID3: 한쪽 모터 Drive Mode → Reverse 설정 필수
+8. XL430 전원: OpenRB 초록 단자에 12V 배터리 연결 (두꺼운 전선 필수)
+9. `arm.ino` placeholder 값 (ARM_DOWN_RAW 등) 실측 후 수정 필수
+10. `AREA_THRESHOLD`, `FLAG_AREA_THRESHOLD` 실물 테스트로 측정 후 `main.py` 수정
