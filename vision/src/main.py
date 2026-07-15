@@ -55,10 +55,16 @@ def max_count(cls: str) -> int:
     return 4 if cls in SHAPE_CLASSES else 3
 
 # ── 모델 로드 ────────────────────────────────────────────
-BASE_DIR   = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODEL_PATH = os.path.join(BASE_DIR, "model", "best.pt")
+BASE_DIR        = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MODEL_PATH      = os.path.join(BASE_DIR, "model", "best.pt")
+FLAG_MODEL_PATH = os.path.join(BASE_DIR, "model", "flag.pt")
 # Jetson TensorRT 변환 후: MODEL_PATH = os.path.join(BASE_DIR, "model", "best.engine")
-model = YOLO(MODEL_PATH)
+model      = YOLO(MODEL_PATH)
+flag_model = YOLO(FLAG_MODEL_PATH)
+
+# ── 카메라 인덱스 ────────────────────────────────────────
+CAMERA_INDEX_OBJ  = 0   # 물체 카메라 (1사분면 USB-A, USB 2.0)  ← 실제 확인 필요
+CAMERA_INDEX_FLAG = 2   # 태극기 카메라 (4사분면 USB-A, USB 3.0) ← 실제 확인 필요
 
 # ── 캘리브레이션 로드 ────────────────────────────────────
 CALIB_PATH   = os.path.join(BASE_DIR, "model", "calibration.json")
@@ -158,14 +164,14 @@ STORAGE_TIMEOUT_SECS = 15.0   # GO_TO_STORAGE 전체 최대 시간
 MATCH_DURATION_SECS = 180.0
 match_start_time    = time.time() if args.timer else None
 
-# ── 보관함 이동 파라미터 ─────────────────────────────────
-# 순서: ① 후진 → ② IMU 회전 → ③ 고정 시간 직진
-STORAGE_BACKUP_SECS  = 0.8    # 후진 시간 (회전 공간 확보)
-STORAGE_BACKUP_SPEED = 0.2
-STORAGE_TURN_SECS    = 2.0    # IMU 없을 때 fallback 회전 시간
-STORAGE_DRIVE_SECS   = 4.0    # 직진 시간 (실측 후 조정)
-STORAGE_TURN_SPEED   = 0.25
-STORAGE_DRIVE_SPEED  = 0.3
+# ── 태극기 네비게이션 파라미터 ──────────────────────────
+FLAG_CONF_THRESHOLD      = 0.5
+FLAG_CENTER_MARGIN_PX    = 100    # 가로 정렬 허용 범위 (px)
+FLAG_AREA_THRESHOLD      = 60000  # 도달 판단 면적 (px²)  ⚠️ 임의값 — 실측 필요
+FLAG_AREA_SLOW_THRESHOLD = 30000  # 감속 시작 면적 (px²)  ⚠️ 임의값 — 실측 필요
+FLAG_SEARCH_SPEED        = 0.15   # 탐색 회전 속도
+FLAG_APPROACH_SPEED      = 0.2    # 후진 접근 속도
+FLAG_APPROACH_SLOW       = 0.1    # 감속 후진 속도
 
 # ── 상태 머신 ────────────────────────────────────────────
 class RobotState(Enum):
@@ -174,22 +180,20 @@ class RobotState(Enum):
     GO_TO_STORAGE = "GO_TO_STORAGE"
     DROPPING      = "DROPPING"
 
-robot_state           = RobotState.SEARCHING
-grip_sent_at          = 0.0
-drop_sent_at          = 0.0
-_frame_fail_count     = 0
-storage_phase       = 0
+robot_state         = RobotState.SEARCHING
+grip_sent_at        = 0.0
+drop_sent_at        = 0.0
+_frame_fail_count   = 0
+storage_phase       = 0   # 0=탐색회전, 1=후진접근
 storage_phase_start = 0.0
 storage_enter_time  = 0.0
 confirm_count       = 0
 last_target_id      = -1
 gripped_cls         = None
-pickup_counts       = {}   # {cls: 보관함에 넣은 개수}
+pickup_counts       = {}   # {cls: 바스켓에 넣은 개수}
 
 # IMU
-imu_yaw      = None   # 배경 스레드가 업데이트
-initial_yaw  = None   # 시작 시 기록
-storage_yaw  = None   # 보관함 방향 (initial_yaw - 90°)
+imu_yaw       = None
 _last_imu_req = 0.0
 
 # ── 시리얼 연결 ──────────────────────────────────────────
@@ -256,29 +260,6 @@ def _read_openrb_loop():
 
 threading.Thread(target=_read_openrb_loop, daemon=True).start()
 
-# ── 초기 yaw 기록 (보관함 방향 계산용) ──────────────────
-def _init_imu():
-    global initial_yaw, storage_yaw
-    if ser_esp32 is None or not ser_esp32.is_open:
-        print("[IMU] ESP32 연결 없음 — 고정 시간 회전 사용")
-        return
-    ser_esp32.write((json.dumps({"T": 126}) + "\n").encode())
-    for _ in range(40):   # 최대 2초 대기
-        if imu_yaw is not None:
-            initial_yaw = imu_yaw
-            raw = (initial_yaw - 90.0) % 360
-            storage_yaw = raw if raw <= 180 else raw - 360
-            print(f"[IMU] 초기 yaw={initial_yaw:.1f}° 보관함 방향={storage_yaw:.1f}°")
-            return
-        time.sleep(0.05)
-    print("[IMU] 초기 yaw 읽기 실패 — 고정 시간 회전 사용")
-
-_init_imu()
-
-
-# ── 각도 차이 계산 (-180~180) ────────────────────────────
-def _angle_diff(target_deg, current_deg):
-    return (target_deg - current_deg + 180) % 360 - 180
 
 
 
@@ -372,26 +353,38 @@ def send_idle():
 
 
 # ── 카메라 초기화 ────────────────────────────────────────
-CAMERA_INDEX = 1
-cap = cv2.VideoCapture(CAMERA_INDEX)
-if not cap.isOpened():
-    print(f"[카메라] {CAMERA_INDEX}번 실패 → 0번 재시도")
-    cap = cv2.VideoCapture(0)
+def _init_camera(index, name):
+    cap = cv2.VideoCapture(index)
     if not cap.isOpened():
-        print("[카메라] 사용 가능한 카메라 없음")
-        exit()
+        print(f"[카메라] {name} ({index}번) 열기 실패")
+        return None
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('Y', 'U', 'Y', '2'))
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1200)
+    cap.set(cv2.CAP_PROP_FPS, 50)
+    ret, f = cap.read()
+    if ret:
+        h, w = f.shape[:2]
+        print(f"[카메라] {name} ({index}번) 준비: {w}×{h}")
+    return cap
 
-cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('Y', 'U', 'Y', '2'))
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1200)
-cap.set(cv2.CAP_PROP_FPS, 50)
+cap  = _init_camera(CAMERA_INDEX_OBJ,  "물체캠")   # 1사분면, 아래 대각
+cap2 = _init_camera(CAMERA_INDEX_FLAG, "태극기캠") # 4사분면, 뒤쪽
+
+if cap is None:
+    print("[오류] 물체 카메라 없음 — 종료"); exit()
 
 # 실제 카메라 해상도로 FRAME_W/H 보정 (calibration.json 없을 때)
 if FRAME_W is None:
     _ret, _f = cap.read()
     if _ret:
         FRAME_H, FRAME_W = _f.shape[:2]
-        print(f"[카메라] 해상도 감지: {FRAME_W}×{FRAME_H}")
+
+FRAME_W2 = FRAME_H2 = None
+if cap2 is not None:
+    _ret2, _f2 = cap2.read()
+    if _ret2:
+        FRAME_H2, FRAME_W2 = _f2.shape[:2]
 
 HEADLESS    = True  # X11 imshow 비활성화 (SSH+WiFi 병목 방지)
 WINDOW_NAME = "MERO_AI_ROBOT"
@@ -443,18 +436,29 @@ _last_print_t = 0.0  # 탐지/타겟 로그 출력 주기 제어
 # ── 메인 루프 ────────────────────────────────────────────
 try:
     while True:
-        ret, frame = cap.read()
-        if not ret:
-            _frame_fail_count += 1
-            if _frame_fail_count >= 10:
-                print("[오류] 프레임 읽기 연속 10회 실패 — 종료")
-                break
-            continue
-        _frame_fail_count = 0
+        # GO_TO_STORAGE 중에는 cap2+flag_model 사용 (GO_TO_STORAGE 블록 내부에서 처리)
+        # 그 외 상태는 cap1+model로 물체 탐지
+        if robot_state == RobotState.GO_TO_STORAGE:
+            cap.read()  # 버퍼 비우기만
+            results  = None
+            boxes    = None
+            detected = []
+            target   = None
+            at_target = False
+            annotated_frame = frame if 'frame' in dir() else None
+        else:
+            ret, frame = cap.read()
+            if not ret:
+                _frame_fail_count += 1
+                if _frame_fail_count >= 10:
+                    print("[오류] 프레임 읽기 연속 10회 실패 — 종료")
+                    break
+                continue
+            _frame_fail_count = 0
 
-        results  = model.track(frame, persist=True, conf=0.25, verbose=False, device="cuda", tracker="bytetrack.yaml")
-        boxes    = results[0].boxes
-        detected = []
+            results  = model.track(frame, persist=True, conf=0.25, verbose=False, device="cuda", tracker="bytetrack.yaml")
+            boxes    = results[0].boxes
+            detected = []
 
         if boxes is not None and len(boxes) > 0:
             ids = boxes.id
@@ -545,7 +549,7 @@ try:
                     print(f"\n[상태] SEARCHING → GRIPPING (grip: {target['cls']})")
             elif all_done:
                 control_wheels(None)
-                storage_phase       = -1
+                storage_phase       = 0
                 storage_phase_start = time.time()
                 storage_enter_time  = time.time()
                 robot_state         = RobotState.GO_TO_STORAGE
@@ -586,74 +590,70 @@ try:
                 print(f"[상태] 집어서 컨테이너 투하중... ({elapsed:.1f}s)", end="\r")
 
         elif robot_state == RobotState.GO_TO_STORAGE:
-            now             = time.time()
-            elapsed         = now - storage_phase_start
-            total_elapsed   = now - storage_enter_time
+            now           = time.time()
+            total_elapsed = now - storage_enter_time
 
+            # 타임아웃
             if total_elapsed > STORAGE_TIMEOUT_SECS:
                 control_wheels(None)
                 print(f"\n[경고] GO_TO_STORAGE 타임아웃 → SEARCHING 복귀")
-                confirm_count  = 0
-                last_target_id = -1
-                robot_state    = RobotState.SEARCHING
+                robot_state = RobotState.SEARCHING
 
-            elif TEST_MODE:
-                # 테스트 모드: 1초 직진 후 drop
-                if total_elapsed < 1.0:
-                    control_wheels(None, override_l=0.2, override_r=0.2)
-                    print(f"[테스트] 직진중... ({total_elapsed:.1f}s)", end="\r")
-                else:
-                    control_wheels(None)
-                    openrb_dumped = False
-                    send_dump()
-                    drop_sent_at  = time.time()
-                    robot_state   = RobotState.DROPPING
-                    print(f"\n[테스트] dump 전송")
-
-            elif storage_phase == -1:
-                # 후진 — 회전 공간 확보
-                control_wheels(None, override_l=-STORAGE_BACKUP_SPEED, override_r=-STORAGE_BACKUP_SPEED)
-                print(f"[상태] 후진중... ({elapsed:.1f}s / {STORAGE_BACKUP_SECS}s)", end="\r")
-                if elapsed >= STORAGE_BACKUP_SECS:
-                    storage_phase       = 0
-                    storage_phase_start = now
-                    print(f"\n[상태] 후진 완료 → 좌회전 시작")
-
-            elif storage_phase == 0:
-                # IMU 기반 회전 (storage_yaw 미획득 시 고정 시간 fallback)
-                if storage_yaw is None or imu_yaw is None:
-                    control_wheels(None, override_l=-STORAGE_TURN_SPEED, override_r=STORAGE_TURN_SPEED)
-                    print(f"[상태] 회전중(fallback)... ({elapsed:.1f}s / {STORAGE_TURN_SECS}s)", end="\r")
-                    if elapsed >= STORAGE_TURN_SECS:
-                        storage_phase       = 1
-                        storage_phase_start = now
-                        print(f"\n[상태] 회전 완료 → 직진 시작")
-                else:
-                    diff = _angle_diff(storage_yaw, imu_yaw)
-                    print(f"[상태] IMU 회전중... yaw={imu_yaw:.1f}° 목표={storage_yaw:.1f}° diff={diff:.1f}°", end="\r")
-                    if abs(diff) <= 8.0:
-                        control_wheels(None)
-                        storage_phase       = 1
-                        storage_phase_start = now
-                        print(f"\n[상태] IMU 회전 완료 → 직진 시작")
-                    elif diff < 0:
-                        control_wheels(None, override_l=-STORAGE_TURN_SPEED, override_r=STORAGE_TURN_SPEED)
-                    else:
-                        control_wheels(None, override_l=STORAGE_TURN_SPEED, override_r=-STORAGE_TURN_SPEED)
+            # 태극기 카메라로 플래그 감지
+            elif cap2 is None:
+                print("[경고] 태극기 카메라 없음 — SEARCHING 복귀")
+                robot_state = RobotState.SEARCHING
 
             else:
-                # 고정 시간 직진
-                arrived = elapsed >= STORAGE_DRIVE_SECS
-                print(f"[상태] 직진중... ({elapsed:.1f}s / {STORAGE_DRIVE_SECS}s)", end="\r")
-                control_wheels(None, override_l=STORAGE_DRIVE_SPEED, override_r=STORAGE_DRIVE_SPEED)
+                ret2, frame2 = cap2.read()
+                flag_detected = None
+                if ret2:
+                    flag_res  = flag_model(frame2, conf=FLAG_CONF_THRESHOLD, verbose=False, device="cuda")
+                    flag_boxes = flag_res[0].boxes
+                    if flag_boxes is not None and len(flag_boxes) > 0:
+                        best = max(flag_boxes, key=lambda b: float(b.conf[0]))
+                        x1, y1, x2, y2 = best.xyxy[0].tolist()
+                        flag_detected = {
+                            "cx":   (x1 + x2) / 2,
+                            "area": (x2 - x1) * (y2 - y1),
+                        }
 
-                if arrived:
-                    control_wheels(None)
-                    openrb_dumped = False
-                    send_dump()
-                    drop_sent_at  = time.time()
-                    robot_state   = RobotState.DROPPING
-                    print(f"\n[상태] GO_TO_STORAGE → DROPPING (dump 전송)")
+                fw2 = FRAME_W2 or 640
+
+                if storage_phase == 0:
+                    # 태극기 탐색 — 제자리 회전
+                    if flag_detected:
+                        storage_phase       = 1
+                        storage_phase_start = now
+                        print(f"\n[상태] 태극기 발견 → 후진 접근 시작")
+                    else:
+                        control_wheels(None, override_l=FLAG_SEARCH_SPEED, override_r=-FLAG_SEARCH_SPEED)
+                        print(f"[상태] 태극기 탐색 회전중... ({total_elapsed:.1f}s)", end="\r")
+
+                elif storage_phase == 1:
+                    # 태극기 후진 접근
+                    if not flag_detected:
+                        # 태극기 놓침 → 탐색으로 복귀
+                        storage_phase       = 0
+                        storage_phase_start = now
+                        print(f"\n[상태] 태극기 놓침 → 탐색 복귀")
+                    elif flag_detected["area"] >= FLAG_AREA_THRESHOLD:
+                        # 도달
+                        control_wheels(None)
+                        openrb_dumped = False
+                        send_dump()
+                        drop_sent_at  = time.time()
+                        robot_state   = RobotState.DROPPING
+                        print(f"\n[상태] 태극기 도달 → dump 전송")
+                    else:
+                        # 후진하면서 정렬
+                        # 후방 카메라: flag.cx 기준 조향 (좌우 반전 없음 — 후진이므로 동일 부호)
+                        turn  = (flag_detected["cx"] - fw2 / 2) / (fw2 / 2)
+                        speed = FLAG_APPROACH_SLOW if flag_detected["area"] > FLAG_AREA_SLOW_THRESHOLD else FLAG_APPROACH_SPEED
+                        L = -(speed + turn * 0.3)
+                        R = -(speed - turn * 0.3)
+                        control_wheels(None, override_l=L, override_r=R)
+                        print(f"[상태] 후진 접근중... area={flag_detected['area']:.0f}", end="\r")
 
         elif robot_state == RobotState.DROPPING:
             control_wheels(None)
@@ -674,7 +674,12 @@ try:
                 print(f"[상태] 컨테이너 쏟는중... ({elapsed:.1f}s)", end="\r")
 
         # ── 시각화 ──────────────────────────────────────
-        annotated_frame = results[0].plot()
+        if results is not None:
+            annotated_frame = results[0].plot()
+        elif frame is not None:
+            annotated_frame = frame.copy()
+        else:
+            continue
 
         # 중앙 정렬 가이드라인 (OK 박스)
         _fw = FRAME_W or 640
