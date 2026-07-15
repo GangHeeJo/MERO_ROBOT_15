@@ -27,7 +27,7 @@
  * 파일 구성:
  *   main.ino    — 시리얼 수신, 상태 머신 (이 파일)
  *   gripper.ino — 그리퍼 XL430 × 1 (ID 1, 랙-피니언)
- *   arm.ino     — 팔 XL430 × 2 (ID 2,3) + 컨테이너 XL430 × 2 (ID 4,5)
+ *   arm.ino     — 팔 XL430 × 2 (ID 2) + 컨테이너 XL430 × 2 (ID 3)
  *
  * 필요 라이브러리: ArduinoJson, Dynamixel2Arduino
  */
