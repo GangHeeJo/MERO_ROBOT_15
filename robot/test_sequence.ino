@@ -25,8 +25,8 @@ Dynamixel2Arduino dxl(DXL_SERIAL, DXL_DIR_PIN);
 #define CONT_ID_B     6
 
 // ── 팔 위치 (도) ─────────────────────────────────────────
-#define ARM_DOWN_DEG  228.25f   // 집기 위치 (실측)
-#define ARM_UP_DEG    300.0f    // 투하 위치 (실측)
+#define ARM_DOWN_DEG  132.25f   // 집기 위치 (실측)
+#define ARM_UP_DEG    245.0f    // 투하 위치 (실측)
 
 #define ARM_SPEED     30        // Profile Velocity (낮을수록 느림, 0=최대)
 
