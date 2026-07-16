@@ -112,4 +112,4 @@ safety.ino가 overload/hardware error를 감지하면 어느 상태에서든 즉
 ## 전원 구성
 
 - 젯슨: 보조배터리 USB-C PD → 배럴잭 (내경 실측 필요)
-- XL430 그리퍼+팔+컨테이너 전부: UGV 내장 12V 배터리 → OpenRB
+- XL430 그리퍼+팔+컨테이너 전부: OpenRB 전용 별도 배터리(11.1V 3S LiPo, XT60) → OpenRB — UGV 내장 배터리 아님
