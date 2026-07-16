@@ -36,10 +36,10 @@ void initArm(uint8_t id, bool reverse) {
     return;
   }
   dxl.torqueOff(id);
-  dxl.writeControlTableItem(DRIVE_MODE,        id, reverse ? 1 : 0);
-  dxl.writeControlTableItem(PROFILE_VELOCITY,  id, ARM_SPEED);
+  dxl.writeControlTableItem(DRIVE_MODE, id, reverse ? 1 : 0);
   dxl.setOperatingMode(id, OP_POSITION);
   dxl.torqueOn(id);
+  dxl.writeControlTableItem(PROFILE_VELOCITY, id, ARM_SPEED);  // torqueOn 후에 써야 적용됨
   Serial.print("ID "); Serial.print(id);
   Serial.print(reverse ? " (Reverse)" : " (Normal)");
   Serial.print("  현재="); Serial.print(dxl.getPresentPosition(id, UNIT_DEGREE));
