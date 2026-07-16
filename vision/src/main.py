@@ -30,6 +30,7 @@ import cv2
 import glob
 import os
 import json
+import socket
 import time
 import threading
 import serial
@@ -423,7 +424,19 @@ threading.Thread(
     target=lambda: ThreadingHTTPServer(('0.0.0.0', 8080), _MJPEGHandler).serve_forever(),
     daemon=True
 ).start()
-print("[스트림] http://172.20.10.5:8080 에서 카메라 확인 가능")
+
+def _local_ip():
+    """현재 연결된 네트워크 기준 실제 IP 확인 (핫스팟이 바뀌어도 자동으로 맞는 IP 표시)."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
+    except Exception:
+        return "127.0.0.1"
+    finally:
+        s.close()
+
+print(f"[스트림] http://{_local_ip()}:8080 에서 카메라 확인 가능 (또는 http://{socket.gethostname()}.local:8080)")
 
 # ── 카메라 캡처 스레드 (cap.read 블로킹을 메인 루프에서 분리) ──
 
