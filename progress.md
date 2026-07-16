@@ -1,6 +1,6 @@
 # MERO AI ROBOT — Progress
 
-> 최종 업데이트: 2026-07-15  
+> 최종 업데이트: 2026-07-17  
 > 비전 담당: 조강희
 
 ---
@@ -55,11 +55,14 @@
 > 목적: OpenRB-150에 그리퍼 제어 코드 올리기
 
 1. Arduino IDE 실행
-2. `robot/main.ino` 열기 (같은 폴더에 `gripper.ino`, `arm.ino` 있어야 함)
+2. `robot/robot.ino` 열기 (같은 폴더에 `gripper.ino`, `arm.ino`, `safety.ino` 있어야 함)
+   > ⚠️ 파일명이 `main.ino`가 아니라 `robot.ino`인 이유: Arduino는 스케치 폴더명(`robot`)과 진입 파일명이 같아야 컴파일됨
 3. **보드 선택**: Tools → Board → OpenRB-150
 4. **포트 선택**: Tools → Port → OpenRB-150 잡힌 COM 포트
 5. 업로드 (→ 버튼)
 6. 라이브러리 오류 시: Library Manager에서 `ArduinoJson`, `Dynamixel2Arduino` 설치
+
+> `robot/test_sequence/`는 카메라·바퀴 없이 그리퍼→팔→컨테이너 동작만 1회 자동 검증하는 독립 테스트 스케치 (같은 방식으로 업로드해서 사용)
 
 ### STEP 4. 젯슨 SSH 접속 (MobaXterm)
 
@@ -123,24 +126,28 @@ python vision/src/main.py --timer    # 3분 타이머 화면 표시
 > 카메라 화면이 뜨고 탐지 박스가 보이면 정상.  
 > 포트 오류 시: `vision/src/main.py` 상단 `ESP32_PORT` / `OPENRB_PORT` 값 확인
 
-### STEP 7. 실측값 현황 (2026-07-15 기준)
+### STEP 7. 실측값 현황 (2026-07-17 기준)
 
 | 항목 | 파일 | 확정값 | 상태 |
 |------|------|--------|------|
-| `FINGER_OPEN_DEG` | `robot/gripper.ino` | 265° | ✅ 완료 |
-| `FINGER_CLOSE_DEG` | `robot/gripper.ino` | 110° | ✅ 완료 |
+| `FINGER_OPEN_RAW` | `robot/gripper.ino` | **2400** (raw) | ✅ 완료 |
+| `FINGER_CLOSE_RAW` | `robot/gripper.ino` | **1150** (raw) | ✅ 완료 |
 | `GRIP_LOAD_THRESHOLD` | `robot/gripper.ino` | 200 (20%) | ✅ 완료 |
+| `GRIPPER_SPEED` | `robot/gripper.ino` | 50 (Profile Velocity) | ✅ 완료 |
+| `ARM_DOWN_RAW` | `robot/arm.ino` | **1480** (raw) | ✅ 완료 |
+| `ARM_UP_RAW` | `robot/arm.ino` | **2850** (raw) | ✅ 완료 |
+| `CONT_CLOSED_RAW` | `robot/arm.ino` | **2100** (raw) | ✅ 완료 |
+| `CONT_OPEN_RAW` | `robot/arm.ino` | **1000** (raw) | ✅ 완료 |
+| `ARM_SPEED` / `CONTAINER_SPEED` | `robot/arm.ino` | 40 / 40 (Profile Velocity) | ✅ 완료 |
 | `AREA_THRESHOLD` | `vision/src/main.py` | 28000 | ⬜ 실측 필요 |
 | `AREA_SLOW_THRESHOLD` | `vision/src/main.py` | 20000 | ⬜ 실측 필요 |
 | `CENTER_MARGIN_PX` | `vision/src/main.py` | 120px | ✅ 완료 |
 | `ENCODER_TICKS_PER_M` | `vision/src/encoder_test.py` | **105.2** | ✅ 완료 |
-| `ARM_DOWN_RAW` | `robot/arm.ino` | 0 (placeholder) | ⬜ Wizard로 실측 |
-| `ARM_UP_RAW` | `robot/arm.ino` | 1706 (placeholder) | ⬜ Wizard로 실측 |
-| `CONTAINER_CLOSED_RAW` | `robot/arm.ino` | 0 (placeholder) | ⬜ Wizard로 실측 |
-| `CONTAINER_OPEN_RAW` | `robot/arm.ino` | 1024 (placeholder) | ⬜ Wizard로 실측 |
-| `FLAG_AREA_THRESHOLD` | `vision/src/main.py` | 60000 | ⬜ 3m 거리에서 실측 |
+| `FLAG_AREA_THRESHOLD` | `vision/src/main.py` | 60000 | ⬜ 3m 거리에서 실측 (현재 `GO_TO_STORAGE` 트리거 자체가 비활성 상태) |
 | `FLAG_AREA_SLOW_THRESHOLD` | `vision/src/main.py` | 30000 | ⬜ 동일 |
 | `STORAGE_BACKUP_SECS` | `vision/src/main.py` | 0.8s | ⬜ 미실측 |
+
+> ⚠️ 팔/컨테이너는 물리 모터 2개가 같은 ID(팔=2, 컨테이너=3)를 공유하는 구조 — 한쪽은 Dynamixel Wizard에서 미리 DRIVE_MODE=Reverse로 구워둠. 코드에서는 절대 DRIVE_MODE를 다시 쓰지 않음 (같은 ID로 두 번 쓰면 둘 다 같은 값이 되어 reverse 구분이 깨짐)
 
 ### IMU 특성 (2026-07-08 실측)
 
@@ -267,9 +274,12 @@ MERO_AI_ROBOT/
 │       ├── best.pt                # 학습 가중치 (d6/d8/d12/d20 전체)
 │       ├── best.engine            # TensorRT 파일 (Jetson 변환 후)
 │       └── calibration.json       # 캘리브레이션 결과 (1회 실행 후)
-├── robot/                         # 로봇팀 (OpenRB Arduino — 그리퍼만)
-│   ├── main.ino                   # JSON 수신 + 상태 머신
-│   └── gripper.ino                # XC330 × 1 그리퍼 (랙-피니언)
+├── robot/                         # 로봇팀 (OpenRB Arduino — 그리퍼+팔+컨테이너)
+│   ├── robot.ino                  # JSON 수신 + 상태 머신 (진입파일, 폴더명과 일치시켜야 컴파일됨)
+│   ├── gripper.ino                # ID1 XL430 그리퍼 (랙-피니언)
+│   ├── arm.ino                    # ID2 팔 + ID3 컨테이너 (각각 물리모터 2개, 같은 ID 공유)
+│   ├── safety.ino                 # Dynamixel overload/hardware error 감시 + 자동 복구
+│   └── test_sequence/             # 카메라·바퀴 없이 그리퍼→팔→컨테이너 1회 자동 테스트
 ├── ros2/                          # ROS2 패키지 (Jetson robot_ws/src/에 배포)
 │   └── mobility_pkg/
 │       ├── mobility_pkg/
@@ -293,8 +303,9 @@ MERO_AI_ROBOT/
 | `vision/src/calibration.py` | 픽셀 좌표 → 실제 mm 변환 비율 측정. `vision/model/calibration.json` 생성 |
 | `vision/src/trt_export.py` | `best.pt` → `best.engine` TensorRT 변환 (Jetson에서만 실행) |
 | `vision/src/video_to_frames.py` | 동영상에서 프레임 추출해서 데이터셋 생성 |
-| `vision/train/train.ipynb` | Google Colab 학습 노트북 |
-| `vision/model/best.pt` | 학습된 모델 가중치 (d6/d8/d12/d20 전체 학습 완료, YOLOv8s) |
+| `vision/train/train.ipynb` | Google Colab 학습 노트북 (로컬 디스크 저장 방식, Drive 미의존) |
+| `vision/model/best.pt` | 학습된 모델 가중치 (d6/d8/d12/d20, YOLOv8s, mAP50 0.994) |
+| `vision/src/capture.py` | 스페이스바로 사진 저장하는 데이터셋 수집 스크립트 |
 
 ---
 
@@ -302,37 +313,43 @@ MERO_AI_ROBOT/
 
 | 파일 | 역할 |
 |------|------|
-| `robot/main.ino` | Jetson grip/dump 명령 수신 → 상태 머신 실행, Dynamixel 인스턴스 선언 |
-| `robot/gripper.ino` | ID1 XL430 그리퍼 제어 (랙-피니언). PRESENT_LOAD 기반 집기 감지 |
-| `robot/arm.ino` | ID2 XL430 팔 관절 + ID3 XL430 바스켓 힌지 제어 |
+| `robot/robot.ino` | Jetson grip/dump 명령 수신 → 상태 머신 실행, Dynamixel 인스턴스 선언 |
+| `robot/gripper.ino` | ID1 XL430 그리퍼 제어 (랙-피니언). load confirm+squeeze+hold 방식으로 집기 판정 |
+| `robot/arm.ino` | ID2 팔(물리모터 2개, 같은 ID) + ID3 컨테이너(동일 구조) 제어 |
+| `robot/safety.ino` | Hardware Error 감시, overload 자동 reboot 복구, fatal fault 분리 |
 
 > 바퀴 제어(ESP32)는 `vision/src/main.py`의 `control_wheels()`가 직접 담당.
 
-### 상태 머신 흐름
+### 상태 머신 흐름 (2026-07-17 기준 — 단순화된 상태)
 
 ```
-[Python main.py]                          [OpenRB main.ino]
+[Python main.py]                          [OpenRB robot.ino]
 
 SEARCHING                                 IDLE
   탐지 + 이동 (바퀴 제어)
-  ↓ 도달 (bbox 면적 ≥ AREA_THRESHOLD)
+  ↓ 도달 (bbox 면적 ≥ AREA_THRESHOLD, 3프레임 연속 확인)
   grip 명령 전송 ──────────────────────▶ GRIPPING
-GRIPPING                                    그리퍼 닫기 (PRESENT_LOAD 감지)
-  바퀴 정지, 신호 대기                 ◀── {"status":"gripped"}     → LIFTING (팔 올리기 → 바스켓 투하 → 팔 내림 → IDLE)
-  ├─ gripped → SEARCHING (반복 수집)   ◀── {"status":"grip_failed"} → IDLE
-  ├─ grip_failed → SEARCHING (복귀)
-  └─ timeout(15s) → SEARCHING (복귀)
+    --test 모드면 여기서 프로그램 종료          그리퍼 닫기 (load confirm+squeeze+hold)
+GRIPPING                                    ※ 집기 성공/실패 상관없이 항상 LIFTING 진행
+  바퀴 정지, 신호 대기                        (safety.ino 개입 시에만 중단)
+  ├─ gripped → SEARCHING (반복)         ◀── {"status":"gripped"}
+  ├─ grip_failed → SEARCHING (반복)     ◀── {"status":"grip_failed"} (safety fault 시에만 발생)
+  └─ timeout(15s) → SEARCHING (반복)    ◀── {"status":"motor_fault"/"motor_recovered"/"motion_aborted"}
 
-  ※ 목표 클래스 전부 max_count 달성 시 → GO_TO_STORAGE
+  ※ 수집 개수 카운터 없음 — 무한 SEARCHING↔GRIPPING 반복
+```
 
+> ⚠️ `GO_TO_STORAGE`/`DROPPING` 상태 코드는 `main.py`에 남아있지만 트리거(수집 개수 카운터)가 제거되어 **현재 진입 불가** (죽은 코드). 대회에 실제로 쓰려면 "목표 개수 채우면 보관함 이동" 로직을 다시 붙여야 함. 아래 다이어그램은 그 로직이 살아있었을 때 기준으로 참고용으로 남겨둠:
+
+```
 GO_TO_STORAGE                             IDLE
   phase 0: 제자리 회전하며 태극기 탐색 (후방 카메라 + flag.pt)
   phase 1: 태극기 보이면 후진하며 접근 → FLAG_AREA_THRESHOLD 도달 시
-  dump 명령 전송 ──────────────────────▶ DUMPING (바스켓 힌지 열어 내용물 쏟기)
+  dump 명령 전송 ──────────────────────▶ DUMPING (컨테이너 열어 내용물 쏟기)
 DROPPING                                 ◀── {"status":"dumped"} → IDLE
   바퀴 정지, dumped 신호 대기
   ├─ dumped → SEARCHING (복귀)
-  └─ timeout(30s) → SEARCHING (복귀)
+  └─ timeout(60s) → SEARCHING (복귀)
 ```
 
 ### 로봇팀 TODO
@@ -340,15 +357,16 @@ DROPPING                                 ◀── {"status":"dumped"} → IDLE
 | 파일 | 항목 | 내용 |
 |------|------|------|
 | `main.py` | `AREA_THRESHOLD` | 실물 테스트 후 도착 면적 임계값 조정 (현재 28000) |
-| `arm.ino` | `ARM_DOWN_RAW` / `ARM_UP_RAW` | Dynamixel Wizard Present Position 읽어 실측 |
-| `arm.ino` | `CONTAINER_CLOSED_RAW` / `CONTAINER_OPEN_RAW` | 동일 방법 실측 |
-| `main.py` | `FLAG_AREA_THRESHOLD` | 3m 거리에서 태극기 bbox 면적 실측 |
+| `arm.ino` | `ARM_DOWN_RAW` / `ARM_UP_RAW` | ✅ 완료 (1480 / 2850) |
+| `arm.ino` | `CONT_CLOSED_RAW` / `CONT_OPEN_RAW` | ✅ 완료 (2100 / 1000) |
+| `main.py` | `FLAG_AREA_THRESHOLD` | 3m 거리에서 태극기 bbox 면적 실측 (현재 `GO_TO_STORAGE` 트리거 자체가 비활성) |
 | `main.py` | `STORAGE_BACKUP_SECS` | 집은 자리에서 후진 후 회전 공간 확인 |
+| `main.py` | 수집 개수 카운터 / `GO_TO_STORAGE` 트리거 | 2026-07-17 제거됨 — 대회에 쓰려면 재구현 필요 |
 
 ### 필요 라이브러리 (Arduino IDE 라이브러리 매니저)
 
-- **ArduinoJson** (Benoit Blanchon) — JSON 파싱 (`main.ino`)
-- **Dynamixel2Arduino** (ROBOTIS) — Dynamixel 제어 (`gripper.ino`, `arm.ino`)
+- **ArduinoJson** (Benoit Blanchon) — JSON 파싱 (`robot.ino`)
+- **Dynamixel2Arduino** (ROBOTIS) — Dynamixel 제어 (`gripper.ino`, `arm.ino`, `safety.ino`)
 
 ---
 
@@ -377,17 +395,24 @@ DROPPING                                 ◀── {"status":"dumped"} → IDLE
 **연결**: `/dev/ttyACM1`, 115200 baud, JSON per line
 
 ```json
-{"cmd": "grip", "cls": "d8"}  ← 집기 (IDLE→GRIPPING→LIFTING→IDLE, 바스켓에 투하)
-{"cmd": "dump"}                ← 바스켓 힌지 열어 내용물 쏟기 (IDLE→DUMPING→IDLE)
+{"cmd": "grip", "cls": "d8"}  ← 집기 (IDLE→GRIPPING→LIFTING→IDLE, 컨테이너에 투하)
+{"cmd": "dump"}                ← 컨테이너 열어 내용물 쏟기 (IDLE→DUMPING→IDLE)
 {"cmd": "idle"}                ← 대기
+{"cmd": "reset_fault"}         ← safety.ino가 fatal fault로 멈춘 뒤 사람이 확인 후 재개할 때
 ```
 
 **OpenRB → Jetson 응답:**
 ```json
-{"status": "gripped"}      ← 집기+바스켓 투하 완료 (Python SEARCHING 복귀)
-{"status": "grip_failed"}  ← 집기 실패 — Load 미달 (Python SEARCHING 복귀)
-{"status": "dumped"}       ← 바스켓 비우기 완료 (Python SEARCHING 복귀)
+{"status": "gripped"}         ← 집기 시도+컨테이너 투하 완료 (성공/실패 무관, Python SEARCHING 복귀)
+{"status": "grip_failed"}     ← safety fault로 grip 중단됨 (Python SEARCHING 복귀)
+{"status": "dumped"}          ← 컨테이너 비우기 완료 (Python SEARCHING 복귀)
+{"status": "motor_fault"}     ← 과열/전압/충격/엔코더 등 자동복구 불가 — reset_fault 필요
+{"status": "motor_recovered"} ← overload 자동복구 성공, 현재 동작은 중단하고 IDLE 복귀
+{"status": "motion_aborted"}  ← 위 두 경우 외 safety 개입으로 동작 중단
+{"status": "fault_reset"}     ← reset_fault 처리 완료
 ```
+
+> ⚠️ 2026-07-17 변경: 그리퍼 load 임계값 미달(집기 실패)이어도 팔은 항상 올려서 시퀀스를 끝까지 진행함 — `grip_failed`는 이제 safety.ino가 개입한 경우에만 발생.
 
 ### 3. OpenRB → Dynamixel (팔·그리퍼·바스켓 직접)
 
@@ -488,6 +513,30 @@ yolo val model=vision/model/best.pt     data=data.yaml   # 신규
 Colab 노트북 실행 전 필요한 것:
 - Roboflow API 키
 - Google Drive 마운트
+
+---
+
+## 2026-07-17 작업 내역
+
+- **`robot/main.ino` → `robot.ino` 이름 변경** — Arduino 툴체인은 스케치 폴더명과 진입 파일명이 같아야 컴파일됨 (`robot/` 폴더인데 `main.ino`라 그동안 실제로 빌드 불가능한 상태였음). 이제 `arduino-cli compile robot/`로 정상 컴파일·업로드 확인 완료
+- **`safety.ino` 추가** — Dynamixel Hardware Error Status 감시, overload 발생 시 자동 reboot 복구. 과열/전압/엔코더/전기충격은 fatal fault로 분리해 사람이 `{"cmd":"reset_fault"}` 보내야 복귀하도록 함. `{"status":"motor_fault"/"motor_recovered"/"motion_aborted"}` 신규 응답 추가
+- **그리퍼 로직 정교화** (`gripper.ino`) — load 감지 시 즉시 멈추지 않고 confirm count(3프레임 연속) + 살짝 더 조이기(squeeze) + 그 자리 hold 방식으로 변경
+- **집기 실패해도 팔은 항상 올리도록 변경** — 기존엔 load 임계값 미달 시 팔을 안 올리고 바로 `grip_failed` 리턴했는데, 테스트 편의를 위해 성공/실패 상관없이 항상 LIFTING(팔 올림→투하→팔 내림)까지 진행하도록 변경. `safety.ino`가 개입하는 심각한 하드웨어 오류일 때만 중단됨
+- **모터 위치/속도값 재실측 반영** — 그리퍼(OPEN=2400/CLOSE=1150), 팔(DOWN=1480/UP=2850), 컨테이너(CLOSED=2100/OPEN=1000), 전부 raw(0~4095) 단위로 통일 (degree 변환 없이 직접 사용). `PROFILE_VELOCITY` 속도값도 추가 (그리퍼50/팔·컨테이너40)
+- **집기 후 팔 올리기 전 0.5초, 그리퍼 연 뒤 팔 내리기 전 0.8초 딜레이 추가** — 물체가 실제로 안정적으로 잡히고/떨어질 시간 확보
+- **테스트 스케치 정리** — `test_step`/`test_sequence`/`test_container`를 각자 독립 폴더로 분리 (한 폴더에 있으면 Arduino가 전부 하나로 묶어 컴파일해서 `setup()`/`loop()` 중복 정의 충돌났음). 이후 `test_step`/`test_container`/진단용 `test_diag`는 정리 완료해서 제거, `test_sequence`만 유지
+- **`vision/src/main.py` — 수집 개수 카운터 제거** — `pickup_counts`, `max_count()`, 클래스별 목표 개수 체크, 화면 스코어 표시, 전체 수집 완료 시 `GO_TO_STORAGE` 자동 전환 로직을 전부 제거. 지금은 물체 하나 감지→접근→grip→다시 탐색을 무한 반복하는 단순한 루프. `GO_TO_STORAGE`/`DROPPING` 상태 코드 자체는 남아있지만 트리거가 없어 현재는 도달 불가 (죽은 코드, 나중에 다시 연결 필요)
+- **`--test` 1회성 테스트 모드 추가** (`main.py`) — 타겟 도달 확인되면 grip 명령만 보내고 바로 프로그램 종료 (반복 없이 단발 테스트용)
+- **MJPEG 스트림 서버 버그 수정** — `HTTPServer` → `ThreadingHTTPServer`로 교체. 기존엔 동시 접속 1개만 처리 가능해서 브라우저 새로고침/재접속 시 스트림이 멈춘 것처럼 보이는 문제가 있었음
+- **재학습 완료 및 `best.pt` 교체** — Roboflow(`merong-gurme` 프로젝트) 데이터셋으로 YOLOv8s 재학습, **mAP50 0.994** (d6/d8/d12/d20 전체 클래스). `train.ipynb`도 Google Drive FUSE 마운트가 반복적으로 불안정(`FileExistsError`/`NotADirectoryError`)해서 **Drive 의존 제거하고 Colab 로컬 디스크(`/content/runs_local`)에 저장하는 방식으로 변경**
+- **`vision/src/capture.py` 추가** — 데이터셋 수집용 스페이스바 캡처 스크립트
+- **원격 접속 환경 정리**
+  - Jetson SSH 키 등록 완료 (비밀번호 없이 접속 가능) — `~/.ssh/authorized_keys`에 공개키 추가. Windows OpenSSH는 개인키 파일 권한이 본인 계정 외에도 열려있으면 조용히 키를 무시하고 비번으로 넘어가니, `icacls`로 권한 제한 필요했음 (VS Code Remote-SSH에서 비번 계속 뜨던 원인)
+  - VS Code Remote-SSH 접속 방법 정리 (`aiwinners@<jetson IP>`)
+  - 핫스팟 두 개(iPhone/Android) Jetson에 동시 등록 가능 확인 (`nmcli device wifi connect`) — NetworkManager가 저장된 프로필 중 주변에 있는 걸 자동으로 잡음
+  - SSH/VS Code는 **같은 네트워크 안에서만** 동작 (172.20.10.x 등은 사설 IP라 인터넷 건너 원격 접속 불가) — 물리적으로 다른 곳에서 접속하려면 Tailscale 같은 VPN 필요(미설정)
+
+> ⚠️ **주의**: 위 변경 중 `main.py`의 카운터 제거 + `GO_TO_STORAGE` 비활성화는 "일단 grip 단독 동작 테스트"를 위한 임시 단순화임. 대회에 쓰려면 목표 개수 채운 뒤 보관함으로 이동하는 로직을 다시 붙여야 함.
 
 ---
 
@@ -728,21 +777,19 @@ python vision/src/main.py --cls d8 --timer
 
 | 우선순위 | 항목 | 현재값 | 측정 방법 | 수정 위치 |
 |----------|------|--------|-----------|-----------|
-| ✅ 완료 | `FINGER_OPEN_DEG` | **265°** | 실측 완료 | `gripper.ino` |
-| ✅ 완료 | `FINGER_CLOSE_DEG` | **110°** | 실측 완료 | `gripper.ino` |
+| ✅ 완료 | `FINGER_OPEN_RAW` / `FINGER_CLOSE_RAW` | **2400 / 1150** (raw) | 실측 완료 | `gripper.ino` |
 | ✅ 완료 | `GRIP_LOAD_THRESHOLD` | **200** (Load 20%) | 실측 완료 | `gripper.ino` |
 | ✅ 완료 | `ENCODER_TICKS_PER_M` | **105.2** | 실측 완료 | `main.py` |
-| 🔴 높음 | `ARM_DOWN_RAW` | 0 (placeholder) | Dynamixel Wizard Present Position 확인 | `arm.ino` |
-| 🔴 높음 | `ARM_UP_RAW` | 1706 (placeholder) | 동일 | `arm.ino` |
-| 🔴 높음 | `CONTAINER_CLOSED_RAW` | 0 (placeholder) | 동일 | `arm.ino` |
-| 🔴 높음 | `CONTAINER_OPEN_RAW` | 1024 (placeholder) | 동일 | `arm.ino` |
+| ✅ 완료 | `ARM_DOWN_RAW` / `ARM_UP_RAW` | **1480 / 2850** (raw) | 실측 완료 | `arm.ino` |
+| ✅ 완료 | `CONT_CLOSED_RAW` / `CONT_OPEN_RAW` | **2100 / 1000** (raw) | 실측 완료 | `arm.ino` |
+| ✅ 완료 | 모터 속도(Profile Velocity) | 그리퍼50 / 팔40 / 컨테이너40 | 실측+테스트로 조정 완료 | `gripper.ino`, `arm.ino` |
 | 🔴 높음 | `AREA_THRESHOLD` | 28000 | 물체 바로 앞에서 터미널 area= 값 확인 | `main.py` |
+| 🔴 높음 | 수집 개수 카운터 / `GO_TO_STORAGE` 트리거 | 제거됨 | 대회에 쓰려면 재구현 필요 (2026-07-17 참고) | `main.py` |
 | 🔴 높음 | `FLAG_AREA_THRESHOLD` | 60000 | 보관함 3m 거리에서 태극기 bbox 면적 측정 | `main.py` |
 | 🔴 높음 | `FLAG_AREA_SLOW_THRESHOLD` | 30000 | 동일 | `main.py` |
 | 🟡 중간 | `CAMERA_INDEX_OBJ` | 0 | `/dev/video*` 번호 실제 확인 | `main.py` |
 | 🟡 중간 | `CAMERA_INDEX_FLAG` | 2 | 동일 | `main.py` |
 | 🟡 중간 | `STORAGE_BACKUP_SECS` | 0.8s | 집은 자리에서 후진 후 공간 확인 | `main.py` |
-| 🟡 중간 | 팔/바스켓 delay 값 | armUp 1200ms 등 | 실제 모터 속도와 맞는지 확인 후 조정 | `arm.ino` |
 
 ### 데이터 / 학습
 
@@ -766,19 +813,20 @@ python vision/src/main.py --cls d8 --timer
 
 이어서 작업하는 사람이 확인할 것:
 
-1. `vision/model/best.pt` GitHub에 포함 ✅ (d6/d8/d12/d20 전체 학습 완료)
+1. `vision/model/best.pt` GitHub에 포함 ✅ (d6/d8/d12/d20 전체 학습 완료, mAP50 0.994)
 2. `vision/model/flag.pt` — **미학습** ⬜ (태극기 20~30장 촬영 후 학습 필요)
-3. Roboflow 프로젝트 접근 권한 확인
-4. Colab 노트북 실행 전 Roboflow API 키 입력
+3. Roboflow 프로젝트 접근 권한 확인 (workspace: `s-workspace-qdwfc`, project: `merong-gurme`)
+4. Colab 노트북 실행 전 Roboflow API 키 입력 — Google Drive는 FUSE 불안정 이슈로 더 이상 안 씀, 결과는 로컬(`/content/runs_local`)에 저장됨
 5. Jetson 연결 포트 확인:
    - `ls /dev/ttyACM*` 실행
    - ESP32: `ttyACM0` → `main.py`의 `ESP32_PORT` 확인 (CH343 드라이버, ttyUSB 아님)
    - OpenRB: `ttyACM1` → `OPENRB_PORT` 확인 (꽂는 순서에 따라 바뀔 수 있음)
    - 카메라: `/dev/video0` (전방), `/dev/video2` (후방) — 실제 번호 확인 후 `CAMERA_INDEX_OBJ`, `CAMERA_INDEX_FLAG` 수정
-6. OpenRB Arduino 업로드 시 보드: **OpenRB-150** 선택 (`main.ino` + `gripper.ino` + `arm.ino` 같은 폴더)
+6. OpenRB Arduino 업로드 시 보드: **OpenRB-150** 선택 (`robot.ino` + `gripper.ino` + `arm.ino` + `safety.ino` 같은 폴더, 파일명이 `main.ino`가 아니라 `robot.ino`인 것에 주의 — 폴더명과 일치해야 컴파일됨)
 7. Dynamixel Wizard로 서보 ID 및 Baudrate 사전 설정:
-   - ID1 (그리퍼), ID2 (팔 관절×2), ID3 (바스켓 힌지×2), 모두 **Baudrate=1000000**
-   - ID2/ID3: 한쪽 모터 Drive Mode → Reverse 설정 필수
+   - ID1 (그리퍼), ID2 (팔, 물리모터 2개 공유), ID3 (컨테이너, 물리모터 2개 공유), 모두 **Baudrate=1000000**
+   - ID2/ID3: 한쪽 모터 Drive Mode → Reverse Wizard에서 미리 설정 (코드에서는 절대 재설정 안 함 — 같은 ID 공유라 둘 다 같은 값으로 덮어써짐)
 8. XL430 전원: OpenRB 초록 단자에 12V 배터리 연결 (두꺼운 전선 필수)
-9. `arm.ino` placeholder 값 (ARM_DOWN_RAW 등) 실측 후 수정 필수
+9. 위치/속도값 전부 실측 완료 (그리퍼 2400/1150, 팔 1480/2850, 컨테이너 2100/1000, 속도 50/40/40) — `gripper.ino`/`arm.ino` 참고
 10. `AREA_THRESHOLD`, `FLAG_AREA_THRESHOLD` 실물 테스트로 측정 후 `main.py` 수정
+11. **수집 개수 카운터 / `GO_TO_STORAGE` 자동 전환 로직이 제거된 상태** ⬜ — 지금 `main.py`는 물체 하나 감지→grip→반복만 하는 무한루프. 대회에 쓰려면 "목표 개수 채운 뒤 보관함 이동" 로직을 다시 붙여야 함 (2026-07-17 작업 내역 참고)

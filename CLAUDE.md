@@ -11,7 +11,10 @@ pick-and-place 로봇 대회. 카메라로 물체 분류·트래킹 → 집게�
 - 보드: NVIDIA Jetson Orin Nano
 - 로봇 플랫폼: Waveshare 6x4 UGV (내장 컨트롤러: ESP32 — 바퀴 제어)
 - 팔·그리퍼 컨트롤러: ROBOTIS OpenRB-150 (Dynamixel 제어)
-- 다이나믹셀: XL430 × 1 (그리퍼, 12V, 랙-피니언으로 양 손가락 구동, Baudrate 1000000) — 팔 없음
+- 다이나믹셀: XL430 × 5, 전부 12V, Baudrate 1000000
+  - ID 1: 그리퍼 (랙-피니언, 단일 모터로 양 손가락 구동)
+  - ID 2: 팔 관절 — 물리 모터 2개가 같은 ID 공유 (한쪽은 Dynamixel Wizard에서 미리 DRIVE_MODE=Reverse로 구워둠)
+  - ID 3: 컨테이너 힌지 — 물리 모터 2개, 동일한 ID 공유 구조
 - 카메라: ArduCAM 2.3MP AR0234 글로벌 셔터 USB 3.0
 
 **대회 태스크**
@@ -37,9 +40,12 @@ MERO_AI_ROBOT/
 │   └── DATASET/
 │       ├── shape-based/           # d6·d8·d12·d20
 │       └── image-based/           # 과일 (미수집)
-├── robot/                         # 로봇팀 (OpenRB Arduino — 그리퍼만)
-│   ├── main.ino                   # JSON 수신 + 상태 머신
-│   └── gripper.ino                # XC330 × 1 그리퍼 (랙-피니언)
+├── robot/                         # 로봇팀 (OpenRB Arduino — 그리퍼+팔+컨테이너)
+│   ├── robot.ino                  # JSON 수신 + 상태 머신 (진입파일 — 폴더명 robot과 일치해야 컴파일됨, main.ino 아님 주의)
+│   ├── gripper.ino                # ID1 XL430 그리퍼 (랙-피니언)
+│   ├── arm.ino                    # ID2 팔 + ID3 컨테이너 (각각 물리모터 2개, 같은 ID 공유)
+│   ├── safety.ino                 # Dynamixel overload/hardware error 감시 + 자동 복구
+│   └── test_sequence/             # 카메라·바퀴 없이 그리퍼→팔→컨테이너 1회 자동 테스트 (독립 스케치)
 ├── ros2/                          # ROS2 패키지 (레퍼런스 보관용, 미사용)
 ├── rulebook.md                    # 대회 공식 룰북
 ├── progress.md                    # 전체 팀 인수인계 문서
@@ -77,26 +83,33 @@ Roboflow 라벨링 → train.ipynb(Colab) → best.pt → trt_export.py → best
 ```
 Jetson main.py
   ├─→ /dev/ttyACM0 → ESP32 (UGV 바퀴)   {"T":1, "L":speed, "R":speed}
-  └─→ /dev/ttyACM1 → OpenRB-150          {"cmd":"grip"/"drop"/"idle", ...}
-  └─← /dev/ttyACM1 ← OpenRB-150          {"status":"gripped"/"grip_failed"/"done"}
+  └─→ /dev/ttyACM1 → OpenRB-150          {"cmd":"grip"/"dump"/"idle"/"reset_fault", ...}
+  └─← /dev/ttyACM1 ← OpenRB-150          {"status":"gripped"/"grip_failed"/"dumped"/
+                                           "motor_fault"/"motor_recovered"/"motion_aborted"/"fault_reset"}
 ```
 
 ## 상태 머신
 
-**Python (main.py):**
-```
-SEARCHING → (도달) → GRIPPING → (gripped)     → GO_TO_STORAGE → (직진완료) → DROPPING → (done) → SEARCHING
-                                 (grip_failed) → SEARCHING
-                                 (timeout)     → SEARCHING
-```
+> ⚠️ 2026-07-17 기준: `main.py`에서 수집 개수 카운터와 `GO_TO_STORAGE` 자동 전환 트리거를 제거해서, 지금은 SEARCHING↔GRIPPING만 무한 반복하는 단순한 루프임. `GO_TO_STORAGE`/`DROPPING` 상태 코드는 남아있지만 진입할 방법이 없음 (죽은 코드). 대회에 쓰려면 재구현 필요 — 자세한 내용은 `progress.md`의 2026-07-17 작업 내역 참고.
 
-**OpenRB (main.ino):**
+**Python (main.py) — 현재 실제 동작:**
 ```
-IDLE → (grip 수신) → GRIPPING → (집기성공) → HOLDING → (drop 수신) → DROPPING → IDLE
-                              → (전류미달) → IDLE (grip_failed 전송)
+SEARCHING → (도달 3프레임 확인) → grip 전송 → GRIPPING
+GRIPPING → (gripped/grip_failed/timeout 무엇이든) → SEARCHING
+```
+(`--test` 플래그: grip 전송 후 결과 기다리지 않고 바로 프로그램 종료)
+
+**OpenRB (robot.ino):**
+```
+IDLE → (grip 수신) → GRIPPING → (집기 시도, 성공/실패 무관 항상 진행) → LIFTING
+                                (팔 올림 → 그리퍼 열어 투하 → 팔 내림) → IDLE (gripped 전송)
+     → (dump 수신) → DUMPING → (컨테이너 열고 500ms 후 닫기) → IDLE (dumped 전송)
+
+safety.ino가 overload/hardware error를 감지하면 어느 상태에서든 즉시 IDLE로 복귀
+(fatal fault면 사람이 reset_fault 보낼 때까지 명령 거부)
 ```
 
 ## 전원 구성
 
 - 젯슨: 보조배터리 USB-C PD → 배럴잭 (내경 실측 필요)
-- XL430 팔 + XC330 그리퍼: UGV 내장 12V 배터리 → OpenRB
+- XL430 그리퍼+팔+컨테이너 전부: UGV 내장 12V 배터리 → OpenRB
