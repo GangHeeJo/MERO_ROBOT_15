@@ -25,8 +25,11 @@ Dynamixel2Arduino dxl(DXL_SERIAL, DXL_DIR_PIN);
 #define CONT_ID_B     6
 
 // ── 팔 위치 (도) ─────────────────────────────────────────
-#define ARM_DOWN_DEG  132.25f   // 집기 위치 (실측)
-#define ARM_UP_DEG    245.0f    // 투하 위치 (실측)
+#define ARM_DOWN_DEG  132.25f
+#define ARM_UP_DEG    245.0f
+
+// ── 컨테이너 delta (raw) ─────────────────────────────────
+#define CONTAINER_DELTA 300     // ±300 raw (~26°)
 
 #define ARM_SPEED     30        // Profile Velocity (낮을수록 느림, 0=최대)
 
@@ -52,32 +55,56 @@ void moveTo(uint8_t id, float deg, const char* label) {
   dxl.setGoalPosition(id, deg, UNIT_DEGREE);
 }
 
+void initCont(uint8_t id, bool reverse) {
+  if (!dxl.ping(id)) {
+    Serial.print("ping 실패 ID="); Serial.println(id);
+    return;
+  }
+  dxl.torqueOff(id);
+  dxl.writeControlTableItem(DRIVE_MODE, id, reverse ? 1 : 0);
+  dxl.setOperatingMode(id, OP_POSITION);
+  dxl.torqueOn(id);
+  dxl.writeControlTableItem(PROFILE_VELOCITY, id, ARM_SPEED);
+  Serial.print("ID "); Serial.print(id);
+  Serial.print(reverse ? " (Reverse)" : " (Normal)");
+  Serial.print("  현재(raw)="); Serial.println(dxl.getPresentPosition(id, UNIT_RAW));
+}
+
+void moveDelta(uint8_t id, int delta, const char* label) {
+  int cur    = (int)dxl.getPresentPosition(id, UNIT_RAW);
+  int target = cur + delta;
+  if (target < 0) target = 0;
+  Serial.print(label); Serial.print(" ID="); Serial.print(id);
+  Serial.print("  "); Serial.print(cur); Serial.print(" -> "); Serial.println(target);
+  dxl.setGoalPosition(id, target, UNIT_RAW);
+}
+
 void setup() {
   Serial.begin(115200);
   dxl.begin(BAUDRATE);
   dxl.setPortProtocolVersion(2.0f);
 
-  Serial.println("=== 팔 초기화 ===");
-  initArm(ARM_ID_A, false);
-  initArm(ARM_ID_B, true);
+  Serial.println("=== 컨테이너 초기화 ===");
+  initCont(CONT_ID_A, false);
+  initCont(CONT_ID_B, true);
   delay(500);
 
-  Serial.println("\n[1] 팔 내리기 → " + String(ARM_DOWN_DEG) + "°");
-  moveTo(ARM_ID_A, ARM_DOWN_DEG, "팔A");
-  moveTo(ARM_ID_B, ARM_DOWN_DEG, "팔B");
+  Serial.println("\n[1] 컨테이너 닫기 방향");
+  moveDelta(CONT_ID_A, -CONTAINER_DELTA, "컨테이너A 닫기");
+  moveDelta(CONT_ID_B, -CONTAINER_DELTA, "컨테이너B 닫기");
   delay(3000);
 
-  Serial.println("\n[2] 팔 올리기 → " + String(ARM_UP_DEG) + "°");
-  moveTo(ARM_ID_A, ARM_UP_DEG, "팔A");
-  moveTo(ARM_ID_B, ARM_UP_DEG, "팔B");
+  Serial.println("\n[2] 컨테이너 열기 방향");
+  moveDelta(CONT_ID_A, +CONTAINER_DELTA, "컨테이너A 열기");
+  moveDelta(CONT_ID_B, +CONTAINER_DELTA, "컨테이너B 열기");
   delay(3000);
 
-  Serial.println("\n[3] 팔 다시 내리기 → " + String(ARM_DOWN_DEG) + "°");
-  moveTo(ARM_ID_A, ARM_DOWN_DEG, "팔A");
-  moveTo(ARM_ID_B, ARM_DOWN_DEG, "팔B");
+  Serial.println("\n[3] 컨테이너 다시 닫기");
+  moveDelta(CONT_ID_A, -CONTAINER_DELTA, "컨테이너A 닫기");
+  moveDelta(CONT_ID_B, -CONTAINER_DELTA, "컨테이너B 닫기");
   delay(3000);
 
-  Serial.println("=== 완료 ===");
+  Serial.println("=== 완료. Serial Monitor에서 raw 위치 확인 ===");
 }
 
 void loop() {}
