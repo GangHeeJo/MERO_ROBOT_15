@@ -1,16 +1,11 @@
 /*
- * test_sequence.ino — 업로드하면 자동으로 시퀀스 1회 실행
+ * test_sequence.ino — 현재 위치에서 조금씩만 움직이는 테스트
  *
- * 순서:
- *   1. 그리퍼 열기
- *   2. 그리퍼 닫기 (집기)
- *   3. 팔 올리기
- *   4. 그리퍼 열기 (바스켓 투하)
- *   5. 팔 내리기
- *   6. 바스켓 열기
- *   7. 바스켓 닫기
+ * 현재 위치를 읽어서 ±DELTA만큼만 이동 → 실측값 모를 때 안전하게 확인용
  *
- * ⚠️ ARM_UP_RAW, CONTAINER_OPEN_RAW 등 placeholder — 모터 움직임 보고 조정
+ * Serial Monitor(115200)에서 움직임 확인 후
+ * 실제 값은 ARM_UP_RAW 등에 반영
+ *
  * ⚠️ 필요 라이브러리: Dynamixel2Arduino
  */
 
@@ -23,77 +18,70 @@ using namespace ControlTableItem;
 
 Dynamixel2Arduino dxl(DXL_SERIAL, DXL_DIR_PIN);
 
-// ── ID ───────────────────────────────────────────────────
 #define GRIPPER_ID    1
 #define ARM_ID        2
 #define CONTAINER_ID  3
 
-// ── 그리퍼 위치 (실측 완료) ──────────────────────────────
-#define FINGER_OPEN_DEG   265.0f
-#define FINGER_CLOSE_DEG  110.0f
+#define GRIPPER_DELTA   30    // 그리퍼: ±30° (살짝)
+#define ARM_DELTA       100   // 팔: ±100 raw (~8.8°)
+#define CONTAINER_DELTA 100   // 바스켓: ±100 raw (~8.8°)
 
-// ── 팔 위치 raw (⚠️ 실측 필요, 움직임 보고 조정) ─────────
-#define ARM_DOWN_RAW   0
-#define ARM_UP_RAW     1706
+void initMotor(uint8_t id) {
+  if (!dxl.ping(id)) {
+    Serial.print("ping 실패 ID="); Serial.println(id);
+    return;
+  }
+  dxl.torqueOff(id);
+  dxl.setOperatingMode(id, OP_POSITION);
+  dxl.torqueOn(id);
+  Serial.print("ID "); Serial.print(id);
+  Serial.print(" 현재 위치(raw)=");
+  Serial.println(dxl.getPresentPosition(id, UNIT_RAW));
+}
 
-// ── 바스켓 위치 raw (⚠️ 실측 필요) ──────────────────────
-#define CONTAINER_CLOSED_RAW  0
-#define CONTAINER_OPEN_RAW    1024
+void moveDelta(uint8_t id, int delta, int waitMs, const char* label) {
+  int cur = (int)dxl.getPresentPosition(id, UNIT_RAW);
+  int target = cur + delta;
+  if (target < 0) target = 0;
+  Serial.print(label);
+  Serial.print(" ID="); Serial.print(id);
+  Serial.print(" "); Serial.print(cur); Serial.print(" → "); Serial.println(target);
+  dxl.setGoalPosition(id, target, UNIT_RAW);
+  delay(waitMs);
+}
 
 void setup() {
   Serial.begin(115200);
   dxl.begin(BAUDRATE);
   dxl.setPortProtocolVersion(2.0f);
 
-  // ── 모터 초기화 ─────────────────────────────────────────
-  uint8_t ids[3] = { GRIPPER_ID, ARM_ID, CONTAINER_ID };
-  for (int i = 0; i < 3; i++) {
-    if (!dxl.ping(ids[i])) {
-      Serial.print("ping 실패 ID="); Serial.println(ids[i]);
-      continue;
-    }
-    dxl.torqueOff(ids[i]);
-    dxl.setOperatingMode(ids[i], OP_POSITION);
-    dxl.torqueOn(ids[i]);
-    Serial.print("ID "); Serial.print(ids[i]); Serial.println(" 준비 완료");
-  }
-
+  Serial.println("=== 모터 초기화 ===");
+  initMotor(GRIPPER_ID);
+  initMotor(ARM_ID);
+  initMotor(CONTAINER_ID);
   delay(1000);
 
-  // ── 시퀀스 실행 ─────────────────────────────────────────
-  Serial.println("\n=== 시퀀스 시작 ===");
+  Serial.println("\n=== 시퀀스 시작 (조금씩만 이동) ===");
 
-  Serial.println("1. 그리퍼 열기");
-  dxl.setGoalPosition(GRIPPER_ID, FINGER_OPEN_DEG, UNIT_DEGREE);
-  delay(1200);
+  Serial.println("\n[1] 그리퍼 열기 방향");
+  moveDelta(GRIPPER_ID, +GRIPPER_DELTA, 1000, "그리퍼 열기");
 
-  Serial.println("2. 그리퍼 닫기 (집기)");
-  dxl.setGoalPosition(GRIPPER_ID, FINGER_CLOSE_DEG, UNIT_DEGREE);
-  delay(1200);
+  Serial.println("[2] 그리퍼 닫기 방향");
+  moveDelta(GRIPPER_ID, -GRIPPER_DELTA, 1000, "그리퍼 닫기");
 
-  Serial.println("3. 팔 올리기");
-  dxl.setGoalPosition(ARM_ID, ARM_UP_RAW, UNIT_RAW);
-  delay(1500);
+  Serial.println("[3] 팔 올리기 방향");
+  moveDelta(ARM_ID, +ARM_DELTA, 1200, "팔 올리기");
 
-  Serial.println("4. 그리퍼 열기 (바스켓 투하)");
-  dxl.setGoalPosition(GRIPPER_ID, FINGER_OPEN_DEG, UNIT_DEGREE);
-  delay(1000);
+  Serial.println("[4] 팔 내리기 방향");
+  moveDelta(ARM_ID, -ARM_DELTA, 1200, "팔 내리기");
 
-  Serial.println("5. 팔 내리기");
-  dxl.setGoalPosition(ARM_ID, ARM_DOWN_RAW, UNIT_RAW);
-  delay(1500);
+  Serial.println("[5] 바스켓 열기 방향");
+  moveDelta(CONTAINER_ID, +CONTAINER_DELTA, 1200, "바스켓 열기");
 
-  Serial.println("6. 바스켓 열기");
-  dxl.setGoalPosition(CONTAINER_ID, CONTAINER_OPEN_RAW, UNIT_RAW);
-  delay(1500);
+  Serial.println("[6] 바스켓 닫기 방향");
+  moveDelta(CONTAINER_ID, -CONTAINER_DELTA, 1200, "바스켓 닫기");
 
-  Serial.println("7. 바스켓 닫기");
-  dxl.setGoalPosition(CONTAINER_ID, CONTAINER_CLOSED_RAW, UNIT_RAW);
-  delay(1000);
-
-  Serial.println("=== 시퀀스 완료 ===");
+  Serial.println("\n=== 완료. Serial Monitor에서 각 위치 확인 ===");
 }
 
-void loop() {
-  // 반복 없음
-}
+void loop() {}
