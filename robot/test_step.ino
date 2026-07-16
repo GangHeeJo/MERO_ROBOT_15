@@ -30,8 +30,8 @@ Dynamixel2Arduino dxl(DXL_SERIAL, DXL_DIR_PIN);
 
 #define CONT_A_OPEN    94.75f
 #define CONT_A_CLOSED  179.30f
-#define CONT_B_OPEN    4.22f
-#define CONT_B_CLOSED  88.95f
+#define CONT_B_OPEN    353.14f
+#define CONT_B_CLOSED  266.92f
 
 #define SPEED_GRIP  50
 #define SPEED_ARM   30

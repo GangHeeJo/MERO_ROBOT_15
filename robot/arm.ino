@@ -18,13 +18,15 @@ extern Dynamixel2Arduino dxl;
 #define CONT_ID_A     5
 #define CONT_ID_B     6
 
-// ── 팔 위치 raw 0-4095 (실물 테스트 후 조정) ────────────
-#define ARM_DOWN_RAW    0       // 집기 위치 (그리퍼 아래)  ⚠️ 임의값 — 실측 필요
-#define ARM_UP_RAW      1706    // 투하 위치 (~150°)       ⚠️ 임의값 — 실측 필요
+// ── 팔 위치 (도, 실측) ───────────────────────────────────
+#define ARM_DOWN_DEG   132.25f   // 집기 위치
+#define ARM_UP_DEG     245.0f    // 투하 위치
 
-// ── 바스켓 위치 raw 0-4095 (실물 테스트 후 조정) ────────
-#define CONTAINER_CLOSED_RAW   0      // 합판 수직 (닫힘)       ⚠️ 임의값 — 실측 필요
-#define CONTAINER_OPEN_RAW     1024   // 합판 ~90° (열림)       ⚠️ 임의값 — 실측 필요
+// ── 바스켓 위치 (도, 실측) ───────────────────────────────
+#define CONT_A_CLOSED  179.30f   // ID5 닫힘
+#define CONT_A_OPEN     94.75f   // ID5 열림
+#define CONT_B_CLOSED  266.92f   // ID6 닫힘
+#define CONT_B_OPEN    353.14f   // ID6 열림
 
 // ── 토크 제한 (%) ────────────────────────────────────────
 #define ARM_TORQUE_PCT       80
@@ -50,7 +52,7 @@ void armSetup() {
   _initOne(ARM_ID_A,  armLimit,  false);
   _initOne(ARM_ID_B,  armLimit,  true);   // 반대쪽 모터 Reverse
   _initOne(CONT_ID_A, contLimit, false);
-  _initOne(CONT_ID_B, contLimit, true);   // 반대쪽 모터 Reverse
+  _initOne(CONT_ID_B, contLimit, false);
   containerClose();
   armDown();
   Serial.println("[팔] 초기화 완료 (팔 내림 + 바스켓 닫힘)");
@@ -58,28 +60,28 @@ void armSetup() {
 
 // ── 팔 내리기 (집기 위치) ────────────────────────────────
 void armDown() {
-  dxl.setGoalPosition(ARM_ID_A, ARM_DOWN_RAW, UNIT_RAW);
-  dxl.setGoalPosition(ARM_ID_B, ARM_DOWN_RAW, UNIT_RAW);
-  delay(1200);
+  dxl.setGoalPosition(ARM_ID_A, ARM_DOWN_DEG, UNIT_DEGREE);
+  dxl.setGoalPosition(ARM_ID_B, ARM_DOWN_DEG, UNIT_DEGREE);
+  delay(3000);
 }
 
 // ── 팔 올리기 (바스켓 투하 위치) ────────────────────────
 void armUp() {
-  dxl.setGoalPosition(ARM_ID_A, ARM_UP_RAW, UNIT_RAW);
-  dxl.setGoalPosition(ARM_ID_B, ARM_UP_RAW, UNIT_RAW);
-  delay(1200);
+  dxl.setGoalPosition(ARM_ID_A, ARM_UP_DEG, UNIT_DEGREE);
+  dxl.setGoalPosition(ARM_ID_B, ARM_UP_DEG, UNIT_DEGREE);
+  delay(3000);
 }
 
 // ── 바스켓 닫기 ──────────────────────────────────────────
 void containerClose() {
-  dxl.setGoalPosition(CONT_ID_A, CONTAINER_CLOSED_RAW, UNIT_RAW);
-  dxl.setGoalPosition(CONT_ID_B, CONTAINER_CLOSED_RAW, UNIT_RAW);
-  delay(800);
+  dxl.setGoalPosition(CONT_ID_A, CONT_A_CLOSED, UNIT_DEGREE);
+  dxl.setGoalPosition(CONT_ID_B, CONT_B_CLOSED, UNIT_DEGREE);
+  delay(3000);
 }
 
 // ── 바스켓 열기 (합판 아래로 젖힘) ─────────────────────
 void containerOpen() {
-  dxl.setGoalPosition(CONT_ID_A, CONTAINER_OPEN_RAW, UNIT_RAW);
-  dxl.setGoalPosition(CONT_ID_B, CONTAINER_OPEN_RAW, UNIT_RAW);
-  delay(1500);
+  dxl.setGoalPosition(CONT_ID_A, CONT_A_OPEN, UNIT_DEGREE);
+  dxl.setGoalPosition(CONT_ID_B, CONT_B_OPEN, UNIT_DEGREE);
+  delay(3000);
 }
