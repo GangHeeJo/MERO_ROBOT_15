@@ -52,12 +52,6 @@ void initArm(uint8_t id, bool reverse) {
   Serial.println("°");
 }
 
-void moveTo(uint8_t id, float deg, const char* label) {
-  Serial.print(label); Serial.print(" ID="); Serial.print(id);
-  Serial.print(" -> "); Serial.print(deg); Serial.println("°");
-  dxl.setGoalPosition(id, deg, UNIT_DEGREE);
-}
-
 void initCont(uint8_t id, bool reverse) {
   if (!dxl.ping(id)) {
     Serial.print("ping 실패 ID="); Serial.println(id);
