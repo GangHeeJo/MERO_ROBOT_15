@@ -34,7 +34,7 @@ import time
 import threading
 import serial
 from enum import Enum
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from ultralytics import YOLO
 
 # ── 인수 파싱 ───────────────────────────────────────────
@@ -50,9 +50,6 @@ TARGET_CLS    = set(args.cls) if args.cls else None
 TEST_MODE     = args.test
 SHAPE_CLASSES = {'d6', 'd8', 'd12', 'd20'}
 FRUIT_CLASSES = {'apple', 'banana', 'orange', 'pineapple'}
-
-def max_count(cls: str) -> int:
-    return 4 if cls in SHAPE_CLASSES else 3
 
 # ── 모델 로드 ────────────────────────────────────────────
 BASE_DIR        = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -107,8 +104,6 @@ def select_target(objects: list) -> dict | None:
     filtered = []
     for o in objects:
         if TARGET_CLS and o['cls'] not in TARGET_CLS:
-            continue
-        if pickup_counts.get(o['cls'], 0) >= max_count(o['cls']):
             continue
         threshold = CONF_THRESHOLD_FRUIT if o['cls'] in FRUIT_CLASSES else CONF_THRESHOLD_SHAPE
         if o['conf'] >= threshold:
@@ -195,7 +190,6 @@ storage_enter_time  = 0.0
 confirm_count       = 0
 last_target_id      = -1
 gripped_cls         = None
-pickup_counts       = {}   # {cls: 바스켓에 넣은 개수}
 
 # IMU
 imu_yaw       = None
@@ -426,7 +420,7 @@ class _MJPEGHandler(BaseHTTPRequestHandler):
         pass
 
 threading.Thread(
-    target=lambda: HTTPServer(('0.0.0.0', 8080), _MJPEGHandler).serve_forever(),
+    target=lambda: ThreadingHTTPServer(('0.0.0.0', 8080), _MJPEGHandler).serve_forever(),
     daemon=True
 ).start()
 print("[스트림] http://172.20.10.5:8080 에서 카메라 확인 가능")
@@ -538,7 +532,6 @@ try:
             else:
                 control_wheels(None, override_l=-SEARCH_ROTATE_SPEED, override_r=SEARCH_ROTATE_SPEED)
 
-            all_done = TARGET_CLS and all(pickup_counts.get(c, 0) >= max_count(c) for c in TARGET_CLS)
             if at_target:
                 confirm_count += 1
                 print(f"[타겟] 도달 확인 {confirm_count}/{CONFIRM_FRAMES}", end="\r")
@@ -550,16 +543,13 @@ try:
                     openrb_dumped      = False
                     openrb_grip_failed = False
                     send_grip(target)
+                    print(f"\n[상태] grip 전송 ({target['cls']})")
+                    if TEST_MODE:
+                        print("[테스트] 1회성 테스트 — grip 전송 후 종료")
+                        break
                     robot_state  = RobotState.GRIPPING
                     grip_sent_at = time.time()
-                    print(f"\n[상태] SEARCHING → GRIPPING (grip: {target['cls']})")
-            elif all_done:
-                control_wheels(None)
-                storage_phase       = 0
-                storage_phase_start = time.time()
-                storage_enter_time  = time.time()
-                robot_state         = RobotState.GO_TO_STORAGE
-                print(f"\n[상태] SEARCHING → GO_TO_STORAGE (전체 수집 완료)")
+                    print(f"[상태] SEARCHING → GRIPPING (grip: {target['cls']})")
             else:
                 confirm_count = 0
                 send_idle()
@@ -571,10 +561,7 @@ try:
                 openrb_gripped      = False
                 openrb_dumped       = False
                 openrb_grip_failed  = False
-                if gripped_cls:
-                    pickup_counts[gripped_cls] = pickup_counts.get(gripped_cls, 0) + 1
-                    print(f"[스코어] {gripped_cls}: {pickup_counts[gripped_cls]}/{max_count(gripped_cls)}")
-                    gripped_cls = None
+                gripped_cls = None
                 confirm_count  = 0
                 last_target_id = -1
                 robot_state    = RobotState.SEARCHING
@@ -669,7 +656,6 @@ try:
                 openrb_dumped  = False
                 confirm_count  = 0
                 last_target_id = -1
-                pickup_counts.clear()
                 robot_state = RobotState.SEARCHING
                 print(f"[상태] DROPPING → SEARCHING ({elapsed:.1f}s)")
             elif elapsed > DROP_TIMEOUT_SECS:
@@ -731,17 +717,6 @@ try:
         cv2.putText(annotated_frame, f"STATE: {robot_state.value}",
                     (10, h - 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
                     state_colors.get(robot_state, (255, 255, 255)), 2)
-
-        # 스코어 표시
-        if TARGET_CLS:
-            score_parts = [f"{c}:{pickup_counts.get(c,0)}/{max_count(c)}" for c in sorted(TARGET_CLS)]
-            all_done = all(pickup_counts.get(c, 0) >= max_count(c) for c in TARGET_CLS)
-            score_text = "  ".join(score_parts)
-            score_color = (0, 255, 255) if all_done else (255, 255, 255)
-            if all_done:
-                score_text += "  DONE!"
-            cv2.putText(annotated_frame, score_text,
-                        (w // 2 - 80, h - 50), cv2.FONT_HERSHEY_SIMPLEX, 0.65, score_color, 2)
 
         if target:
             if target.get("mx") is not None:

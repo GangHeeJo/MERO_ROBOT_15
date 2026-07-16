@@ -1,87 +1,84 @@
 /*
- * arm.ino — 팔(XL430×2) + 바스켓 힌지(XL430×2) 제어
+ * arm.ino — 팔(XL430×2, ID2 공유) + 바스켓 힌지(XL430×2, ID3 공유) 제어
  * ──────────────────────────────────────────────────────────────
  * 실행 보드: OpenRB-150 (ROBOTIS)
  *
  * 구성 (전부 XL430, 12V):
- *   팔:    ARM_ID_A=9,  ARM_ID_B=10  (한 쌍 — B는 코드에서 Reverse 설정)
- *   바스켓: CONT_ID_A=5, CONT_ID_B=6  (한 쌍 — B는 코드에서 Reverse 설정)
+ *   팔:    ID 2 — 물리 모터 2개가 같은 ID 공유, 한쪽은 Dynamixel Wizard에서
+ *                 미리 DRIVE_MODE=Reverse로 구워놓음 (코드에서 재설정 안 함)
+ *   바스켓: ID 3 — 위와 동일 구조
  *
  * dxl 인스턴스는 main.ino 에서 선언됨
+ * safeSetGoalPosition은 safety.ino에서 제공 — overload 등을 감시하며 이동하고
+ * 안전 문제가 생기면 false를 반환한다.
  */
 
 extern Dynamixel2Arduino dxl;
 
+bool safeSetGoalPosition(uint8_t id, int32_t goal_raw, uint32_t wait_ms);
+
 // ── 모터 ID ──────────────────────────────────────────────
-#define ARM_ID_A      9
-#define ARM_ID_B      10
-#define CONT_ID_A     5
-#define CONT_ID_B     6
+#define ARM_ID        2
+#define CONT_ID       3
 
-// ── 팔 위치 (도, 실측) ───────────────────────────────────
-#define ARM_DOWN_DEG   132.25f   // 집기 위치
-#define ARM_UP_DEG     245.0f    // 투하 위치
+// ── 팔 위치 (raw, 0~4095, 실측) ───────────────────────────
+#define ARM_DOWN_RAW   1480   // 집기 위치
+#define ARM_UP_RAW     2850   // 투하 위치
 
-// ── 바스켓 위치 (도, 실측) ───────────────────────────────
-#define CONT_A_CLOSED  179.30f   // ID5 닫힘
-#define CONT_A_OPEN     94.75f   // ID5 열림
-#define CONT_B_CLOSED  266.92f   // ID6 닫힘
-#define CONT_B_OPEN    353.14f   // ID6 열림
+// ── 바스켓 위치 (raw, 0~4095, 실측) ───────────────────────
+#define CONT_CLOSED_RAW  2100
+#define CONT_OPEN_RAW    1000
 
 // ── 토크 제한 (%) ────────────────────────────────────────
 #define ARM_TORQUE_PCT       80
 #define CONTAINER_TORQUE_PCT 60
 
+// ── 속도 (Profile Velocity, 낮을수록 느림) ───────────────
+#define ARM_SPEED       40
+#define CONTAINER_SPEED 40
+
 // ── 모터 한 개 초기화 헬퍼 ───────────────────────────────
-static void _initOne(uint8_t id, int pwmLimit, bool reverse) {
+// DRIVE_MODE는 Wizard에서 이미 설정됨 — 여기서 건드리면 같은 ID를 공유하는
+// 두 물리 모터 모두 같은 값으로 덮어써져 reverse 구분이 깨지므로 절대 쓰지 않는다.
+static void _initOne(uint8_t id, int pwmLimit, int speed) {
   if (!dxl.ping(id)) {
     Serial.print("[팔] 초기화 실패 ID="); Serial.println(id);
     return;
   }
   dxl.torqueOff(id);
-  dxl.writeControlTableItem(ControlTableItem::DRIVE_MODE, id, reverse ? 1 : 0);
   dxl.setOperatingMode(id, OP_POSITION);
   dxl.writeControlTableItem(ControlTableItem::PWM_LIMIT, id, pwmLimit);
   dxl.torqueOn(id);
+  dxl.writeControlTableItem(ControlTableItem::PROFILE_VELOCITY, id, speed);
 }
 
 // ── 초기화 ───────────────────────────────────────────────
 void armSetup() {
   int armLimit  = 885 * ARM_TORQUE_PCT  / 100;
   int contLimit = 885 * CONTAINER_TORQUE_PCT / 100;
-  _initOne(ARM_ID_A,  armLimit,  false);
-  _initOne(ARM_ID_B,  armLimit,  true);   // 반대쪽 모터 Reverse
-  _initOne(CONT_ID_A, contLimit, false);
-  _initOne(CONT_ID_B, contLimit, false);
+  _initOne(ARM_ID,  armLimit,  ARM_SPEED);
+  _initOne(CONT_ID, contLimit, CONTAINER_SPEED);
   containerClose();
   armDown();
   Serial.println("[팔] 초기화 완료 (팔 내림 + 바스켓 닫힘)");
 }
 
 // ── 팔 내리기 (집기 위치) ────────────────────────────────
-void armDown() {
-  dxl.setGoalPosition(ARM_ID_A, ARM_DOWN_DEG, UNIT_DEGREE);
-  dxl.setGoalPosition(ARM_ID_B, ARM_DOWN_DEG, UNIT_DEGREE);
-  delay(3000);
+bool armDown() {
+  return safeSetGoalPosition(ARM_ID, ARM_DOWN_RAW, 3000);
 }
 
 // ── 팔 올리기 (바스켓 투하 위치) ────────────────────────
-void armUp() {
-  dxl.setGoalPosition(ARM_ID_A, ARM_UP_DEG, UNIT_DEGREE);
-  dxl.setGoalPosition(ARM_ID_B, ARM_UP_DEG, UNIT_DEGREE);
-  delay(3000);
+bool armUp() {
+  return safeSetGoalPosition(ARM_ID, ARM_UP_RAW, 3000);
 }
 
 // ── 바스켓 닫기 ──────────────────────────────────────────
-void containerClose() {
-  dxl.setGoalPosition(CONT_ID_A, CONT_A_CLOSED, UNIT_DEGREE);
-  dxl.setGoalPosition(CONT_ID_B, CONT_B_CLOSED, UNIT_DEGREE);
-  delay(3000);
+bool containerClose() {
+  return safeSetGoalPosition(CONT_ID, CONT_CLOSED_RAW, 3000);
 }
 
 // ── 바스켓 열기 (합판 아래로 젖힘) ─────────────────────
-void containerOpen() {
-  dxl.setGoalPosition(CONT_ID_A, CONT_A_OPEN, UNIT_DEGREE);
-  dxl.setGoalPosition(CONT_ID_B, CONT_B_OPEN, UNIT_DEGREE);
-  delay(3000);
+bool containerOpen() {
+  return safeSetGoalPosition(CONT_ID, CONT_OPEN_RAW, 3000);
 }

@@ -14,24 +14,39 @@
  *   - ID: 1
  *
  * dxl 인스턴스는 main.ino 에서 정의됨 (extern 참조)
+ * safeDelay/safeSetGoalPosition/safetyPoll은 safety.ino에서 제공
  */
 
 // dxl 인스턴스는 main.ino 에서 선언됨
 extern Dynamixel2Arduino dxl;
 
-// ── 설정값 — 실물 테스트 후 조정 ────────────────────────
+bool safeDelay(uint32_t wait_ms);
+bool safeSetGoalPosition(uint8_t id, int32_t goal_raw, uint32_t wait_ms);
+bool safetyPoll();
+
+// ── 설정값 (raw, 0~4095, 실측) ───────────────────────────
 #define GRIPPER_ID  1
 
-// TODO: 실물 테스트 후 실제 각도로 조정
-#define FINGER_OPEN_DEG   265.0f   // 실측
-#define FINGER_CLOSE_DEG  110.0f   // 실측
+#define FINGER_OPEN_RAW   2400   // 열림
+#define FINGER_CLOSE_RAW  1150   // 닫힘 (닫히는 순간 전류 피크 예상)
 
 // 파손 방지 토크 제한 (%)
 #define GRIPPER_TORQUE_LIMIT_PCT 60
 
+// 속도 (Profile Velocity, 낮을수록 느림)
+#define GRIPPER_SPEED 50
+
 // Load 기반 집기 감지 (실측: 물체 잡을 때 ~30%, 빈 손 ~0%)
 // PRESENT_LOAD 단위: 0.1% (200 = 20%)
 #define GRIP_LOAD_THRESHOLD 200
+
+// 닫힘 중 load 감지 기반 안전 정지 설정
+#define GRIPPER_CLOSE_TIMEOUT_MS       1000
+#define GRIPPER_LOAD_CHECK_INTERVAL_MS 20
+#define GRIPPER_LOAD_CONFIRM_COUNT     3
+#define GRIPPER_EXTRA_CLOSE_RAW        46
+#define GRIPPER_EXTRA_CLOSE_MS         150
+#define GRIPPER_TARGET_TOLERANCE_RAW   23
 
 // ── 초기화 ───────────────────────────────────────────────
 void gripperSetup() {
@@ -43,35 +58,96 @@ void gripperSetup() {
   dxl.setOperatingMode(GRIPPER_ID, OP_POSITION);
   dxl.writeControlTableItem(ControlTableItem::PWM_LIMIT, GRIPPER_ID, 885 * GRIPPER_TORQUE_LIMIT_PCT / 100);
   dxl.torqueOn(GRIPPER_ID);
+  dxl.writeControlTableItem(ControlTableItem::PROFILE_VELOCITY, GRIPPER_ID, GRIPPER_SPEED);
   gripperOpen();
   Serial.println("[그리퍼] ✅ 초기화 완료 (열림 상태)");
 }
 
 // ── 그리퍼 열기 ──────────────────────────────────────────
-void gripperOpen() {
-  dxl.setGoalPosition(GRIPPER_ID, FINGER_OPEN_DEG, UNIT_DEGREE);
-  delay(600);
-  Serial.println("[그리퍼] 열림");
+bool gripperOpen() {
+  bool ok = safeSetGoalPosition(GRIPPER_ID, FINGER_OPEN_RAW, 600);
+  if (ok) {
+    Serial.println("[그리퍼] 열림");
+  }
+  return ok;
 }
 
 // ── 그리퍼 닫기 — 성공 여부 반환 ────────────────────────
-// true: load 임계값 초과 → 물체 잡음
-// false: load 낮음 → 빈 손으로 닫힘 (미스)
+// true: load 임계값 초과 → 물체 잡음 (접촉 위치에서 살짝 더 조인 뒤 유지)
+// false: load 낮음 → 빈 손으로 닫힘 (미스) 또는 safety 개입으로 중단
 bool gripperClose() {
-  dxl.setGoalPosition(GRIPPER_ID, FINGER_CLOSE_DEG, UNIT_DEGREE);
-  delay(600);
+  if (safetyPoll()) return false;
 
-  int32_t load = dxl.readControlTableItem(
-    ControlTableItem::PRESENT_LOAD,
-    GRIPPER_ID
-  );
+  // 최종 닫힘 위치까지 이동을 명령하되, 이동 중 load를 계속 확인해서
+  // 물체가 잡히면 끝까지 밀어붙이지 않고 중간에 멈춘다.
+  dxl.setGoalPosition(GRIPPER_ID, FINGER_CLOSE_RAW, UNIT_RAW);
 
-  int32_t abs_load = load < 0 ? -load : load;
-  bool gripped = abs_load >= GRIP_LOAD_THRESHOLD;
+  uint32_t start_ms = millis();
+  uint8_t load_confirm_count = 0;
 
-  Serial.print("[그리퍼] 닫힘 — 부하: ");
-  Serial.print(load);
-  Serial.println(gripped ? " (잡음)" : " (미스, 임계값 미달)");
+  while (millis() - start_ms < GRIPPER_CLOSE_TIMEOUT_MS) {
+    if (safetyPoll()) return false;
 
-  return gripped;
+    int32_t load = dxl.readControlTableItem(
+      ControlTableItem::PRESENT_LOAD,
+      GRIPPER_ID
+    );
+
+    int32_t abs_load = load < 0 ? -load : load;
+    int32_t current_raw = dxl.getPresentPosition(GRIPPER_ID, UNIT_RAW);
+
+    // 순간적인 충격이나 노이즈를 피하기 위해 연속 기준을 둔다.
+    if (abs_load >= GRIP_LOAD_THRESHOLD) {
+      load_confirm_count++;
+    } else {
+      load_confirm_count = 0;
+    }
+
+    if (load_confirm_count >= GRIPPER_LOAD_CONFIRM_COUNT) {
+      int32_t squeeze_goal_raw;
+
+      // FINGER_CLOSE_RAW < FINGER_OPEN_RAW면 닫힘 방향은 raw 감소 방향이다.
+      if (FINGER_CLOSE_RAW < FINGER_OPEN_RAW) {
+        squeeze_goal_raw = current_raw - GRIPPER_EXTRA_CLOSE_RAW;
+        if (squeeze_goal_raw < FINGER_CLOSE_RAW) {
+          squeeze_goal_raw = FINGER_CLOSE_RAW;
+        }
+      } else {
+        squeeze_goal_raw = current_raw + GRIPPER_EXTRA_CLOSE_RAW;
+        if (squeeze_goal_raw > FINGER_CLOSE_RAW) {
+          squeeze_goal_raw = FINGER_CLOSE_RAW;
+        }
+      }
+
+      dxl.setGoalPosition(GRIPPER_ID, squeeze_goal_raw, UNIT_RAW);
+      if (!safeDelay(GRIPPER_EXTRA_CLOSE_MS)) return false;
+
+      // 실제 도달 위치를 hold 목표로 다시 설정해서 최종 닫힘 위치까지 계속 밀지 않게 한다.
+      int32_t hold_raw = dxl.getPresentPosition(GRIPPER_ID, UNIT_RAW);
+      dxl.setGoalPosition(GRIPPER_ID, hold_raw, UNIT_RAW);
+
+      Serial.print("[그리퍼] 잡음 — load: ");
+      Serial.print(load);
+      Serial.print(", contact raw: ");
+      Serial.print(current_raw);
+      Serial.print(", squeeze goal raw: ");
+      Serial.print(squeeze_goal_raw);
+      Serial.print(", hold raw: ");
+      Serial.println(hold_raw);
+
+      return true;
+    }
+
+    int32_t err = current_raw - FINGER_CLOSE_RAW;
+    if (err < 0) err = -err;
+
+    if (err <= GRIPPER_TARGET_TOLERANCE_RAW && millis() - start_ms > 200) {
+      break;
+    }
+
+    if (!safeDelay(GRIPPER_LOAD_CHECK_INTERVAL_MS)) return false;
+  }
+
+  Serial.println("[그리퍼] 미스 — load 임계값 미달");
+  return false;
 }
