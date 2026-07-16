@@ -19,22 +19,26 @@ using namespace ControlTableItem;
 Dynamixel2Arduino dxl(DXL_SERIAL, DXL_DIR_PIN);
 
 #define GRIPPER_ID    1
-#define ARM_ID        2
-#define CONTAINER_ID  3
+#define ARM_ID_A      9
+#define ARM_ID_B      10
+#define CONT_ID_A     5
+#define CONT_ID_B     6
 
 #define GRIPPER_DELTA   30    // 그리퍼: ±30° (살짝)
 #define ARM_DELTA       100   // 팔: ±100 raw (~8.8°)
 #define CONTAINER_DELTA 100   // 바스켓: ±100 raw (~8.8°)
 
-void initMotor(uint8_t id) {
+void initMotor(uint8_t id, bool reverse) {
   if (!dxl.ping(id)) {
     Serial.print("ping 실패 ID="); Serial.println(id);
     return;
   }
   dxl.torqueOff(id);
+  dxl.writeControlTableItem(DRIVE_MODE, id, reverse ? 1 : 0);
   dxl.setOperatingMode(id, OP_POSITION);
   dxl.torqueOn(id);
   Serial.print("ID "); Serial.print(id);
+  Serial.print(reverse ? " (Reverse)" : " (Normal)");
   Serial.print(" 현재 위치(raw)=");
   Serial.println(dxl.getPresentPosition(id, UNIT_RAW));
 }
@@ -45,7 +49,7 @@ void moveDelta(uint8_t id, int delta, int waitMs, const char* label) {
   if (target < 0) target = 0;
   Serial.print(label);
   Serial.print(" ID="); Serial.print(id);
-  Serial.print(" "); Serial.print(cur); Serial.print(" → "); Serial.println(target);
+  Serial.print(" "); Serial.print(cur); Serial.print(" -> "); Serial.println(target);
   dxl.setGoalPosition(id, target, UNIT_RAW);
   delay(waitMs);
 }
@@ -56,9 +60,11 @@ void setup() {
   dxl.setPortProtocolVersion(2.0f);
 
   Serial.println("=== 모터 초기화 ===");
-  initMotor(GRIPPER_ID);
-  initMotor(ARM_ID);
-  initMotor(CONTAINER_ID);
+  initMotor(GRIPPER_ID, false);
+  initMotor(ARM_ID_A,   false);
+  initMotor(ARM_ID_B,   true);   // 반대쪽 모터 Reverse
+  initMotor(CONT_ID_A,  false);
+  initMotor(CONT_ID_B,  true);   // 반대쪽 모터 Reverse
   delay(1000);
 
   Serial.println("\n=== 시퀀스 시작 (조금씩만 이동) ===");
@@ -70,16 +76,20 @@ void setup() {
   moveDelta(GRIPPER_ID, -GRIPPER_DELTA, 1000, "그리퍼 닫기");
 
   Serial.println("[3] 팔 올리기 방향");
-  moveDelta(ARM_ID, +ARM_DELTA, 1200, "팔 올리기");
+  moveDelta(ARM_ID_A, +ARM_DELTA, 50, "팔A 올리기");
+  moveDelta(ARM_ID_B, +ARM_DELTA, 1200, "팔B 올리기");
 
   Serial.println("[4] 팔 내리기 방향");
-  moveDelta(ARM_ID, -ARM_DELTA, 1200, "팔 내리기");
+  moveDelta(ARM_ID_A, -ARM_DELTA, 50, "팔A 내리기");
+  moveDelta(ARM_ID_B, -ARM_DELTA, 1200, "팔B 내리기");
 
   Serial.println("[5] 바스켓 열기 방향");
-  moveDelta(CONTAINER_ID, +CONTAINER_DELTA, 1200, "바스켓 열기");
+  moveDelta(CONT_ID_A, +CONTAINER_DELTA, 50, "바스켓A 열기");
+  moveDelta(CONT_ID_B, +CONTAINER_DELTA, 1200, "바스켓B 열기");
 
   Serial.println("[6] 바스켓 닫기 방향");
-  moveDelta(CONTAINER_ID, -CONTAINER_DELTA, 1200, "바스켓 닫기");
+  moveDelta(CONT_ID_A, -CONTAINER_DELTA, 50, "바스켓A 닫기");
+  moveDelta(CONT_ID_B, -CONTAINER_DELTA, 1200, "바스켓B 닫기");
 
   Serial.println("\n=== 완료. Serial Monitor에서 각 위치 확인 ===");
 }
