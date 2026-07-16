@@ -31,7 +31,7 @@ Dynamixel2Arduino dxl(DXL_SERIAL, DXL_DIR_PIN);
 // ── 컨테이너 위치 (도, 실측) ─────────────────────────────
 #define CONT_A_OPEN    94.75f   // ID5 열림
 #define CONT_A_CLOSED  179.30f  // ID5 닫힘
-#define CONT_B_OPEN    4.26f    // ID6 열림
+#define CONT_B_OPEN    4.22f    // ID6 열림
 #define CONT_B_CLOSED  88.95f   // ID6 닫힘
 
 #define ARM_SPEED     30        // Profile Velocity (낮을수록 느림, 0=최대)
