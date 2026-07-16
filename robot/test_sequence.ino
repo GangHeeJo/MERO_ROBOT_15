@@ -24,9 +24,9 @@ Dynamixel2Arduino dxl(DXL_SERIAL, DXL_DIR_PIN);
 #define CONT_ID_A     5
 #define CONT_ID_B     6
 
-#define GRIPPER_DELTA   30    // 그리퍼: ±30° (살짝)
-#define ARM_DELTA       100   // 팔: ±100 raw (~8.8°)
-#define CONTAINER_DELTA 100   // 바스켓: ±100 raw (~8.8°)
+#define GRIPPER_DELTA   60    // 그리퍼: ±60°
+#define ARM_DELTA       300   // 팔: ±300 raw (~26°)
+#define CONTAINER_DELTA 300   // 바스켓: ±300 raw (~26°)
 
 void initMotor(uint8_t id, bool reverse) {
   if (!dxl.ping(id)) {
@@ -83,13 +83,13 @@ void setup() {
   moveDelta(ARM_ID_A, -ARM_DELTA, 50, "팔A 내리기");
   moveDelta(ARM_ID_B, -ARM_DELTA, 1200, "팔B 내리기");
 
-  Serial.println("[5] 바스켓 열기 방향");
-  moveDelta(CONT_ID_A, +CONTAINER_DELTA, 50, "바스켓A 열기");
-  moveDelta(CONT_ID_B, +CONTAINER_DELTA, 1200, "바스켓B 열기");
-
-  Serial.println("[6] 바스켓 닫기 방향");
+  Serial.println("[5] 바스켓 닫기 방향");
   moveDelta(CONT_ID_A, -CONTAINER_DELTA, 50, "바스켓A 닫기");
   moveDelta(CONT_ID_B, -CONTAINER_DELTA, 1200, "바스켓B 닫기");
+
+  Serial.println("[6] 바스켓 열기 방향");
+  moveDelta(CONT_ID_A, +CONTAINER_DELTA, 50, "바스켓A 열기");
+  moveDelta(CONT_ID_B, +CONTAINER_DELTA, 1200, "바스켓B 열기");
 
   Serial.println("\n=== 완료. Serial Monitor에서 각 위치 확인 ===");
 }
