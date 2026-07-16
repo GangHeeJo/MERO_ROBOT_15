@@ -28,8 +28,11 @@ Dynamixel2Arduino dxl(DXL_SERIAL, DXL_DIR_PIN);
 #define ARM_DOWN_DEG  132.25f
 #define ARM_UP_DEG    245.0f
 
-// ── 컨테이너 delta (raw) ─────────────────────────────────
-#define CONTAINER_DELTA 300     // ±300 raw (~26°)
+// ── 컨테이너 위치 (도, 실측) ─────────────────────────────
+#define CONT_A_OPEN    94.75f   // ID5 열림
+#define CONT_A_CLOSED  179.30f  // ID5 닫힘
+#define CONT_B_OPEN    4.26f    // ID6 열림
+#define CONT_B_CLOSED  88.95f   // ID6 닫힘
 
 #define ARM_SPEED     30        // Profile Velocity (낮을수록 느림, 0=최대)
 
@@ -70,13 +73,10 @@ void initCont(uint8_t id, bool reverse) {
   Serial.print("  현재(raw)="); Serial.println(dxl.getPresentPosition(id, UNIT_RAW));
 }
 
-void moveDelta(uint8_t id, int delta, const char* label) {
-  int cur    = (int)dxl.getPresentPosition(id, UNIT_RAW);
-  int target = cur + delta;
-  if (target < 0) target = 0;
+void moveTo(uint8_t id, float deg, const char* label) {
   Serial.print(label); Serial.print(" ID="); Serial.print(id);
-  Serial.print("  "); Serial.print(cur); Serial.print(" -> "); Serial.println(target);
-  dxl.setGoalPosition(id, target, UNIT_RAW);
+  Serial.print(" -> "); Serial.print(deg); Serial.println("°");
+  dxl.setGoalPosition(id, deg, UNIT_DEGREE);
 }
 
 void setup() {
@@ -86,25 +86,25 @@ void setup() {
 
   Serial.println("=== 컨테이너 초기화 ===");
   initCont(CONT_ID_A, false);
-  initCont(CONT_ID_B, true);
+  initCont(CONT_ID_B, false);
   delay(500);
 
-  Serial.println("\n[1] 컨테이너 닫기 방향");
-  moveDelta(CONT_ID_A, -CONTAINER_DELTA, "컨테이너A 닫기");
-  moveDelta(CONT_ID_B, -CONTAINER_DELTA, "컨테이너B 닫기");
+  Serial.println("\n[1] 닫기");
+  moveTo(CONT_ID_A, CONT_A_CLOSED, "ID5 닫기");
+  moveTo(CONT_ID_B, CONT_B_CLOSED, "ID6 닫기");
   delay(3000);
 
-  Serial.println("\n[2] 컨테이너 열기 방향");
-  moveDelta(CONT_ID_A, +CONTAINER_DELTA, "컨테이너A 열기");
-  moveDelta(CONT_ID_B, +CONTAINER_DELTA, "컨테이너B 열기");
+  Serial.println("\n[2] 열기");
+  moveTo(CONT_ID_A, CONT_A_OPEN, "ID5 열기");
+  moveTo(CONT_ID_B, CONT_B_OPEN, "ID6 열기");
   delay(3000);
 
-  Serial.println("\n[3] 컨테이너 다시 닫기");
-  moveDelta(CONT_ID_A, -CONTAINER_DELTA, "컨테이너A 닫기");
-  moveDelta(CONT_ID_B, -CONTAINER_DELTA, "컨테이너B 닫기");
+  Serial.println("\n[3] 다시 닫기");
+  moveTo(CONT_ID_A, CONT_A_CLOSED, "ID5 닫기");
+  moveTo(CONT_ID_B, CONT_B_CLOSED, "ID6 닫기");
   delay(3000);
 
-  Serial.println("=== 완료. Serial Monitor에서 raw 위치 확인 ===");
+  Serial.println("=== 완료 ===");
 }
 
 void loop() {}
