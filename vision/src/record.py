@@ -70,7 +70,7 @@ def extract_frames(video_path, save_dir, cls, interval):
     print(f"[extract] {saved}장 추출 완료 → {save_dir}")
 
 
-def record(cls, cam_idx, seconds, interval):
+def record(cls, cam_idx, seconds, interval, args_w=None, args_h=None):
     save_dir = get_save_dir(cls)
     os.makedirs(save_dir, exist_ok=True)
 
@@ -79,9 +79,14 @@ def record(cls, cam_idx, seconds, interval):
         print(f"카메라 {cam_idx} 열기 실패")
         return
 
+    if args_w and args_h:
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH,  args_w)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args_h)
+
     w    = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h    = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps  = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    print(f"         해상도: {w}x{h}")
 
     # 카메라 워밍업
     for _ in range(5):
@@ -151,10 +156,12 @@ def main():
     parser.add_argument('--cls',      required=True, help="클래스명 (d6/d8/d12/d20/apple/banana/orange/pineapple/flag)")
     parser.add_argument('--sec',      type=int, default=30, help="녹화 시간 초 (기본 30)")
     parser.add_argument('--interval', type=int, default=10, help="프레임 추출 간격 (기본 10, 낮을수록 이미지 많음)")
-    parser.add_argument('--cam',      type=int, default=0,  help="카메라 인덱스 (기본 0)")
+    parser.add_argument('--cam',      type=int, default=0,    help="카메라 인덱스 (기본 0)")
+    parser.add_argument('--width',    type=int, default=1920, help="녹화 해상도 너비 (기본 1920)")
+    parser.add_argument('--height',   type=int, default=1200, help="녹화 해상도 높이 (기본 1200)")
     args = parser.parse_args()
 
-    record(args.cls, args.cam, args.sec, args.interval)
+    record(args.cls, args.cam, args.sec, args.interval, args.width, args.height)
 
 
 if __name__ == '__main__':
