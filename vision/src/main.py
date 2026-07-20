@@ -69,8 +69,8 @@ else:
     print(f"[모델] flag.pt 없음 — GO_TO_STORAGE 태극기 감지 비활성화")
 
 # ── 카메라 인덱스 ────────────────────────────────────────
-CAMERA_INDEX_OBJ  = 0   # 물체 카메라 (1사분면 USB-A, USB 2.0)  ← 실제 확인 필요
-CAMERA_INDEX_FLAG = 2   # 태극기 카메라 (4사분면 USB-A, USB 3.0) ← 실제 확인 필요
+CAMERA_INDEX_OBJ  = 2   # 물체 카메라 (Arducam, 전면)
+CAMERA_INDEX_FLAG = 0   # 태극기 카메라 (NV76-CM400A, 후면)
 
 # ── 캘리브레이션 로드 ────────────────────────────────────
 CALIB_PATH   = os.path.join(BASE_DIR, "model", "calibration.json")
