@@ -179,6 +179,7 @@ ALIGN_THRESHOLD     = 0.25    # 이 이상 turn값이면 전진 없이 제자리
 TURN_ONLY_SPEED     = 0.2     # 제자리 회전 속도
 FINAL_APPROACH_SECS  = 2.0        # area 임계 도달 후 정지→직진하는 시간
 FINAL_APPROACH_SPEED = MOVE_SPEED # 직진 접근 속도
+FORWARD_TRIM = 0.02   # 직진 시 우측으로 쏠리는 것 보정 (양수=오른쪽 바퀴를 더 빠르게)
 
 # 오인식 방지
 CONFIRM_FRAMES      = 3       # 연속 N프레임 도달 조건 만족해야 grip 전송
@@ -557,7 +558,7 @@ try:
         if robot_state == RobotState.SEARCHING:
             if final_approach:
                 # area 임계 도달 직후 — 정지 상태 유지하며 정면으로 직진
-                control_wheels(None, override_l=FINAL_APPROACH_SPEED, override_r=FINAL_APPROACH_SPEED)
+                control_wheels(None, override_l=FINAL_APPROACH_SPEED - FORWARD_TRIM / 2, override_r=FINAL_APPROACH_SPEED + FORWARD_TRIM / 2)
                 elapsed_fa = time.time() - final_approach_start
                 print(f"[상태] 직진 접근중... ({elapsed_fa:.1f}s)", end="\r")
                 if elapsed_fa >= FINAL_APPROACH_SECS:
@@ -579,7 +580,7 @@ try:
 
             elif align_final_forward:
                 # cy 정렬 완료 후 1초 직진 → grip 전송 → 종료 (한 번만 수행)
-                control_wheels(None, override_l=FINAL_APPROACH_SPEED, override_r=FINAL_APPROACH_SPEED)
+                control_wheels(None, override_l=FINAL_APPROACH_SPEED - FORWARD_TRIM / 2, override_r=FINAL_APPROACH_SPEED + FORWARD_TRIM / 2)
                 elapsed_af = time.time() - align_final_forward_start
                 print(f"[테스트] 직진중... ({elapsed_af:.1f}s)", end="\r")
                 if elapsed_af >= FINAL_APPROACH_SECS:
