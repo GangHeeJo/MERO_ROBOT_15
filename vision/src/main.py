@@ -396,9 +396,9 @@ def _init_camera(index, name):
         print(f"[카메라] {name} ({index}번) 열기 실패")
         return None
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-    cap.set(cv2.CAP_PROP_FPS, 30)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1200)
+    cap.set(cv2.CAP_PROP_FPS, 50)
     ret, f = cap.read()
     if ret:
         h, w = f.shape[:2]
