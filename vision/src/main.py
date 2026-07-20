@@ -141,14 +141,16 @@ MAX_MX              = 200.0
 MAX_MY              = 150.0
 
 # 픽셀 모드 (calibration 없을 때) — bbox 면적 기반
-AREA_THRESHOLD      = 28000   # 이 면적 이상이면 "도달"로 판단 (w×h px²)
+AREA_GRIP_THRESHOLD = 35000   # 이 면적 이상이면 정지 후 직진 접근 → grip
 AREA_SLOW_THRESHOLD = 20000   # 이 면적 이상이면 감속 시작
 AREA_ROTATE_THRESHOLD = 15000 # 이 이하일 때만 제자리 회전 정렬
-CENTER_MARGIN_PX    = 120     # 픽셀 모드: 가로 중심에서 이 픽셀 이내여야 도달 인정
-CENTER_MARGIN_Y_PX  = 100     # 픽셀 모드: 세로 중심에서 이 픽셀 이내여야 도달 인정
+CENTER_MARGIN_PX    = 60      # 픽셀 모드: 가로 중심에서 이 픽셀 이내 (시각화 가이드용)
+CENTER_MARGIN_Y_PX  = 50      # 픽셀 모드: 세로 중심에서 이 픽셀 이내 (시각화 가이드용)
 CENTER_OFFSET_Y_PX  = 20      # 세로 중심 오프셋 (양수=아래)
 ALIGN_THRESHOLD     = 0.25    # 이 이상 turn값이면 전진 없이 제자리 회전 우선
 TURN_ONLY_SPEED     = 0.2     # 제자리 회전 속도
+FINAL_APPROACH_SECS  = 1.0        # area 임계 도달 후 정지→직진하는 시간
+FINAL_APPROACH_SPEED = MOVE_SPEED # 직진 접근 속도
 
 # 오인식 방지
 CONFIRM_FRAMES      = 3       # 연속 N프레임 도달 조건 만족해야 grip 전송
@@ -191,6 +193,9 @@ storage_enter_time  = 0.0
 confirm_count       = 0
 last_target_id      = -1
 gripped_cls         = None
+final_approach       = False  # True면 정지 후 직진 접근 중 (area 임계 도달~grip 전송 사이)
+final_approach_start = 0.0
+final_approach_cls   = None
 
 # IMU
 imu_yaw       = None
@@ -321,7 +326,7 @@ def _is_at_target(target: dict) -> bool:
     frame_h  = FRAME_H or 480
     cx_ok = abs(target["cx"] - frame_w / 2) <= CENTER_MARGIN_PX
     cy_ok = abs(target["cy"] - (frame_h / 2 + CENTER_OFFSET_Y_PX)) <= CENTER_MARGIN_Y_PX
-    return cx_ok and cy_ok and target.get("area", 0) >= AREA_THRESHOLD
+    return cx_ok and cy_ok and target.get("area", 0) >= AREA_GRIP_THRESHOLD
 
 
 # ── OpenRB 명령 전송 ─────────────────────────────────────
@@ -358,6 +363,7 @@ def _init_camera(index, name):
     if not cap.isOpened():
         print(f"[카메라] {name} ({index}번) 열기 실패")
         return None
+    # TODO: YUY2(비압축)라 USB 대역폭 초과로 select() timeout 발생 — MJPG로 전환 예정
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('Y', 'U', 'Y', '2'))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1200)
@@ -518,53 +524,45 @@ try:
 
         # ── 상태 머신 ──────────────────────────────────
         if robot_state == RobotState.SEARCHING:
-            if target:
-                # 클래스가 바뀔 때만 confirm_count 리셋 (ID 변경은 무시)
-                if target["cls"] != getattr(select_target, "_last_cls", None):
-                    confirm_count  = 0
-                    select_target._last_cls = target["cls"]
-
-                if target.get("mx") is not None:
-                    dist = (target["mx"] ** 2 + target["my"] ** 2) ** 0.5
-                    info = f"dist={dist:.0f}mm"
-                else:
-                    info = f"area={target['area']}"
-                frame_w = FRAME_W or 640
-                frame_h = FRAME_H or 480
-                cx_off  = abs(target["cx"] - frame_w / 2)
-                cy_off  = abs(target["cy"] - (frame_h / 2 + CENTER_OFFSET_Y_PX))
-                status = f"도달" if at_target else f"이동중 ({info}) cx={cx_off:.0f} cy={cy_off:.0f}"
-                if time.time() - _last_print_t >= 0.5:
-                    print(f"[타겟] {target['cls']} | {status}")
-                    _last_print_t = time.time()
-
-            if at_target:
-                control_wheels(None)  # 도달 시 정지 후 confirm
-            elif target:
-                control_wheels(target)
-            else:
-                control_wheels(None, override_l=-SEARCH_ROTATE_SPEED, override_r=SEARCH_ROTATE_SPEED)
-
-            if at_target:
-                confirm_count += 1
-                print(f"[타겟] 도달 확인 {confirm_count}/{CONFIRM_FRAMES}", end="\r")
-                if confirm_count >= CONFIRM_FRAMES:
-                    confirm_count  = 0
+            if final_approach:
+                # area 임계 도달 직후 — 정지 상태 유지하며 정면으로 직진
+                control_wheels(None, override_l=FINAL_APPROACH_SPEED, override_r=FINAL_APPROACH_SPEED)
+                elapsed_fa = time.time() - final_approach_start
+                print(f"[상태] 직진 접근중... ({elapsed_fa:.1f}s)", end="\r")
+                if elapsed_fa >= FINAL_APPROACH_SECS:
+                    control_wheels(None)
+                    final_approach = False
                     last_target_id = -1
-                    gripped_cls    = target["cls"]
+                    gripped_cls    = final_approach_cls
                     openrb_gripped     = False
                     openrb_dumped      = False
                     openrb_grip_failed = False
-                    send_grip(target)
-                    print(f"\n[상태] grip 전송 ({target['cls']})")
+                    send_grip({"cls": final_approach_cls})
+                    print(f"\n[상태] grip 전송 ({final_approach_cls})")
                     if TEST_MODE:
                         print("[테스트] 1회성 테스트 — grip 전송 후 종료")
                         break
                     robot_state  = RobotState.GRIPPING
                     grip_sent_at = time.time()
-                    print(f"[상태] SEARCHING → GRIPPING (grip: {target['cls']})")
+                    print(f"[상태] SEARCHING → GRIPPING (grip: {final_approach_cls})")
+
+            elif target:
+                if time.time() - _last_print_t >= 0.5:
+                    print(f"[타겟] {target['cls']} | area={target['area']}")
+                    _last_print_t = time.time()
+
+                if at_target:
+                    # area 임계 최초 도달 — 정지 후 직진 접근 단계 진입
+                    control_wheels(None)
+                    final_approach       = True
+                    final_approach_start = time.time()
+                    final_approach_cls   = target["cls"]
+                    print(f"\n[상태] 목표 크기 도달 (area={target['area']}) → 직진 접근 시작")
+                else:
+                    control_wheels(target)
+
             else:
-                confirm_count = 0
+                control_wheels(None, override_l=-SEARCH_ROTATE_SPEED, override_r=SEARCH_ROTATE_SPEED)
                 send_idle()
 
         elif robot_state == RobotState.GRIPPING:
