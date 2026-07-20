@@ -13,12 +13,14 @@
  *   {"cmd":"grip", "cls":"d8"}  ← 집기 → 팔 올려 컨테이너 투하 → 팔 내림
  *   {"cmd":"dump"}              ← 컨테이너 열어서 쏟기 (도착 지점)
  *   {"cmd":"idle"}              ← 대기
+ *   {"cmd":"start"}             ← 경기 시작 — 전원 켤 때 시작 크기 규정으로 올려둔 팔을 내림
  *   {"cmd":"reset_fault"}       ← safety.ino가 fatal fault로 멈춘 뒤 사람이 확인하고 재개할 때
  *
  * OpenRB가 보내는 응답:
  *   {"status":"gripped"}         ← 집기+투하+복귀 완료 (Python → SEARCHING 복귀)
  *   {"status":"grip_failed"}     ← 전류 미달, 집기 실패 (Python → SEARCHING 복귀)
  *   {"status":"dumped"}          ← 컨테이너 열기 완료 (Python → SEARCHING 복귀)
+ *   {"status":"started"}         ← start 명령으로 팔 내리기 완료
  *   {"status":"motor_fault"}     ← 과열/전압/충격/엔코더 등 자동복구 불가 (reset_fault 필요)
  *   {"status":"motor_recovered"} ← overload 자동복구 성공, 현재 동작은 중단하고 IDLE 복귀
  *   {"status":"motion_aborted"}  ← 위 두 경우 외 safety 개입으로 동작 중단
@@ -145,6 +147,16 @@ void parseCommand(const String& json) {
   if (strcmp(cmd, "dump") == 0 && currentState == IDLE) {
     currentState = DUMPING;
     JETSON_SERIAL.println("[OpenRB] dump → DUMPING");
+    return;
+  }
+
+  // 경기 시작 — 시작 크기 규정 때문에 올려둔 팔을 정상 동작 위치(내림)로 내린다.
+  if (strcmp(cmd, "start") == 0 && currentState == IDLE) {
+    if (!armDown()) {
+      sendSafetyAbortStatus("arm_down_on_start");
+      return;
+    }
+    JETSON_SERIAL.println("{\"status\":\"started\"}");
     return;
   }
 }

@@ -386,6 +386,12 @@ def send_dump():
         return
     ser_openrb.write((json.dumps({"cmd": "dump"}) + "\n").encode())
 
+def send_start():
+    """경기 시작 — 전원 켤 때 시작 크기 규정으로 올려둔 팔을 내림."""
+    if ser_openrb is None or not ser_openrb.is_open:
+        return
+    ser_openrb.write((json.dumps({"cmd": "start"}) + "\n").encode())
+
 _last_idle_t = 0.0
 def send_idle():
     global _last_idle_t
@@ -490,6 +496,8 @@ fps_display = 0.0
 fps_timer   = time.time()
 _last_print_t = 0.0
 frame = None  # 최초 루프 진입 전 초기화
+
+send_start()  # 시작 크기 규정으로 올려둔 팔을 내림 (전진 시작과 함께)
 
 # ── 메인 루프 ────────────────────────────────────────────
 try:
