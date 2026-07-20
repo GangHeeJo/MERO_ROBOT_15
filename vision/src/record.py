@@ -151,6 +151,50 @@ def record(cls, cam_idx, seconds, interval, args_w=None, args_h=None):
     extract_frames(video_path, save_dir, cls, interval)
 
 
+def shutter(cls, cam_idx, args_w=None, args_h=None):
+    """Enter 누를 때마다 사진 한 장씩 촬영 (Ctrl+C로 종료)."""
+    save_dir = get_save_dir(cls)
+    os.makedirs(save_dir, exist_ok=True)
+
+    cap = cv2.VideoCapture(cam_idx)
+    if not cap.isOpened():
+        print(f"카메라 {cam_idx} 열기 실패")
+        return
+
+    if args_w and args_h:
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH,  args_w)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args_h)
+
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    print(f"         해상도: {w}x{h}")
+
+    # 카메라 워밍업
+    for _ in range(5):
+        cap.read()
+
+    start_num = next_frame_num(save_dir, cls)
+    frame_num = start_num
+    print(f"\n[shutter] 클래스:{cls}  카메라:{cam_idx}  저장위치:{save_dir}")
+    print("[shutter] Enter를 누르면 한 장씩 촬영, Ctrl+C로 종료")
+
+    try:
+        while True:
+            input(f"  [{frame_num}번째] Enter로 촬영...")
+            ret, frame = cap.read()
+            if not ret:
+                print("프레임 읽기 실패")
+                continue
+            save_path = os.path.join(save_dir, f"{cls}_{frame_num:05d}.jpg")
+            cv2.imwrite(save_path, frame)
+            print(f"  ✅ 저장: {save_path}")
+            frame_num += 1
+    except KeyboardInterrupt:
+        print(f"\n[shutter] 종료 — 총 {frame_num - start_num}장 촬영")
+
+    cap.release()
+
+
 def main():
     parser = argparse.ArgumentParser(description="클래스별 영상 녹화 + 프레임 추출")
     parser.add_argument('--cls',      required=True, help="클래스명 (d6/d8/d12/d20/apple/banana/orange/pineapple/flag)")
@@ -159,9 +203,13 @@ def main():
     parser.add_argument('--cam',      type=int, default=0,    help="카메라 인덱스 (기본 0)")
     parser.add_argument('--width',    type=int, default=1920, help="녹화 해상도 너비 (기본 1920)")
     parser.add_argument('--height',   type=int, default=1200, help="녹화 해상도 높이 (기본 1200)")
+    parser.add_argument('--shutter',  action='store_true', help="Enter 누를 때마다 사진 한 장씩 촬영 (영상 녹화 대신)")
     args = parser.parse_args()
 
-    record(args.cls, args.cam, args.sec, args.interval, args.width, args.height)
+    if args.shutter:
+        shutter(args.cls, args.cam, args.width, args.height)
+    else:
+        record(args.cls, args.cam, args.sec, args.interval, args.width, args.height)
 
 
 if __name__ == '__main__':
