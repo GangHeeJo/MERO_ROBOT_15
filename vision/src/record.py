@@ -31,7 +31,7 @@ FRUIT_CLASSES = {'apple', 'banana', 'orange', 'pineapple'}
 def get_save_dir(cls):
     if cls in SHAPE_CLASSES:
         return os.path.join(DATASET_DIR, "shape-based", cls)
-    elif cls in FRUIT_CLASSES:
+    elif cls in FRUIT_CLASSES or cls == "mixed":
         return os.path.join(DATASET_DIR, "image-based", cls)
     else:
         return os.path.join(DATASET_DIR, cls)
