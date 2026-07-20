@@ -200,6 +200,7 @@ gripped_cls         = None
 final_approach       = False  # True면 정지 후 직진 접근 중 (area 임계 도달~grip 전송 사이)
 final_approach_start = 0.0
 final_approach_cls   = None
+align_phase          = 0      # --align-only 전용: 0=회전으로 좌우(cx) 정렬, 1=전진/후진으로 상하(cy) 정렬
 
 # IMU
 imu_yaw       = None
@@ -550,16 +551,38 @@ try:
                     print(f"[상태] SEARCHING → GRIPPING (grip: {final_approach_cls})")
 
             elif target and ALIGN_ONLY:
-                # 방향(좌우 회전) 검증 전용: 전진 없이 제자리 회전만으로 가로(cx) 정렬
-                frame_w    = FRAME_W or 640
-                turn       = max(-1.0, min(1.0, (target["cx"] - (frame_w / 2 + CENTER_OFFSET_X_PX)) / (frame_w / 2)))
-                cx_aligned = abs(target["cx"] - (frame_w / 2 + CENTER_OFFSET_X_PX)) <= CENTER_MARGIN_PX
-                if cx_aligned:
-                    control_wheels(None)
-                    print(f"[테스트] 좌우 정렬 완료 (cx={target['cx']:.0f}) — 정지 (--align-only)", end="\r")
+                # 방향 검증 전용: 1단계 제자리 회전(좌우 cx) → 2단계 직진/후진(상하 cy). 회전과 전진을 분리.
+                frame_w = FRAME_W or 640
+                frame_h = FRAME_H or 480
+                cx_ref  = frame_w / 2 + CENTER_OFFSET_X_PX
+                cy_ref  = frame_h / 2 + CENTER_OFFSET_Y_PX
+                cx_aligned = abs(target["cx"] - cx_ref) <= CENTER_MARGIN_PX
+                cy_aligned = abs(target["cy"] - cy_ref) <= CENTER_MARGIN_Y_PX
+
+                if align_phase == 0:
+                    if cx_aligned:
+                        control_wheels(None)
+                        align_phase = 1
+                        print(f"\n[테스트] 좌우 정렬 완료 (cx={target['cx']:.0f}) → 전후 정렬 시작")
+                    else:
+                        turn = max(-1.0, min(1.0, (target["cx"] - cx_ref) / (frame_w / 2)))
+                        control_wheels(None, override_l=TURN_ONLY_SPEED * turn, override_r=-TURN_ONLY_SPEED * turn)
+                        print(f"[테스트] 회전 정렬중... cx={target['cx']:.0f}", end="\r")
+
                 else:
-                    control_wheels(None, override_l=TURN_ONLY_SPEED * turn, override_r=-TURN_ONLY_SPEED * turn)
-                    print(f"[테스트] 회전 정렬중... cx={target['cx']:.0f}", end="\r")
+                    if not cx_aligned:
+                        # 전후 이동 중 좌우가 틀어지면 회전 단계로 복귀
+                        align_phase = 0
+                    elif cy_aligned:
+                        control_wheels(None)
+                        print(f"[테스트] 상하 정렬 완료 (cy={target['cy']:.0f}) — 정지 (--align-only)", end="\r")
+                    else:
+                        # cy_ref보다 위(작음)=목표가 더 멀리 있음 → 전진, 아래(큼)=너무 가까움 → 후진
+                        # (카메라 장착 각도 기준 가정 — 방향 반대면 부호만 뒤집으면 됨)
+                        fwd = SLOW_SPEED if target["cy"] < cy_ref else -SLOW_SPEED
+                        control_wheels(None, override_l=fwd, override_r=fwd)
+                        direction = "전진" if fwd > 0 else "후진"
+                        print(f"[테스트] {direction} 정렬중... cy={target['cy']:.0f}", end="\r")
 
             elif target:
                 if time.time() - _last_print_t >= 0.5:
@@ -577,6 +600,7 @@ try:
                     control_wheels(target)
 
             else:
+                align_phase = 0
                 control_wheels(None, override_l=-SEARCH_ROTATE_SPEED, override_r=SEARCH_ROTATE_SPEED)
                 send_idle()
 

@@ -27,7 +27,7 @@ bool safetyPoll();
 // ── 설정값 (raw, 0~4095, 실측) ───────────────────────────
 #define GRIPPER_ID  1
 
-#define FINGER_OPEN_RAW   2400   // 열림
+#define FINGER_OPEN_RAW   2600   // 열림 (기존 2400에서 확대 — 기계적 한계 실물 확인 필요)
 #define FINGER_CLOSE_RAW  1150   // 닫힘 (닫히는 순간 전류 피크 예상)
 
 // 파손 방지 토크 제한 (%)
