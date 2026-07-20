@@ -177,7 +177,7 @@ CENTER_OFFSET_Y_PX  = 220     # 세로 중심 오프셋 (양수=아래)
 CENTER_OFFSET_X_PX  = 0       # 가로 중심 오프셋 (양수=오른쪽)
 ALIGN_THRESHOLD     = 0.25    # 이 이상 turn값이면 전진 없이 제자리 회전 우선
 TURN_ONLY_SPEED     = 0.2     # 제자리 회전 속도
-FINAL_APPROACH_SECS  = 1.5        # area 임계 도달 후 정지→직진하는 시간
+FINAL_APPROACH_SECS  = 2.0        # area 임계 도달 후 정지→직진하는 시간
 FINAL_APPROACH_SPEED = MOVE_SPEED # 직진 접근 속도
 
 # 오인식 방지
