@@ -201,6 +201,8 @@ final_approach       = False  # True면 정지 후 직진 접근 중 (area 임�
 final_approach_start = 0.0
 final_approach_cls   = None
 align_phase          = 0      # --align-only 전용: 0=회전으로 좌우(cx) 정렬, 1=전진/후진으로 상하(cy) 정렬
+align_final_forward       = False  # --align-only 전용: cy 정렬 완료 후 1초 직진 중 (grip 없음)
+align_final_forward_start = 0.0
 
 # IMU
 imu_yaw       = None
@@ -550,6 +552,16 @@ try:
                     grip_sent_at = time.time()
                     print(f"[상태] SEARCHING → GRIPPING (grip: {final_approach_cls})")
 
+            elif align_final_forward:
+                # cy 정렬 완료 후 1초 직진만 하고 정지 (grip 없음)
+                control_wheels(None, override_l=FINAL_APPROACH_SPEED, override_r=FINAL_APPROACH_SPEED)
+                elapsed_af = time.time() - align_final_forward_start
+                print(f"[테스트] 직진중... ({elapsed_af:.1f}s)", end="\r")
+                if elapsed_af >= FINAL_APPROACH_SECS:
+                    control_wheels(None)
+                    align_final_forward = False
+                    print(f"\n[테스트] 직진 완료 — 정지 (--align-only)")
+
             elif target and ALIGN_ONLY:
                 # 방향 검증 전용: 1단계 제자리 회전(좌우 cx) → 2단계 직진/후진(상하 cy). 회전과 전진을 분리.
                 frame_w = FRAME_W or 640
@@ -575,11 +587,10 @@ try:
                         align_phase = 0
                     elif cy_aligned:
                         control_wheels(None)
-                        align_phase           = 0
-                        final_approach        = True
-                        final_approach_start  = time.time()
-                        final_approach_cls    = target["cls"]
-                        print(f"\n[테스트] 상하 정렬 완료 (cy={target['cy']:.0f}) → 직진 접근 시작")
+                        align_phase                = 0
+                        align_final_forward        = True
+                        align_final_forward_start  = time.time()
+                        print(f"\n[테스트] 상하 정렬 완료 (cy={target['cy']:.0f}) → 1초 직진")
                     else:
                         # cy_ref보다 위(작음)=목표가 더 멀리 있음 → 전진, 아래(큼)=너무 가까움 → 후진
                         # (카메라 장착 각도 기준 가정 — 방향 반대면 부호만 뒤집으면 됨)
