@@ -7,13 +7,16 @@ MERO_AI_ROBOT 메인 실행 파일
   - calibration.json 있음 → mm 기반 거리 판단 (정확)
   - calibration.json 없음 → bbox 면적 기반 판단 (캘리브 전 테스트용)
 
-상태 머신:
+상태 머신 (시간 기반, 개수 카운트 안 함):
   SEARCHING      — 타겟 탐지 + 이동, 도달 시 grip 전송
+                   → 경기 시작 후 PICK_PHASE_SECS(2분30초) 지나면 즉시 GO_TO_STORAGE
   GRIPPING       — grip 전송 후 gripped 신호 대기 (집기+팔올림+투하+팔내림 완료)
-                   → gripped 수신 시 SEARCHING 복귀 (반복 수집)
-                   → 모든 타겟 수집 완료 시 GO_TO_STORAGE
-  GO_TO_STORAGE  — 바퀴로 보관함까지 고정 경로 이동 → dump 전송
+                   → gripped/실패/타임아웃 시 SEARCHING 복귀 (반복 수집)
+                   → 단, 이미 PICK_PHASE_SECS 지났으면 GO_TO_STORAGE로 바로 이동
+  GO_TO_STORAGE  — 태극기 탐색 + 후진 접근 → 도달 시 dump 전송 (남은 30초 동안)
   DROPPING       — dump 전송 후 dumped 신호 대기 (컨테이너 열어 쏟기 완료)
+
+  ⚠️ 못 채운 개수는 감수 — 목표 개수를 못 채웠어도 시간 되면 그냥 이동함
 
 시리얼:
   /dev/ttyACM0 → ESP32  (UGV02 바퀴)   {"T":1, "L":speed, "R":speed}
@@ -163,7 +166,8 @@ STORAGE_TIMEOUT_SECS = 60.0   # GO_TO_STORAGE 전체 최대 시간 (태극기 �
 
 # 경기 타이머
 MATCH_DURATION_SECS = 180.0
-match_start_time    = time.time() if args.timer else None
+PICK_PHASE_SECS     = 150.0   # 2분 30초까지만 집기, 남은 30초는 보관함 이동+투하 (여유있게 잡은 값)
+match_start_time    = time.time()   # 상태머신 타이밍 기준 — --timer는 화면 표시 여부만 결정
 
 # ── 태극기 네비게이션 파라미터 ──────────────────────────
 FLAG_CONF_THRESHOLD      = 0.5
@@ -352,6 +356,17 @@ def send_idle():
         _last_idle_t = now
 
 
+def _enter_go_to_storage():
+    """집기 단계 시간 종료 → 보관함 이동 상태로 전환 (개수와 무관, 시간 기준)."""
+    global robot_state, storage_phase, storage_phase_start, storage_enter_time
+    control_wheels(None)
+    robot_state         = RobotState.GO_TO_STORAGE
+    storage_phase       = 0
+    storage_phase_start = time.time()
+    storage_enter_time  = time.time()
+    print(f"\n[상태] 집기 시간({PICK_PHASE_SECS:.0f}s) 종료 → GO_TO_STORAGE")
+
+
 # ── 카메라 초기화 ────────────────────────────────────────
 def _init_camera(index, name):
     cap = cv2.VideoCapture(index)
@@ -517,7 +532,12 @@ try:
             _last_imu_req = _now_loop
 
         # ── 상태 머신 ──────────────────────────────────
-        if robot_state == RobotState.SEARCHING:
+        _time_up = (time.time() - match_start_time) >= PICK_PHASE_SECS
+
+        if _time_up and robot_state == RobotState.SEARCHING:
+            _enter_go_to_storage()
+
+        elif robot_state == RobotState.SEARCHING:
             if target:
                 # 클래스가 바뀔 때만 confirm_count 리셋 (ID 변경은 무시)
                 if target["cls"] != getattr(select_target, "_last_cls", None):
@@ -577,21 +597,30 @@ try:
                 gripped_cls = None
                 confirm_count  = 0
                 last_target_id = -1
-                robot_state    = RobotState.SEARCHING
-                print(f"[상태] GRIPPING → SEARCHING ({elapsed:.1f}s)")
+                if _time_up:
+                    _enter_go_to_storage()
+                else:
+                    robot_state = RobotState.SEARCHING
+                    print(f"[상태] GRIPPING → SEARCHING ({elapsed:.1f}s)")
             elif openrb_grip_failed:
                 openrb_grip_failed = False
                 openrb_gripped     = False
                 openrb_dumped      = False
                 confirm_count      = 0
                 last_target_id     = -1
-                robot_state        = RobotState.SEARCHING
-                print(f"\n[상태] GRIPPING → SEARCHING (집기 실패)")
+                if _time_up:
+                    _enter_go_to_storage()
+                else:
+                    robot_state = RobotState.SEARCHING
+                    print(f"\n[상태] GRIPPING → SEARCHING (집기 실패)")
             elif elapsed > GRIP_TIMEOUT_SECS:
                 print(f"\n[경고] grip 타임아웃 → SEARCHING 복귀")
                 confirm_count  = 0
                 last_target_id = -1
-                robot_state    = RobotState.SEARCHING
+                if _time_up:
+                    _enter_go_to_storage()
+                else:
+                    robot_state = RobotState.SEARCHING
             else:
                 print(f"[상태] 집어서 컨테이너 투하중... ({elapsed:.1f}s)", end="\r")
 
@@ -747,7 +776,7 @@ try:
                         (w - 150, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, bc, 2)
 
         # 경기 타이머
-        if match_start_time is not None:
+        if args.timer:
             remaining = max(0.0, MATCH_DURATION_SECS - (time.time() - match_start_time))
             mins = int(remaining // 60)
             secs = int(remaining % 60)

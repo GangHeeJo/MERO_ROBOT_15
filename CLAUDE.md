@@ -90,12 +90,15 @@ Jetson main.py
 
 ## 상태 머신
 
-> ⚠️ 2026-07-17 기준: `main.py`에서 수집 개수 카운터와 `GO_TO_STORAGE` 자동 전환 트리거를 제거해서, 지금은 SEARCHING↔GRIPPING만 무한 반복하는 단순한 루프임. `GO_TO_STORAGE`/`DROPPING` 상태 코드는 남아있지만 진입할 방법이 없음 (죽은 코드). 대회에 쓰려면 재구현 필요 — 자세한 내용은 `progress.md`의 2026-07-17 작업 내역 참고.
+> ⚠️ 2026-07-20 기준: 수집 개수는 세지 않고 **시간 기반**으로 전환함. 경기 시작(`match_start_time`) 후 `PICK_PHASE_SECS`(2분30초, 여유 있게 잡은 값)가 지나면 몇 개를 집었든 상관없이 `GO_TO_STORAGE`로 넘어가고, 남은 30초 동안 태극기 찾아 후진 접근→dump. 못 채운 개수는 감수하는 설계.
 
 **Python (main.py) — 현재 실제 동작:**
 ```
 SEARCHING → (도달 3프레임 확인) → grip 전송 → GRIPPING
 GRIPPING → (gripped/grip_failed/timeout 무엇이든) → SEARCHING
+              ↕ 이 두 상태 중 어디서든 경기 시작 후 2분30초 지나면 → GO_TO_STORAGE
+GO_TO_STORAGE → (태극기 탐색→후진 접근→도달) → dump 전송 → DROPPING
+DROPPING → (dumped/timeout) → SEARCHING
 ```
 (`--test` 플래그: grip 전송 후 결과 기다리지 않고 바로 프로그램 종료)
 

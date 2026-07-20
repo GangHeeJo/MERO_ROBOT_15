@@ -1,6 +1,6 @@
 # MERO AI ROBOT — Progress
 
-> 최종 업데이트: 2026-07-17  
+> 최종 업데이트: 2026-07-20  
 > 비전 담당: 조강희
 
 ---
@@ -320,7 +320,7 @@ MERO_AI_ROBOT/
 
 > 바퀴 제어(ESP32)는 `vision/src/main.py`의 `control_wheels()`가 직접 담당.
 
-### 상태 머신 흐름 (2026-07-17 기준 — 단순화된 상태)
+### 상태 머신 흐름 (2026-07-20 기준 — 시간 기반, 개수 카운트 안 함)
 
 ```
 [Python main.py]                          [OpenRB robot.ino]
@@ -336,12 +336,11 @@ GRIPPING                                    ※ 집기 성공/실패 상관없�
   ├─ grip_failed → SEARCHING (반복)     ◀── {"status":"grip_failed"} (safety fault 시에만 발생)
   └─ timeout(15s) → SEARCHING (반복)    ◀── {"status":"motor_fault"/"motor_recovered"/"motion_aborted"}
 
-  ※ 수집 개수 카운터 없음 — 무한 SEARCHING↔GRIPPING 반복
-```
+  ※ SEARCHING·GRIPPING 어느 쪽에 있든, 경기 시작(match_start_time) 후
+    PICK_PHASE_SECS(2분30초, 여유 있게 잡은 값) 지나면 즉시 GO_TO_STORAGE로 전환
+    (GRIPPING 중이면 진행 중인 집기는 끝까지 마치고 전환 — 모터 동작 중 인터럽트 안 함)
+    개수는 세지 않으므로 못 채운 채로 넘어가는 것도 감수
 
-> ⚠️ `GO_TO_STORAGE`/`DROPPING` 상태 코드는 `main.py`에 남아있지만 트리거(수집 개수 카운터)가 제거되어 **현재 진입 불가** (죽은 코드). 대회에 실제로 쓰려면 "목표 개수 채우면 보관함 이동" 로직을 다시 붙여야 함. 아래 다이어그램은 그 로직이 살아있었을 때 기준으로 참고용으로 남겨둠:
-
-```
 GO_TO_STORAGE                             IDLE
   phase 0: 제자리 회전하며 태극기 탐색 (후방 카메라 + flag.pt)
   phase 1: 태극기 보이면 후진하며 접근 → FLAG_AREA_THRESHOLD 도달 시
@@ -350,6 +349,8 @@ DROPPING                                 ◀── {"status":"dumped"} → IDLE
   바퀴 정지, dumped 신호 대기
   ├─ dumped → SEARCHING (복귀)
   └─ timeout(60s) → SEARCHING (복귀)
+
+  ※ 남은 약 30초 동안 태극기 탐색+접근+투하 (STORAGE_TIMEOUT_SECS=60s는 안전장치 상한일 뿐)
 ```
 
 ### 로봇팀 TODO
@@ -359,9 +360,9 @@ DROPPING                                 ◀── {"status":"dumped"} → IDLE
 | `main.py` | `AREA_THRESHOLD` | 실물 테스트 후 도착 면적 임계값 조정 (현재 28000) |
 | `arm.ino` | `ARM_DOWN_RAW` / `ARM_UP_RAW` | ✅ 완료 (1480 / 2850) |
 | `arm.ino` | `CONT_CLOSED_RAW` / `CONT_OPEN_RAW` | ✅ 완료 (2100 / 1000) |
-| `main.py` | `FLAG_AREA_THRESHOLD` | 3m 거리에서 태극기 bbox 면적 실측 (현재 `GO_TO_STORAGE` 트리거 자체가 비활성) |
+| `main.py` | `FLAG_AREA_THRESHOLD` | 3m 거리에서 태극기 bbox 면적 실측 (`GO_TO_STORAGE`는 2026-07-20부터 시간 기반으로 진입 가능해짐) |
 | `main.py` | `STORAGE_BACKUP_SECS` | 집은 자리에서 후진 후 회전 공간 확인 |
-| `main.py` | 수집 개수 카운터 / `GO_TO_STORAGE` 트리거 | 2026-07-17 제거됨 — 대회에 쓰려면 재구현 필요 |
+| `main.py` | `PICK_PHASE_SECS` | 2026-07-20: 150s(2분30초)로 고정, 여유 있게 잡은 값 — 실전에서 더 타이트하게 조정할지 검토 |
 
 ### 필요 라이브러리 (Arduino IDE 라이브러리 매니저)
 
@@ -513,6 +514,19 @@ yolo val model=vision/model/best.pt     data=data.yaml   # 신규
 Colab 노트북 실행 전 필요한 것:
 - Roboflow API 키
 - Google Drive 마운트
+
+---
+
+## 2026-07-20 작업 내역
+
+- **`GO_TO_STORAGE` 트리거를 시간 기반으로 재구현** — 2026-07-17에 제거했던 수집 개수 카운터 대신, 경기 시작(`match_start_time`) 후 `PICK_PHASE_SECS`(150초=2분30초, 여유 있게 잡은 값) 지나면 개수와 무관하게 `GO_TO_STORAGE`로 전환하도록 변경. 못 채운 개수는 감수하는 설계로 사용자가 명시적으로 결정함
+  - `SEARCHING` 상태에서 시간 초과 시 즉시 전환 (`_enter_go_to_storage()`)
+  - `GRIPPING` 도중 시간이 초과돼도 진행 중인 집기(모터 동작)는 끝까지 마치고, 완료 시점에 `SEARCHING` 대신 `GO_TO_STORAGE`로 전환 — 모터 동작을 중간에 끊지 않기 위함
+  - `GO_TO_STORAGE`/`DROPPING` 상태 코드 자체는 변경 없음 (태극기 탐색+후진 접근+dump), 이제 정상적으로 도달 가능해짐
+  - `--timer` 플래그는 이제 화면 표시 여부만 결정 — 상태머신 타이밍은 `--timer` 없어도 항상 `match_start_time` 기준으로 동작
+  - **주의**: `flag.pt`가 아직 미학습이라 실전에서는 `GO_TO_STORAGE` 진입해도 태극기를 못 찾아 즉시 `SEARCHING`으로 복귀함 — 이 로직이 실제로 동작하려면 태극기 데이터 수집+학습 선행 필요
+- MJPEG 스트림 URL 하드코딩 제거, 실제 접속 IP 자동 감지 (이전 커밋)
+- OpenRB 전원이 UGV 내장 배터리가 아니라 전용 별도 배터리(11.1V 3S LiPo)임을 문서에 반영 (이전 커밋)
 
 ---
 
@@ -783,8 +797,8 @@ python vision/src/main.py --cls d8 --timer
 | ✅ 완료 | `CONT_CLOSED_RAW` / `CONT_OPEN_RAW` | **2100 / 1000** (raw) | 실측 완료 | `arm.ino` |
 | ✅ 완료 | 모터 속도(Profile Velocity) | 그리퍼50 / 팔40 / 컨테이너40 | 실측+테스트로 조정 완료 | `gripper.ino`, `arm.ino` |
 | 🔴 높음 | `AREA_THRESHOLD` | 28000 | 물체 바로 앞에서 터미널 area= 값 확인 | `main.py` |
-| 🔴 높음 | 수집 개수 카운터 / `GO_TO_STORAGE` 트리거 | 제거됨 | 대회에 쓰려면 재구현 필요 (2026-07-17 참고) | `main.py` |
-| 🔴 높음 | `FLAG_AREA_THRESHOLD` | 60000 | 보관함 3m 거리에서 태극기 bbox 면적 측정 | `main.py` |
+| ✅ 완료 | `GO_TO_STORAGE` 트리거 (시간 기반) | PICK_PHASE_SECS=150s | 2026-07-20 구현 완료, 실전 타이밍 검토는 남음 | `main.py` |
+| 🔴 높음 | `FLAG_AREA_THRESHOLD` | 60000 | 보관함 3m 거리에서 태극기 bbox 면적 측정 (flag.pt 학습 선행 필요) | `main.py` |
 | 🔴 높음 | `FLAG_AREA_SLOW_THRESHOLD` | 30000 | 동일 | `main.py` |
 | 🟡 중간 | `CAMERA_INDEX_OBJ` | 0 | `/dev/video*` 번호 실제 확인 | `main.py` |
 | 🟡 중간 | `CAMERA_INDEX_FLAG` | 2 | 동일 | `main.py` |
@@ -828,4 +842,4 @@ python vision/src/main.py --cls d8 --timer
 8. XL430 전원: OpenRB 초록 단자에 12V 배터리 연결 (두꺼운 전선 필수)
 9. 위치/속도값 전부 실측 완료 (그리퍼 2400/1150, 팔 1480/2850, 컨테이너 2100/1000, 속도 50/40/40) — `gripper.ino`/`arm.ino` 참고
 10. `AREA_THRESHOLD`, `FLAG_AREA_THRESHOLD` 실물 테스트로 측정 후 `main.py` 수정
-11. **수집 개수 카운터 / `GO_TO_STORAGE` 자동 전환 로직이 제거된 상태** ⬜ — 지금 `main.py`는 물체 하나 감지→grip→반복만 하는 무한루프. 대회에 쓰려면 "목표 개수 채운 뒤 보관함 이동" 로직을 다시 붙여야 함 (2026-07-17 작업 내역 참고)
+11. **`GO_TO_STORAGE` 전환은 시간 기반** ✅ (2026-07-20) — 경기 시작 후 `PICK_PHASE_SECS`(2분30초) 지나면 개수 무관하게 보관함 이동. 단 `flag.pt` 미학습이라 실제로는 `GO_TO_STORAGE` 진입해도 태극기 탐지가 안 되어 즉시 SEARCHING 복귀함 — flag.pt 학습이 우선순위 높음
