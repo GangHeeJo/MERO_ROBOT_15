@@ -150,6 +150,7 @@ AREA_ROTATE_THRESHOLD = 15000 # 이 이하일 때만 제자리 회전 정렬
 CENTER_MARGIN_PX    = 42      # 픽셀 모드: 가로 중심에서 이 픽셀 이내 (시각화 가이드용, 면적 2배)
 CENTER_MARGIN_Y_PX  = 35      # 픽셀 모드: 세로 중심에서 이 픽셀 이내 (시각화 가이드용, 면적 2배)
 CENTER_OFFSET_Y_PX  = 20      # 세로 중심 오프셋 (양수=아래)
+CENTER_OFFSET_X_PX  = 20      # 가로 중심 오프셋 (양수=오른쪽)
 ALIGN_THRESHOLD     = 0.25    # 이 이상 turn값이면 전진 없이 제자리 회전 우선
 TURN_ONLY_SPEED     = 0.2     # 제자리 회전 속도
 FINAL_APPROACH_SECS  = 1.0        # area 임계 도달 후 정지→직진하는 시간
@@ -304,7 +305,7 @@ def control_wheels(target: dict | None, override_l: float | None = None, overrid
     else:
         # ── 픽셀 모드 (calibration 없을 때) ──
         frame_w  = FRAME_W or 640
-        turn     = max(-1.0, min(1.0, (target["cx"] - frame_w / 2) / (frame_w / 2)))
+        turn     = max(-1.0, min(1.0, (target["cx"] - (frame_w / 2 + CENTER_OFFSET_X_PX)) / (frame_w / 2)))
         area     = target.get("area", 0)
 
         if abs(turn) > ALIGN_THRESHOLD and area < AREA_ROTATE_THRESHOLD:
@@ -327,7 +328,7 @@ def _is_at_target(target: dict) -> bool:
         return dist < ARRIVE_THRESHOLD_MM
     frame_w  = FRAME_W or 640
     frame_h  = FRAME_H or 480
-    cx_ok = abs(target["cx"] - frame_w / 2) <= CENTER_MARGIN_PX
+    cx_ok = abs(target["cx"] - (frame_w / 2 + CENTER_OFFSET_X_PX)) <= CENTER_MARGIN_PX
     cy_ok = abs(target["cy"] - (frame_h / 2 + CENTER_OFFSET_Y_PX)) <= CENTER_MARGIN_Y_PX
     return cx_ok and cy_ok and target.get("area", 0) >= AREA_GRIP_THRESHOLD
 
@@ -551,8 +552,8 @@ try:
             elif target and ALIGN_ONLY:
                 # 방향(좌우 회전) 검증 전용: 전진 없이 제자리 회전만으로 가로(cx) 정렬
                 frame_w    = FRAME_W or 640
-                turn       = max(-1.0, min(1.0, (target["cx"] - frame_w / 2) / (frame_w / 2)))
-                cx_aligned = abs(target["cx"] - frame_w / 2) <= CENTER_MARGIN_PX
+                turn       = max(-1.0, min(1.0, (target["cx"] - (frame_w / 2 + CENTER_OFFSET_X_PX)) / (frame_w / 2)))
+                cx_aligned = abs(target["cx"] - (frame_w / 2 + CENTER_OFFSET_X_PX)) <= CENTER_MARGIN_PX
                 if cx_aligned:
                     control_wheels(None)
                     print(f"[테스트] 좌우 정렬 완료 (cx={target['cx']:.0f}) — 정지 (--align-only)", end="\r")
@@ -702,7 +703,7 @@ try:
         # 중앙 정렬 가이드라인 (OK 박스)
         _fw = FRAME_W or 640
         _fh = FRAME_H or 480
-        _cx = _fw // 2
+        _cx = _fw // 2 + CENTER_OFFSET_X_PX
         _cy = _fh // 2 + CENTER_OFFSET_Y_PX
         _box_color = (0, 255, 0) if at_target else (0, 200, 255)
         cv2.rectangle(annotated_frame,
