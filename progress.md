@@ -1,6 +1,6 @@
 # MERO AI ROBOT — Progress
 
-> 최종 업데이트: 2026-07-20  
+> 최종 업데이트: 2026-07-21  
 > 비전 담당: 조강희
 
 ---
@@ -118,19 +118,24 @@ ls /dev/ttyACM*
 ```bash
 # 젯슨 터미널에서
 cd ~/MERO_AI_ROBOT
-python vision/src/main.py            # 기본 실행 (모든 클래스 탐지)
-python vision/src/main.py --cls d8   # d8만 픽업
-python vision/src/main.py --timer    # 3분 타이머 화면 표시
+python vision/src/main.py                    # 기본 실행 (모든 클래스 탐지)
+python vision/src/main.py --cls d8            # d8만 픽업
+python vision/src/main.py --timer             # 3분 타이머 화면 표시
+python vision/src/main.py --cls d12 --align-only       # 정렬 테스트: 회전(좌우)→전후(상하)→2초 직진→grip 후 1회성 종료
+python vision/src/main.py --cls d12 --align-fwd-first   # 정렬 테스트: 순서 반대 (전후 먼저→회전 나중)
+python vision/src/main.py --cls d12 --no-wheels          # 바퀴 명령 안 보냄 (탐지/그리퍼만 테스트)
+python vision/src/main.py --cls d12 --test               # 도달하면 grip 1회 전송 후 즉시 종료
 ```
 
 > 카메라 화면이 뜨고 탐지 박스가 보이면 정상.  
-> 포트 오류 시: `vision/src/main.py` 상단 `ESP32_PORT` / `OPENRB_PORT` 값 확인
+> 포트/카메라는 전부 **이름 기반 자동 감지**라 USB 꽂는 순서 안 타도 됨 (2026-07-21 확정, 아래 참고).  
+> 자동 감지 실패 시에만 `main.py` 상단 `ESP32_PORT`/`OPENRB_PORT`/`CAMERA_INDEX_OBJ`/`CAMERA_INDEX_FLAG` 값 확인.
 
 ### STEP 7. 실측값 현황 (2026-07-17 기준)
 
 | 항목 | 파일 | 확정값 | 상태 |
 |------|------|--------|------|
-| `FINGER_OPEN_RAW` | `robot/gripper.ino` | **2400** (raw) | ✅ 완료 |
+| `FINGER_OPEN_RAW` | `robot/gripper.ino` | **2600** (raw, 2026-07-21 2400→2600 확대) | ✅ 완료 (기계적 한계 실물 재확인 권장) |
 | `FINGER_CLOSE_RAW` | `robot/gripper.ino` | **1150** (raw) | ✅ 완료 |
 | `GRIP_LOAD_THRESHOLD` | `robot/gripper.ino` | 200 (20%) | ✅ 완료 |
 | `GRIPPER_SPEED` | `robot/gripper.ino` | 50 (Profile Velocity) | ✅ 완료 |
@@ -139,14 +144,17 @@ python vision/src/main.py --timer    # 3분 타이머 화면 표시
 | `CONT_CLOSED_RAW` | `robot/arm.ino` | **2100** (raw) | ✅ 완료 |
 | `CONT_OPEN_RAW` | `robot/arm.ino` | **1000** (raw) | ✅ 완료 |
 | `ARM_SPEED` / `CONTAINER_SPEED` | `robot/arm.ino` | 40 / 40 (Profile Velocity) | ✅ 완료 |
-| `AREA_GRIP_THRESHOLD` (구 `AREA_THRESHOLD`) | `vision/src/main.py` | **35000** (2026-07-20 상향) | ⬜ 실측 필요 |
+| `AREA_GRIP_THRESHOLD` | `vision/src/main.py` | 30000 (2026-07-21 확정, 기존 `AREA_THRESHOLD` 대체) | 🟡 실전 거리에서 재검증 권장 |
 | `AREA_SLOW_THRESHOLD` | `vision/src/main.py` | 20000 | ⬜ 실측 필요 |
-| `CENTER_MARGIN_PX` / `CENTER_MARGIN_Y_PX` | `vision/src/main.py` | **60px / 50px** (2026-07-20, 기존 120/100에서 절반 축소) | ⬜ 재검증 필요 |
-| `FINAL_APPROACH_SECS` | `vision/src/main.py` | 1.0s (2026-07-20 신규) | ⬜ 실측 필요 |
+| `CENTER_MARGIN_PX` / `CENTER_MARGIN_Y_PX` | `vision/src/main.py` | 42px / 35px (2026-07-21 튜닝) | 🟡 실전 거리에서 재검증 권장 |
+| `CENTER_OFFSET_X_PX` / `CENTER_OFFSET_Y_PX` | `vision/src/main.py` | 0 / 220 (2026-07-21 튜닝, 양수Y=아래) | 🟡 카메라 재장착 시 재조정 필요 |
+| `FINAL_APPROACH_SECS` | `vision/src/main.py` | 1.7초 (정지→직진 시간, 2026-07-21 튜닝) | 🟡 실전 거리에서 재검증 권장 |
+| `FORWARD_TRIM` | `vision/src/main.py` | 0.025 (직진 시 우측 쏠림 보정, 2026-07-21 추가) | 🟡 실물 재확인 필요 — 계속 오른쪽으로 쏠리면 기계적(바퀴/모터) 문제일 수 있음 |
 | `ENCODER_TICKS_PER_M` | `vision/src/encoder_test.py` | **105.2** | ✅ 완료 |
 | `FLAG_AREA_THRESHOLD` | `vision/src/main.py` | 60000 | ⬜ 3m 거리에서 실측 (현재 `GO_TO_STORAGE` 트리거 자체가 비활성 상태) |
 | `FLAG_AREA_SLOW_THRESHOLD` | `vision/src/main.py` | 30000 | ⬜ 동일 |
 | `STORAGE_BACKUP_SECS` | `vision/src/main.py` | 0.8s | ⬜ 미실측 |
+| `CAMERA_INDEX_OBJ` / `CAMERA_INDEX_FLAG` | `vision/src/main.py` | 이름 기반 자동 감지 (2026-07-21) | ✅ 완료 — `arducam`/`nv76`·`cm400` 키워드로 `/sys/class/video4linux` 조회 |
 
 > ⚠️ 팔/컨테이너는 물리 모터 2개가 같은 ID(팔=2, 컨테이너=3)를 공유하는 구조 — 한쪽은 Dynamixel Wizard에서 미리 DRIVE_MODE=Reverse로 구워둠. 코드에서는 절대 DRIVE_MODE를 다시 쓰지 않음 (같은 ID로 두 번 쓰면 둘 다 같은 값이 되어 reverse 구분이 깨짐)
 
@@ -206,9 +214,11 @@ python vision/src/calibration.py --calc x1 y1 x2 y2 실제거리mm
 │              │       "grip_failed"/"dumped"} ─────  │  → ID2: XL430 팔 관절 × 2       │
 └──────────────┘                                    │  → ID3: XL430 바스켓 힌지 × 2   │
       ▲▲                                            └─────────────────────────────────┘
-      ││ ArduCAM USB
-  전방 카메라 (/dev/video0, CAMERA_INDEX_OBJ=0)  — 물체 탐지
-  후방 카메라 (/dev/video2, CAMERA_INDEX_FLAG=2) — 태극기 탐지 (GO_TO_STORAGE)
+      ││ USB (카메라 2대)
+  전방 카메라 (Arducam)      — 물체 탐지
+  후방 카메라 (NV76-CM400A) — 태극기 탐지 (GO_TO_STORAGE)
+  ※ 2026-07-21부터 인덱스 하드코딩 대신 이름 기반 자동 감지
+    (/sys/class/video4linux/videoN/name 에서 "arducam"/"nv76"·"cm400" 매칭)
 ```
 
 **Jetson에서 나가는 신호 두 가지:**
@@ -255,6 +265,17 @@ python vision/src/main.py             # 3. 메인 실행 (캘리브 없어도 �
 # 경기 당일 — 타겟 클래스 지정 (오전 공지 후)
 python vision/src/main.py --cls d8    # 예: d8만 픽업
 python vision/src/main.py --cls apple # 예: apple만 픽업
+
+# 테스트/디버깅용 플래그 (2026-07-21 추가, 대회 당일엔 안 씀)
+python vision/src/main.py --cls d12 --align-only        # 회전(좌우)→전후(상하)→직진→grip, 1회성
+python vision/src/main.py --cls d12 --align-fwd-first    # 순서 반대: 전후 먼저→회전 나중, 1회성
+python vision/src/main.py --cls d12 --no-wheels           # 바퀴 명령 억제 (탐지/그리퍼만 확인)
+python vision/src/main.py --cls d12 --test                # 도달 시 grip 1회 전송 후 즉시 종료
+
+# 데이터 촬영 (record.py)
+python vision/src/record.py --cls apple --sec 10          # 10초 녹화 후 자동 프레임 추출
+python vision/src/record.py --cls mixed --shutter          # Enter로 한 장씩 촬영 (여러 물체 섞어찍기)
+python vision/src/record.py --cls flag --cam 0 --shutter   # 후면(태극기) 카메라로 한 장씩 촬영
 ```
 
 ---
@@ -317,6 +338,7 @@ MERO_AI_ROBOT/
 | `vision/train/train.ipynb` | Google Colab 학습 노트북 (로컬 디스크 저장 방식, Drive 미의존) |
 | `vision/model/best.pt` | 학습된 모델 가중치 (d6/d8/d12/d20, YOLOv8s, mAP50 0.994) |
 | `vision/src/capture.py` | 스페이스바로 사진 저장하는 데이터셋 수집 스크립트 |
+| `vision/src/record.py` | 클래스별 영상 녹화(`--sec`)+프레임 자동추출, 또는 `--shutter`로 Enter 눌러 한 장씩 촬영. `DATASET/{shape-based,image-based}/{cls}/`에 자동 저장 |
 
 ---
 
@@ -526,6 +548,53 @@ yolo val model=vision/model/best.pt     data=data.yaml   # 신규
 Colab 노트북 실행 전 필요한 것:
 - Roboflow API 키
 - Google Drive 마운트
+
+---
+
+## 2026-07-21 작업 내역
+
+> 실물 로봇으로 정렬→집기 흐름 실제 튜닝한 날. 하드웨어 트러블슈팅(USB 인식 불안정) 시간이 오래 걸림.
+
+### `vision/src/main.py` — SEARCHING 상태머신 재작성
+
+- **grip 트리거를 area+중앙정렬 기반 "정지→직진→grip" 방식으로 변경** — 기존 3프레임 연속 confirm(`CONFIRM_FRAMES`) 로직 제거. `target["area"] >= AREA_GRIP_THRESHOLD`(현재 30000)이면서 화면 중앙의 작은 박스(`CENTER_MARGIN_PX`×`CENTER_MARGIN_Y_PX` = 42×35px, `CENTER_OFFSET_X_PX`/`CENTER_OFFSET_Y_PX` = 0/220 위치) 안에 들어오면 즉시 정지 → `FINAL_APPROACH_SECS`(2.0초) 직진 → grip 전송 → `GRIPPING` 전환
+- **`FORWARD_TRIM`(0.025) 추가** — 직진 시 로봇이 오른쪽으로 쏠리는 걸 확인해서, 블라인드 직진 구간(`final_approach`/`align_final_forward`)에 오른쪽 바퀴를 살짝 더 빠르게 주는 보정 추가. 계속 쏠리면 소프트웨어 트림보다 바퀴/모터 자체의 기계적 문제일 가능성 높음
+- **`--align-only` 플래그 추가** — 방향 검증 전용 테스트 모드. 1단계: 전진 없이 **제자리 회전만**으로 좌우(cx) 정렬 → 2단계: 회전 없이 **직진/후진만**으로 상하(cy) 정렬 → 정렬 끝나면 1초 대기 후 2초 직진 → grip 전송하고 **프로그램 종료** (1회성, 반복 안 함). 회전 중 상하가 틀어지거나 전후 이동 중 좌우가 틀어지면 해당 단계로 복귀
+- **`--align-fwd-first` 플래그 추가** — `--align-only`와 순서만 반대 (전진/후진 먼저 → 회전 나중). 상태 변수(`fb_phase`, `fb_final_forward` 등)를 `--align-only`용과 완전히 분리해서 서로 간섭 없음. 어느 순서가 더 안정적인지 실물로 비교하기 위한 용도
+- **`--no-wheels` 플래그 추가** — ESP32가 연결돼 있어도 `control_wheels()`가 아무 명령도 안 보내게 함 (탐지/그리퍼만 테스트하고 싶을 때, 실수로 로봇이 움직이는 것 방지)
+- **카메라 포맷 YUY2 → MJPG 전환** — `select() timeout` 경고(USB 대역폭 초과) 완화 목적. 해상도/FPS는 1920x1200@50fps 유지 (1280x720@30fps로 낮춰봤다가 다시 원복 — 팀 판단으로 고해상도 유지 결정)
+- **카메라 인덱스도 이름 기반 자동 감지로 변경** — 기존 `_find_port()`(시리얼용)와 동일한 패턴으로 `_find_camera_index()` 추가. `/sys/class/video4linux/videoN/name`을 읽어서 `"arducam"`(물체캠), `"nv76"`/`"cm400"`(태극기캠, 신규 웹캠 NV76-CM400A) 키워드로 매칭 → USB 꽂는 순서 바뀌어도 `/dev/videoN` 번호 안 흔들림. 오늘 하루에도 카메라 인덱스가 몇 번씩 바뀌어서 (물체캠이 태극기캠 인덱스로 잡히는 등) 헤맨 끝에 이 방식으로 정리
+
+### `robot/gripper.ino`
+
+- **`FINGER_OPEN_RAW` 2400 → 2600** — 그리퍼를 더 넓게 벌리도록 확대. 기계적 한계(하드스탑)에 안 걸리는지 실물로 계속 확인 필요
+
+### `vision/src/record.py` — 데이터 수집 도구 개선
+
+- **`--shutter` 모드 추가** — 영상 녹화 대신 Enter 누를 때마다 사진 한 장씩 촬영 (기존 `next_frame_num()` 재사용해서 이어찍기 가능). 예: `python vision/src/record.py --cls flag --cam 0 --shutter`
+- **`mixed` 클래스 추가** — 여러 과일을 한 프레임에 섞어 찍을 때 `DATASET/image-based/mixed/`에 저장되도록 `get_save_dir()`에 특수 케이스 추가
+
+### 하드웨어 — 오늘 겪은 문제들과 원인
+
+- **UGV 배터리 전압이 0.58V로 표시된 사건** — 실제로는 배터리 커넥터 접촉불량. 재체결로 해결. (`v` 필드는 ESP32가 `loadVoltage_V * 100`을 정수로 보내는 값이라 `main.py`의 `/100.0` 파싱 자체는 맞았음 — Waveshare `ugv_base_ros` 펌웨어 소스로 확인)
+- **ESP32 하트비트 워치독** — UGV 펌웨어가 3초(`HEART_BEAT_DELAY`) 안에 새 속도 명령이 안 오면 자동으로 바퀴를 멈춤. 수동 시리얼 테스트 스크립트로 오래 움직이려면 0.5초 간격으로 계속 재전송해야 함 (한 번만 보내고 `sleep`하면 3초 만에 멈춤)
+- **OpenRB USB 인식 불안정** — 업로드 직후 리셋 타이밍에 `by-id` 심볼릭 링크가 아직 안 생겨서 포트 자동감지 실패 → OpenRB 명령이 엉뚱하게 ESP32로 감. 또 한 번은 `lsusb` 자체가 멈추고 OpenRB가 완전히 USB 버스에서 사라지는 증상 발생 — **젯슨 재부팅으로 해결**. USB 케이블 재연결/리셋 버튼 더블클릭만으로는 안 됐음
+- **ESP32/OpenRB 포트 번호(`ttyACM0`/`ttyACM1`)가 재연결마다 계속 뒤바뀜** — `main.py`는 이미 `by-id` 이름 기반 자동감지라 문제없지만, 수동 테스트 스크립트에 포트를 하드코딩해서 여러 번 삽질함. 앞으로 수동 스크립트도 `ls -l /dev/serial/by-id/`로 먼저 확인하고 쓸 것
+- **시리얼 포트 권한(`Permission denied`)이 재부팅/재연결마다 반복** — `sudo chmod 666 /dev/ttyACMx`을 매번 해야 했음. 영구 해결책: `sudo usermod -aG dialout aiwinners` 실행 후 재로그인하면 이후 chmod 불필요 (오늘 세션에서 제안만 하고 실제 적용 여부는 미확인 — 다음에 확인 필요)
+- **새 후면(태극기) 카메라 `NV76-CM400A` 웹캠 추가 연결** — 기존 Arducam(물체캠, USB3, `lsusb -t` 확인 결과 정상적으로 5000M 라인에 물려있음)과 별개로 후면용으로 새로 장착. 오토포커스가 계속 초점을 바꿔서 화면이 흐려지는 문제 있었음 → `v4l2-ctl -d /dev/video0 --set-ctrl=focus_automatic_continuous=0` + `--set-ctrl=focus_absolute=<값>`으로 오토포커스 끄고 고정 초점 설정 가능 (범위 0~1023, 최적값은 촬영 거리 보고 실측 필요 — 아직 미확정)
+- **정체불명의 USB 장치 `XIFT NV76-CM400A` (VID:PID `6210:ec03`)** — 알고 보니 이게 그 신규 웹캠이었음. 이름 없는 모델이라 `lsusb`가 이상하게 표시한 것
+
+### `vision/src/main.py` — PATH_NAV/PATH_RETURN 그리드 경로 주행 + 정밀 정렬 승격
+
+- **`--align-only` vs `--align-fwd-first` 비교 결과** — 실물 테스트로 **전진/후진(상하 cy) 먼저 → 회전(좌우 cx) 나중**(`--align-fwd-first` 순서)이 맞는 것으로 확인. 이 순서를 `precise_align`이라는 이름으로 SEARCHING의 실제 grip 로직에 기본 반영함. 두 플래그 자체는 참고용으로 남겨둠 (제거하지 않음)
+- **SEARCHING에 정밀 정렬 단계 추가** — `_is_at_target()`을 area 임계 단독 체크로 단순화(중심 정렬은 더 이상 여기서 안 봄) → area 도달 시 `precise_align=True` 진입 → 전진/후진으로 cy 정렬 → 회전으로 cx 정렬 → 완료되면 기존 `final_approach`(직진 접근+grip) 단계로 이어짐
+- **`PATH_NAV`/`PATH_RETURN` 상태 신규 추가** (`--path-test` 플래그) — 가로 7×세로 6칸(50cm 간격) 그리드 기반 고정 경로 주행: 시작 1m 직진 → 우회전 → 직진(벽까지) → 좌회전 → 직진(지점까지) → 좌회전 → 직진(벽까지) → 좌회전 → 완료 시 `GO_TO_STORAGE`로 자동 전환
+  - 직진1/3(벽 탐색 구간) 중에만 목표 물건 감지 시 `SEARCHING`으로 잠깐 빠져서 집고, 집는 동안 이동/회전한 시간을 누적해뒀다가 grip 후 `PATH_RETURN` 상태에서 그 시간만큼 반대로 후진+반대 회전해서 원래 있던 자리로 복귀한 뒤 경로 재개
+  - **회전/직진 시간 실측 반영**: `PATH_SECS_PER_METER = 4.0`(1m당 4초), `PATH_TURN_90_SECS = 1.5`(제자리 90도 회전 1.5초) — 나머지 구간 시간은 이 값들로 계산됨
+  - 벽 감지(`is_near_wall()`)는 아직 미구현(항상 False) — YOLO 대신 **바닥-벽 경계선의 화면상 높이로 거리 추정하는 방식**을 검토 중 (다음 세션에서 이어서 논의)
+- **`select_target()` 우선순위 변경** — area 최대인 것 우선, area가 비슷한(`AREA_SIMILAR_TOLERANCE`=3000 이내) 후보가 여럿이면 화면 오른쪽(cx 큰 것) 우선 선택
+
+> ⚠️ **다음 세션에서 확인할 것**: `FORWARD_TRIM` 값이 충분한지(계속 오른쪽으로 쏠리면 하드웨어 점검), `dialout` 그룹 등록 여부, 그리퍼 2600 raw가 기계적 한계 안 걸리는지, 새 웹캠 `focus_absolute` 최적값, `PATH_NAV` 좌/우회전 부호(`PATH_LEFT_L/R`, `PATH_RIGHT_L/R`)가 실제 방향과 맞는지, `PATH_TO_POINT_SECS`/`PATH_START_FORWARD_SECS` 실측 재검증, 벽 감지 방식(바닥-벽 경계선 높이 기반) 구현 여부.
 
 ---
 
@@ -795,14 +864,13 @@ python vision/src/main.py --cls d8 --timer
 | ✅ 완료 | `ARM_DOWN_RAW` / `ARM_UP_RAW` | **1480 / 2850** (raw) | 실측 완료 | `arm.ino` |
 | ✅ 완료 | `CONT_CLOSED_RAW` / `CONT_OPEN_RAW` | **2100 / 1000** (raw) | 실측 완료 | `arm.ino` |
 | ✅ 완료 | 모터 속도(Profile Velocity) | 그리퍼50 / 팔40 / 컨테이너40 | 실측+테스트로 조정 완료 | `gripper.ino`, `arm.ino` |
-| 🔴 높음 | `AREA_GRIP_THRESHOLD` | 35000 (2026-07-20 상향) | 물체 바로 앞에서 터미널 area= 값 확인 | `main.py` |
-| 🔴 높음 | `FINAL_APPROACH_SECS` | 1.0s (2026-07-20 신규) | 직진 접근 후 grip 위치 실측 조정 | `main.py` |
-| 🟡 중간 | 카메라 포맷 YUY2→MJPG 전환 | 미착수 | USB 대역폭 초과로 `select()` timeout 발생 — TODO 주석만 있음 (2026-07-20) | `main.py` |
+| ✅ 완료 | `AREA_GRIP_THRESHOLD` | 30000 (2026-07-21, 기존 `AREA_THRESHOLD` 대체) | 실전 거리에서 재검증 권장 | `main.py` |
+| ✅ 완료 | 카메라 포맷 YUY2→MJPG 전환 | 완료 (2026-07-21) | USB 대역폭 초과 `select()` timeout 문제 해결 | `main.py` |
 | 🔴 높음 | 수집 개수 카운터 / `GO_TO_STORAGE` 트리거 | 제거됨 | 대회에 쓰려면 재구현 필요 (2026-07-17 참고) | `main.py` |
 | 🔴 높음 | `FLAG_AREA_THRESHOLD` | 60000 | 보관함 3m 거리에서 태극기 bbox 면적 측정 | `main.py` |
 | 🔴 높음 | `FLAG_AREA_SLOW_THRESHOLD` | 30000 | 동일 | `main.py` |
-| 🟡 중간 | `CAMERA_INDEX_OBJ` | 0 | `/dev/video*` 번호 실제 확인 | `main.py` |
-| 🟡 중간 | `CAMERA_INDEX_FLAG` | 2 | 동일 | `main.py` |
+| ✅ 완료 | `CAMERA_INDEX_OBJ` / `CAMERA_INDEX_FLAG` | 이름 기반 자동 감지 (2026-07-21) | `/dev/video*` 번호 신경 안 써도 됨 | `main.py` |
+| 🟡 중간 | 새 웹캠(NV76-CM400A) `focus_absolute` | 미확정 | `v4l2-ctl -d /dev/video0 --set-ctrl=focus_absolute=<값>`으로 촬영거리 맞춰 실측 | v4l2-ctl (하드웨어 설정, 코드 아님) |
 | 🟡 중간 | `STORAGE_BACKUP_SECS` | 0.8s | 집은 자리에서 후진 후 공간 확인 | `main.py` |
 
 ### 데이터 / 학습
@@ -831,11 +899,10 @@ python vision/src/main.py --cls d8 --timer
 2. `vision/model/flag.pt` — **미학습** ⬜ (태극기 20~30장 촬영 후 학습 필요)
 3. Roboflow 프로젝트 접근 권한 확인 (workspace: `s-workspace-qdwfc`, project: `merong-gurme`)
 4. Colab 노트북 실행 전 Roboflow API 키 입력 — Google Drive는 FUSE 불안정 이슈로 더 이상 안 씀, 결과는 로컬(`/content/runs_local`)에 저장됨
-5. Jetson 연결 포트 확인:
-   - `ls /dev/ttyACM*` 실행
-   - ESP32: `ttyACM0` → `main.py`의 `ESP32_PORT` 확인 (CH343 드라이버, ttyUSB 아님)
-   - OpenRB: `ttyACM1` → `OPENRB_PORT` 확인 (꽂는 순서에 따라 바뀔 수 있음)
-   - 카메라: `/dev/video0` (전방), `/dev/video2` (후방) — 실제 번호 확인 후 `CAMERA_INDEX_OBJ`, `CAMERA_INDEX_FLAG` 수정
+5. Jetson 연결 포트/카메라 확인 (2026-07-21부터 시리얼·카메라 전부 **이름 기반 자동 감지**라 보통 신경 안 써도 됨):
+   - 시리얼: `ls -l /dev/serial/by-id/`로 ESP32(`1a86`/`ch343`)·OpenRB(`openrb`/`robotis`) 확인 가능. 자동 감지 실패 시에만 `main.py`의 `ESP32_PORT`/`OPENRB_PORT` fallback 값 확인
+   - 카메라: `v4l2-ctl --list-devices`로 Arducam(물체캠)·NV76-CM400A(태극기캠) 확인 가능. 자동 감지 실패 시에만 `CAMERA_INDEX_OBJ`/`CAMERA_INDEX_FLAG` fallback 값 확인
+   - USB 인식이 아예 안 될 때(`lsusb`에 장치 자체가 안 보임/응답 없음): 케이블 재연결이나 리셋 버튼으로 안 풀리면 **젯슨 재부팅**이 제일 빠른 해결책이었음 (2026-07-21 경험)
 6. OpenRB Arduino 업로드 시 보드: **OpenRB-150** 선택 (`robot.ino` + `gripper.ino` + `arm.ino` + `safety.ino` 같은 폴더, 파일명이 `main.ino`가 아니라 `robot.ino`인 것에 주의 — 폴더명과 일치해야 컴파일됨)
 7. Dynamixel Wizard로 서보 ID 및 Baudrate 사전 설정:
    - ID1 (그리퍼), ID2 (팔, 물리모터 2개 공유), ID3 (컨테이너, 물리모터 2개 공유), 모두 **Baudrate=1000000**
