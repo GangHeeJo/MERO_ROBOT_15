@@ -1,6 +1,6 @@
 # MERO AI ROBOT — Progress
 
-> 최종 업데이트: 2026-07-17  
+> 최종 업데이트: 2026-07-20  
 > 비전 담당: 조강희
 
 ---
@@ -139,9 +139,10 @@ python vision/src/main.py --timer    # 3분 타이머 화면 표시
 | `CONT_CLOSED_RAW` | `robot/arm.ino` | **2100** (raw) | ✅ 완료 |
 | `CONT_OPEN_RAW` | `robot/arm.ino` | **1000** (raw) | ✅ 완료 |
 | `ARM_SPEED` / `CONTAINER_SPEED` | `robot/arm.ino` | 40 / 40 (Profile Velocity) | ✅ 완료 |
-| `AREA_THRESHOLD` | `vision/src/main.py` | 28000 | ⬜ 실측 필요 |
+| `AREA_GRIP_THRESHOLD` (구 `AREA_THRESHOLD`) | `vision/src/main.py` | **35000** (2026-07-20 상향) | ⬜ 실측 필요 |
 | `AREA_SLOW_THRESHOLD` | `vision/src/main.py` | 20000 | ⬜ 실측 필요 |
-| `CENTER_MARGIN_PX` | `vision/src/main.py` | 120px | ✅ 완료 |
+| `CENTER_MARGIN_PX` / `CENTER_MARGIN_Y_PX` | `vision/src/main.py` | **60px / 50px** (2026-07-20, 기존 120/100에서 절반 축소) | ⬜ 재검증 필요 |
+| `FINAL_APPROACH_SECS` | `vision/src/main.py` | 1.0s (2026-07-20 신규) | ⬜ 실측 필요 |
 | `ENCODER_TICKS_PER_M` | `vision/src/encoder_test.py` | **105.2** | ✅ 완료 |
 | `FLAG_AREA_THRESHOLD` | `vision/src/main.py` | 60000 | ⬜ 3m 거리에서 실측 (현재 `GO_TO_STORAGE` 트리거 자체가 비활성 상태) |
 | `FLAG_AREA_SLOW_THRESHOLD` | `vision/src/main.py` | 30000 | ⬜ 동일 |
@@ -295,6 +296,16 @@ MERO_AI_ROBOT/
 
 ---
 
+## 2026-07-20 작업 내역
+
+- **SEARCHING grip 트리거 방식 변경** (`vision/src/main.py`) — 기존 3프레임 연속 confirm 방식(`CONFIRM_FRAMES`)을 제거하고, area+중앙정렬 조건을 최초 충족하면 **정지 → 1초간 정면 직진(`FINAL_APPROACH_SECS`) → grip 전송** 방식으로 변경. 새 상태 변수 `final_approach`/`final_approach_start`/`final_approach_cls` 추가
+- **임계값 조정** — `AREA_THRESHOLD`(28000) → `AREA_GRIP_THRESHOLD`(35000)로 이름 변경 + 값 상향. `CENTER_MARGIN_PX`(120→60), `CENTER_MARGIN_Y_PX`(100→50) 절반으로 축소해 중앙정렬 기준을 더 엄격하게 변경
+- **TODO 주석 추가** (`vision/src/main.py`, 카메라 초기화부) — "YUY2(비압축) 포맷이 USB 대역폭 초과로 `select()` timeout 유발 — MJPG 전환 예정" 미해결 이슈만 표시, 코드 변경은 아직 없음
+
+> ⚠️ `AREA_GRIP_THRESHOLD`(35000), `FINAL_APPROACH_SECS`(1.0s), `CENTER_MARGIN_PX`/`CENTER_MARGIN_Y_PX`(60/50) 모두 미실측값 — 실물 테스트로 재조정 필요.
+
+---
+
 ## 파일별 역할 (vision/)
 
 | 파일 | 역할 |
@@ -320,14 +331,15 @@ MERO_AI_ROBOT/
 
 > 바퀴 제어(ESP32)는 `vision/src/main.py`의 `control_wheels()`가 직접 담당.
 
-### 상태 머신 흐름 (2026-07-17 기준 — 단순화된 상태)
+### 상태 머신 흐름 (2026-07-20 기준 — 단순화된 상태)
 
 ```
 [Python main.py]                          [OpenRB robot.ino]
 
 SEARCHING                                 IDLE
   탐지 + 이동 (바퀴 제어)
-  ↓ 도달 (bbox 면적 ≥ AREA_THRESHOLD, 3프레임 연속 확인)
+  ↓ 도달 (bbox 면적 ≥ AREA_GRIP_THRESHOLD(35000) + 중앙정렬)
+  정지 → 1초 직진 접근 (FINAL_APPROACH_SECS)
   grip 명령 전송 ──────────────────────▶ GRIPPING
     --test 모드면 여기서 프로그램 종료          그리퍼 닫기 (load confirm+squeeze+hold)
 GRIPPING                                    ※ 집기 성공/실패 상관없이 항상 LIFTING 진행
@@ -356,7 +368,8 @@ DROPPING                                 ◀── {"status":"dumped"} → IDLE
 
 | 파일 | 항목 | 내용 |
 |------|------|------|
-| `main.py` | `AREA_THRESHOLD` | 실물 테스트 후 도착 면적 임계값 조정 (현재 28000) |
+| `main.py` | `AREA_GRIP_THRESHOLD` | 실물 테스트 후 도착 면적 임계값 조정 (현재 35000, 2026-07-20 상향) |
+| `main.py` | `FINAL_APPROACH_SECS` | 직진 접근 시간 실측 조정 (현재 1.0s, 2026-07-20 신규) |
 | `arm.ino` | `ARM_DOWN_RAW` / `ARM_UP_RAW` | ✅ 완료 (1480 / 2850) |
 | `arm.ino` | `CONT_CLOSED_RAW` / `CONT_OPEN_RAW` | ✅ 완료 (2100 / 1000) |
 | `main.py` | `FLAG_AREA_THRESHOLD` | 3m 거리에서 태극기 bbox 면적 실측 (현재 `GO_TO_STORAGE` 트리거 자체가 비활성) |
@@ -782,7 +795,9 @@ python vision/src/main.py --cls d8 --timer
 | ✅ 완료 | `ARM_DOWN_RAW` / `ARM_UP_RAW` | **1480 / 2850** (raw) | 실측 완료 | `arm.ino` |
 | ✅ 완료 | `CONT_CLOSED_RAW` / `CONT_OPEN_RAW` | **2100 / 1000** (raw) | 실측 완료 | `arm.ino` |
 | ✅ 완료 | 모터 속도(Profile Velocity) | 그리퍼50 / 팔40 / 컨테이너40 | 실측+테스트로 조정 완료 | `gripper.ino`, `arm.ino` |
-| 🔴 높음 | `AREA_THRESHOLD` | 28000 | 물체 바로 앞에서 터미널 area= 값 확인 | `main.py` |
+| 🔴 높음 | `AREA_GRIP_THRESHOLD` | 35000 (2026-07-20 상향) | 물체 바로 앞에서 터미널 area= 값 확인 | `main.py` |
+| 🔴 높음 | `FINAL_APPROACH_SECS` | 1.0s (2026-07-20 신규) | 직진 접근 후 grip 위치 실측 조정 | `main.py` |
+| 🟡 중간 | 카메라 포맷 YUY2→MJPG 전환 | 미착수 | USB 대역폭 초과로 `select()` timeout 발생 — TODO 주석만 있음 (2026-07-20) | `main.py` |
 | 🔴 높음 | 수집 개수 카운터 / `GO_TO_STORAGE` 트리거 | 제거됨 | 대회에 쓰려면 재구현 필요 (2026-07-17 참고) | `main.py` |
 | 🔴 높음 | `FLAG_AREA_THRESHOLD` | 60000 | 보관함 3m 거리에서 태극기 bbox 면적 측정 | `main.py` |
 | 🔴 높음 | `FLAG_AREA_SLOW_THRESHOLD` | 30000 | 동일 | `main.py` |
