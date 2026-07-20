@@ -59,8 +59,8 @@ void armSetup() {
   _initOne(ARM_ID,  armLimit,  ARM_SPEED);
   _initOne(CONT_ID, contLimit, CONTAINER_SPEED);
   containerClose();
-  armDown();
-  Serial.println("[팔] 초기화 완료 (팔 내림 + 바스켓 닫힘)");
+  armUp();  // 시작 크기 규정 때문에 전원 켜질 때는 팔을 올린 상태로 대기 — "start" 명령 받으면 armDown()으로 내려감
+  Serial.println("[팔] 초기화 완료 (팔 올림 + 바스켓 닫힘, start 명령 대기)");
 }
 
 // ── 팔 내리기 (집기 위치) ────────────────────────────────
