@@ -681,15 +681,23 @@ try:
                     print(f"[상태] SEARCHING → GRIPPING (grip: {final_approach_cls})")
 
             elif align_final_forward:
-                # cy 정렬 완료 후 1초 직진 → grip 전송 → 종료 (한 번만 수행)
+                # cy 정렬 완료 후 1초 직진 → grip 전송 → GRIPPING (완료되면 다시 SEARCHING으로 반복)
                 control_wheels(None, override_l=FINAL_APPROACH_SPEED - FORWARD_TRIM / 2, override_r=FINAL_APPROACH_SPEED + FORWARD_TRIM / 2)
                 elapsed_af = time.time() - align_final_forward_start
                 print(f"[테스트] 직진중... ({elapsed_af:.1f}s)", end="\r")
                 if elapsed_af >= FINAL_APPROACH_SECS:
                     control_wheels(None)
+                    align_final_forward = False
+                    last_target_id      = -1
+                    gripped_cls         = align_final_forward_cls
+                    openrb_gripped      = False
+                    openrb_dumped       = False
+                    openrb_grip_failed  = False
                     send_grip({"cls": align_final_forward_cls})
-                    print(f"\n[테스트] grip 전송 ({align_final_forward_cls}) — 1회성 종료 (--align-only)")
-                    break
+                    print(f"\n[테스트] grip 전송 ({align_final_forward_cls})")
+                    robot_state  = RobotState.GRIPPING
+                    grip_sent_at = time.time()
+                    print(f"[상태] SEARCHING → GRIPPING (grip: {align_final_forward_cls})")
 
             elif target and ALIGN_ONLY:
                 # 방향 검증 전용: 1단계 제자리 회전(좌우 cx) → 2단계 직진/후진(상하 cy). 회전과 전진을 분리.
@@ -731,15 +739,23 @@ try:
                         print(f"[테스트] {direction} 정렬중... cy={target['cy']:.0f}", end="\r")
 
             elif fb_final_forward:
-                # cx 정렬 완료 후 1초 직진 → grip 전송 → 종료 (한 번만 수행, --align-fwd-first 참고용)
+                # cx 정렬 완료 후 1초 직진 → grip 전송 → GRIPPING (완료되면 다시 SEARCHING으로 반복, --align-fwd-first 참고용)
                 control_wheels(None, override_l=FINAL_APPROACH_SPEED - FORWARD_TRIM / 2, override_r=FINAL_APPROACH_SPEED + FORWARD_TRIM / 2)
                 elapsed_fb = time.time() - fb_final_forward_start
                 print(f"[테스트] 직진중... ({elapsed_fb:.1f}s)", end="\r")
                 if elapsed_fb >= FINAL_APPROACH_SECS:
                     control_wheels(None)
+                    fb_final_forward   = False
+                    last_target_id     = -1
+                    gripped_cls        = fb_final_forward_cls
+                    openrb_gripped     = False
+                    openrb_dumped      = False
+                    openrb_grip_failed = False
                     send_grip({"cls": fb_final_forward_cls})
-                    print(f"\n[테스트] grip 전송 ({fb_final_forward_cls}) — 1회성 종료 (--align-fwd-first)")
-                    break
+                    print(f"\n[테스트] grip 전송 ({fb_final_forward_cls})")
+                    robot_state  = RobotState.GRIPPING
+                    grip_sent_at = time.time()
+                    print(f"[상태] SEARCHING → GRIPPING (grip: {fb_final_forward_cls})")
 
             elif target and ALIGN_FWD_FIRST:
                 # 방향 검증 전용 (순서 반대, 참고 보관): 1단계 전진/후진(상하 cy) → 2단계 제자리 회전(좌우 cx)
