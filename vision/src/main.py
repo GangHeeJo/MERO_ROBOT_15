@@ -48,10 +48,13 @@ parser.add_argument('--test', action='store_true',
                     help='테스트 모드: 집으면 1초 직진 후 바로 drop')
 parser.add_argument('--align-only', action='store_true',
                     help='정렬 테스트용: 중앙정렬+area 도달 시 정지만 하고 직진/grip 생략')
+parser.add_argument('--no-wheels', action='store_true',
+                    help='바퀴 명령을 ESP32로 보내지 않음 (탐지/그리퍼만 테스트할 때)')
 args       = parser.parse_args()
 TARGET_CLS    = set(args.cls) if args.cls else None
 TEST_MODE     = args.test
 ALIGN_ONLY    = args.align_only
+NO_WHEELS     = args.no_wheels
 SHAPE_CLASSES = {'d6', 'd8', 'd12', 'd20'}
 FRUIT_CLASSES = {'apple', 'banana', 'orange', 'pineapple'}
 
@@ -305,7 +308,7 @@ def control_wheels(target: dict | None, override_l: float | None = None, overrid
     target 있으면 mm 또는 픽셀 기반 차동 조향.
     target=None이면 정지.
     """
-    if ser_esp32 is None or not ser_esp32.is_open:
+    if NO_WHEELS or ser_esp32 is None or not ser_esp32.is_open:
         return
 
     if override_l is not None:
