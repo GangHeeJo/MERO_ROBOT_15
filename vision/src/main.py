@@ -548,6 +548,18 @@ try:
                     grip_sent_at = time.time()
                     print(f"[상태] SEARCHING → GRIPPING (grip: {final_approach_cls})")
 
+            elif target and ALIGN_ONLY:
+                # 방향(좌우 회전) 검증 전용: 전진 없이 제자리 회전만으로 가로(cx) 정렬
+                frame_w    = FRAME_W or 640
+                turn       = max(-1.0, min(1.0, (target["cx"] - frame_w / 2) / (frame_w / 2)))
+                cx_aligned = abs(target["cx"] - frame_w / 2) <= CENTER_MARGIN_PX
+                if cx_aligned:
+                    control_wheels(None)
+                    print(f"[테스트] 좌우 정렬 완료 (cx={target['cx']:.0f}) — 정지 (--align-only)", end="\r")
+                else:
+                    control_wheels(None, override_l=TURN_ONLY_SPEED * turn, override_r=-TURN_ONLY_SPEED * turn)
+                    print(f"[테스트] 회전 정렬중... cx={target['cx']:.0f}", end="\r")
+
             elif target:
                 if time.time() - _last_print_t >= 0.5:
                     print(f"[타겟] {target['cls']} | area={target['area']}")
@@ -555,14 +567,11 @@ try:
 
                 if at_target:
                     control_wheels(None)
-                    if ALIGN_ONLY:
-                        print(f"[테스트] 중앙정렬+area 도달 (area={target['area']}) — 정지만 (--align-only)", end="\r")
-                    else:
-                        # area 임계 최초 도달 — 정지 후 직진 접근 단계 진입
-                        final_approach       = True
-                        final_approach_start = time.time()
-                        final_approach_cls   = target["cls"]
-                        print(f"\n[상태] 목표 크기 도달 (area={target['area']}) → 직진 접근 시작")
+                    # area 임계 최초 도달 — 정지 후 직진 접근 단계 진입
+                    final_approach       = True
+                    final_approach_start = time.time()
+                    final_approach_cls   = target["cls"]
+                    print(f"\n[상태] 목표 크기 도달 (area={target['area']}) → 직진 접근 시작")
                 else:
                     control_wheels(target)
 
