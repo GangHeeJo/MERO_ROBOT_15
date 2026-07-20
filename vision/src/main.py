@@ -600,8 +600,9 @@ try:
                 if align_phase == 0:
                     if cx_aligned:
                         control_wheels(None)
+                        print(f"\n[테스트] 좌우 정렬 완료 (cx={target['cx']:.0f}) → 1초 대기 후 전후 정렬 시작")
+                        time.sleep(1.0)
                         align_phase = 1
-                        print(f"\n[테스트] 좌우 정렬 완료 (cx={target['cx']:.0f}) → 전후 정렬 시작")
                     else:
                         turn = max(-1.0, min(1.0, (target["cx"] - cx_ref) / (frame_w / 2)))
                         control_wheels(None, override_l=TURN_ONLY_SPEED * turn, override_r=-TURN_ONLY_SPEED * turn)
