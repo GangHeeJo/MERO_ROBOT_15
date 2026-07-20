@@ -144,8 +144,8 @@ MAX_MY              = 150.0
 AREA_GRIP_THRESHOLD = 35000   # 이 면적 이상이면 정지 후 직진 접근 → grip
 AREA_SLOW_THRESHOLD = 20000   # 이 면적 이상이면 감속 시작
 AREA_ROTATE_THRESHOLD = 15000 # 이 이하일 때만 제자리 회전 정렬
-CENTER_MARGIN_PX    = 60      # 픽셀 모드: 가로 중심에서 이 픽셀 이내 (시각화 가이드용)
-CENTER_MARGIN_Y_PX  = 50      # 픽셀 모드: 세로 중심에서 이 픽셀 이내 (시각화 가이드용)
+CENTER_MARGIN_PX    = 30      # 픽셀 모드: 가로 중심에서 이 픽셀 이내 (시각화 가이드용)
+CENTER_MARGIN_Y_PX  = 25      # 픽셀 모드: 세로 중심에서 이 픽셀 이내 (시각화 가이드용)
 CENTER_OFFSET_Y_PX  = 20      # 세로 중심 오프셋 (양수=아래)
 ALIGN_THRESHOLD     = 0.25    # 이 이상 turn값이면 전진 없이 제자리 회전 우선
 TURN_ONLY_SPEED     = 0.2     # 제자리 회전 속도
@@ -363,8 +363,7 @@ def _init_camera(index, name):
     if not cap.isOpened():
         print(f"[카메라] {name} ({index}번) 열기 실패")
         return None
-    # TODO: YUY2(비압축)라 USB 대역폭 초과로 select() timeout 발생 — MJPG로 전환 예정
-    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('Y', 'U', 'Y', '2'))
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1200)
     cap.set(cv2.CAP_PROP_FPS, 50)
