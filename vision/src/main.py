@@ -46,9 +46,12 @@ parser.add_argument('--timer', action='store_true',
                     help='3분 경기 타이머 표시')
 parser.add_argument('--test', action='store_true',
                     help='테스트 모드: 집으면 1초 직진 후 바로 drop')
+parser.add_argument('--align-only', action='store_true',
+                    help='정렬 테스트용: 중앙정렬+area 도달 시 정지만 하고 직진/grip 생략')
 args       = parser.parse_args()
 TARGET_CLS    = set(args.cls) if args.cls else None
 TEST_MODE     = args.test
+ALIGN_ONLY    = args.align_only
 SHAPE_CLASSES = {'d6', 'd8', 'd12', 'd20'}
 FRUIT_CLASSES = {'apple', 'banana', 'orange', 'pineapple'}
 
@@ -551,12 +554,15 @@ try:
                     _last_print_t = time.time()
 
                 if at_target:
-                    # area 임계 최초 도달 — 정지 후 직진 접근 단계 진입
                     control_wheels(None)
-                    final_approach       = True
-                    final_approach_start = time.time()
-                    final_approach_cls   = target["cls"]
-                    print(f"\n[상태] 목표 크기 도달 (area={target['area']}) → 직진 접근 시작")
+                    if ALIGN_ONLY:
+                        print(f"[테스트] 중앙정렬+area 도달 (area={target['area']}) — 정지만 (--align-only)", end="\r")
+                    else:
+                        # area 임계 최초 도달 — 정지 후 직진 접근 단계 진입
+                        final_approach       = True
+                        final_approach_start = time.time()
+                        final_approach_cls   = target["cls"]
+                        print(f"\n[상태] 목표 크기 도달 (area={target['area']}) → 직진 접근 시작")
                 else:
                     control_wheels(target)
 
