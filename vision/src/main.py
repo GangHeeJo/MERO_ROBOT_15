@@ -68,9 +68,30 @@ else:
     flag_model = None
     print(f"[모델] flag.pt 없음 — GO_TO_STORAGE 태극기 감지 비활성화")
 
-# ── 카메라 인덱스 ────────────────────────────────────────
-CAMERA_INDEX_OBJ  = 2   # 물체 카메라 (Arducam, 전면)
-CAMERA_INDEX_FLAG = 0   # 태극기 카메라 (NV76-CM400A, 후면)
+# ── 카메라 인덱스 자동 감지 ──────────────────────────────
+def _find_camera_index(keywords, fallback):
+    """장치 이름 키워드로 카메라 인덱스 자동 탐지 (/sys/class/video4linux 기반).
+    카메라 하나가 capture/metadata 등 여러 /dev/videoN 노드를 가질 수 있어
+    매칭된 것 중 가장 작은 번호(=capture 노드)를 사용한다."""
+    matches = []
+    for path in glob.glob("/sys/class/video4linux/video*/name"):
+        try:
+            with open(path) as f:
+                name = f.read().strip().lower()
+        except OSError:
+            continue
+        if any(k.lower() in name for k in keywords):
+            idx = int(path.split("/")[-2].replace("video", ""))
+            matches.append(idx)
+    if matches:
+        idx = min(matches)
+        print(f"[카메라] {keywords[0]} → /dev/video{idx}")
+        return idx
+    print(f"[카메라] {keywords[0]} 자동 탐지 실패 → 기본값 {fallback}")
+    return fallback
+
+CAMERA_INDEX_OBJ  = _find_camera_index(["arducam"], 2)             # 물체 카메라 (전면)
+CAMERA_INDEX_FLAG = _find_camera_index(["nv76", "cm400"], 0)       # 태극기 카메라 (후면)
 
 # ── 캘리브레이션 로드 ────────────────────────────────────
 CALIB_PATH   = os.path.join(BASE_DIR, "model", "calibration.json")
