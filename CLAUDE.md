@@ -127,7 +127,7 @@ Jetson main.py
 
 **Python (main.py) — 현재 실제 동작 (2026-07-21 재작성):**
 ```
-SEARCHING → 타겟 발견 시 gripper_open 전송, 정밀 정렬(회전→전후) 진행
+SEARCHING → 타겟 발견 시 gripper_open 전송, 정밀 정렬(전후→회전) 진행
          → area(bbox 면적) ≥ AREA_GRIP_THRESHOLD 이고 화면 중앙 작은 박스 안에 들어오면
            정지 → FINAL_APPROACH_SECS(현재 1.7초, `main.py` 상수 확인) 직진 → grip 전송 → GRIPPING
          → 정렬 중 타겟 놓치면 gripper_close 전송 후 재탐색

@@ -7,12 +7,14 @@ OpenRB가 응답 없을 때 ESP32/바퀴 쪽은 멀쩡한지 분리해서 확인
   python3 vision/src/wheels_test.py
 
 명령 (Enter로 입력):
-  w      전진 0.5초
-  s      정지
-  a      제자리 좌회전 0.5초
-  d      제자리 우회전 0.5초
-  L R    L,R 속도 직접 지정해서 0.5초 구동 (예: 0.2 -0.2)
-  q      종료
+  w        전진 0.5초
+  s        정지
+  a        제자리 좌회전 0.5초
+  d        제자리 우회전 0.5초
+  f <초>   SPEED로 입력한 초만큼 직진 (예: f 3)
+  r <초>   SPEED로 입력한 초만큼 제자리 회전 (양수=우회전, 음수=좌회전, 예: r 2 / r -2)
+  L R      L,R 속도 직접 지정해서 0.5초 구동 (예: 0.2 -0.2)
+  q        종료
 """
 
 import serial
@@ -70,14 +72,32 @@ def main():
                 drive(ser, SPEED, -SPEED, DRIVE_SECS)
             else:
                 parts = raw.split()
-                if len(parts) == 2:
+                if len(parts) == 2 and parts[0] == "f":
+                    try:
+                        secs = float(parts[1])
+                        print(f"[직진] {secs:.1f}초...")
+                        drive(ser, SPEED, SPEED, secs)
+                    except ValueError:
+                        print("[오류] 'f <초>' 형식으로 입력하세요 (예: f 3)")
+                elif len(parts) == 2 and parts[0] == "r":
+                    try:
+                        secs = float(parts[1])
+                        direction = "우" if secs >= 0 else "좌"
+                        print(f"[회전] {direction}회전 {abs(secs):.1f}초...")
+                        if secs >= 0:
+                            drive(ser, SPEED, -SPEED, secs)
+                        else:
+                            drive(ser, -SPEED, SPEED, -secs)
+                    except ValueError:
+                        print("[오류] 'r <초>' 형식으로 입력하세요 (예: r 2 / r -2)")
+                elif len(parts) == 2:
                     try:
                         l, r = float(parts[0]), float(parts[1])
                         drive(ser, l, r, DRIVE_SECS)
                     except ValueError:
                         print("[오류] 'L R' 형식의 숫자 두 개를 입력하세요 (예: 0.2 -0.2)")
                 else:
-                    print("[오류] w/s/a/d 또는 'L R' 형식으로 입력하세요")
+                    print("[오류] w/s/a/d, 'f <초>', 'r <초>' 또는 'L R' 형식으로 입력하세요")
     except (KeyboardInterrupt, EOFError):
         pass
     finally:
