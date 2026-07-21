@@ -26,7 +26,7 @@ bool safeSetGoalPosition(uint8_t id, int32_t goal_raw, uint32_t wait_ms);
 #define ARM_UP_RAW     2850   // 투하 위치
 
 // ── 바스켓 위치 (raw, 0~4095, 실측) ───────────────────────
-#define CONT_CLOSED_RAW  2100
+#define CONT_CLOSED_RAW  2328
 #define CONT_OPEN_RAW    1000
 
 // ── 토크 제한 (%) ────────────────────────────────────────
