@@ -148,7 +148,7 @@ python vision/src/main.py --cls d12 --test               # 도달하면 grip 1�
 | `AREA_SLOW_THRESHOLD` | `vision/src/main.py` | 20000 | ⬜ 실측 필요 |
 | `CENTER_MARGIN_PX` / `CENTER_MARGIN_Y_PX` | `vision/src/main.py` | 42px / 35px (2026-07-21 튜닝) | 🟡 실전 거리에서 재검증 권장 |
 | `CENTER_OFFSET_X_PX` / `CENTER_OFFSET_Y_PX` | `vision/src/main.py` | 0 / 220 (2026-07-21 튜닝, 양수Y=아래) | 🟡 카메라 재장착 시 재조정 필요 |
-| `FINAL_APPROACH_SECS` | `vision/src/main.py` | 1.7초 (정지→직진 시간, 2026-07-21 튜닝) | 🟡 실전 거리에서 재검증 권장 |
+| `FINAL_APPROACH_SECS` | `vision/src/main.py` | 2.0초 (정지→직진 시간) | 🟡 실전 거리에서 재검증 권장 |
 | `FORWARD_TRIM` | `vision/src/main.py` | 0.025 (직진 시 우측 쏠림 보정, 2026-07-21 추가) | 🟡 실물 재확인 필요 — 계속 오른쪽으로 쏠리면 기계적(바퀴/모터) 문제일 수 있음 |
 | `ENCODER_TICKS_PER_M` | `vision/src/encoder_test.py` | **105.2** | ✅ 완료 |
 | `FLAG_AREA_THRESHOLD` | `vision/src/main.py` | 60000 | ⬜ 3m 거리에서 실측 (현재 `GO_TO_STORAGE` 트리거 자체가 비활성 상태) |
@@ -317,16 +317,6 @@ MERO_AI_ROBOT/
 
 ---
 
-## 2026-07-20 작업 내역
-
-- **SEARCHING grip 트리거 방식 변경** (`vision/src/main.py`) — 기존 3프레임 연속 confirm 방식(`CONFIRM_FRAMES`)을 제거하고, area+중앙정렬 조건을 최초 충족하면 **정지 → 1초간 정면 직진(`FINAL_APPROACH_SECS`) → grip 전송** 방식으로 변경. 새 상태 변수 `final_approach`/`final_approach_start`/`final_approach_cls` 추가
-- **임계값 조정** — `AREA_THRESHOLD`(28000) → `AREA_GRIP_THRESHOLD`(35000)로 이름 변경 + 값 상향. `CENTER_MARGIN_PX`(120→60), `CENTER_MARGIN_Y_PX`(100→50) 절반으로 축소해 중앙정렬 기준을 더 엄격하게 변경
-- **TODO 주석 추가** (`vision/src/main.py`, 카메라 초기화부) — "YUY2(비압축) 포맷이 USB 대역폭 초과로 `select()` timeout 유발 — MJPG 전환 예정" 미해결 이슈만 표시, 코드 변경은 아직 없음
-
-> ⚠️ `AREA_GRIP_THRESHOLD`(35000), `FINAL_APPROACH_SECS`(1.0s), `CENTER_MARGIN_PX`/`CENTER_MARGIN_Y_PX`(60/50) 모두 미실측값 — 실물 테스트로 재조정 필요.
-
----
-
 ## 파일별 역할 (vision/)
 
 | 파일 | 역할 |
@@ -353,15 +343,14 @@ MERO_AI_ROBOT/
 
 > 바퀴 제어(ESP32)는 `vision/src/main.py`의 `control_wheels()`가 직접 담당.
 
-### 상태 머신 흐름 (2026-07-20 기준 — 단순화된 상태)
+### 상태 머신 흐름 (2026-07-17 기준 — 단순화된 상태)
 
 ```
 [Python main.py]                          [OpenRB robot.ino]
 
 SEARCHING                                 IDLE
   탐지 + 이동 (바퀴 제어)
-  ↓ 도달 (bbox 면적 ≥ AREA_GRIP_THRESHOLD(35000) + 중앙정렬)
-  정지 → 1초 직진 접근 (FINAL_APPROACH_SECS)
+  ↓ 도달 (bbox 면적 ≥ AREA_THRESHOLD, 3프레임 연속 확인)
   grip 명령 전송 ──────────────────────▶ GRIPPING
     --test 모드면 여기서 프로그램 종료          그리퍼 닫기 (load confirm+squeeze+hold)
 GRIPPING                                    ※ 집기 성공/실패 상관없이 항상 LIFTING 진행
@@ -390,8 +379,7 @@ DROPPING                                 ◀── {"status":"dumped"} → IDLE
 
 | 파일 | 항목 | 내용 |
 |------|------|------|
-| `main.py` | `AREA_GRIP_THRESHOLD` | 실물 테스트 후 도착 면적 임계값 조정 (현재 35000, 2026-07-20 상향) |
-| `main.py` | `FINAL_APPROACH_SECS` | 직진 접근 시간 실측 조정 (현재 1.0s, 2026-07-20 신규) |
+| `main.py` | `AREA_THRESHOLD` | 실물 테스트 후 도착 면적 임계값 조정 (현재 28000) |
 | `arm.ino` | `ARM_DOWN_RAW` / `ARM_UP_RAW` | ✅ 완료 (1480 / 2850) |
 | `arm.ino` | `CONT_CLOSED_RAW` / `CONT_OPEN_RAW` | ✅ 완료 (2100 / 1000) |
 | `main.py` | `FLAG_AREA_THRESHOLD` | 3m 거리에서 태극기 bbox 면적 실측 (현재 `GO_TO_STORAGE` 트리거 자체가 비활성) |
@@ -584,17 +572,7 @@ Colab 노트북 실행 전 필요한 것:
 - **새 후면(태극기) 카메라 `NV76-CM400A` 웹캠 추가 연결** — 기존 Arducam(물체캠, USB3, `lsusb -t` 확인 결과 정상적으로 5000M 라인에 물려있음)과 별개로 후면용으로 새로 장착. 오토포커스가 계속 초점을 바꿔서 화면이 흐려지는 문제 있었음 → `v4l2-ctl -d /dev/video0 --set-ctrl=focus_automatic_continuous=0` + `--set-ctrl=focus_absolute=<값>`으로 오토포커스 끄고 고정 초점 설정 가능 (범위 0~1023, 최적값은 촬영 거리 보고 실측 필요 — 아직 미확정)
 - **정체불명의 USB 장치 `XIFT NV76-CM400A` (VID:PID `6210:ec03`)** — 알고 보니 이게 그 신규 웹캠이었음. 이름 없는 모델이라 `lsusb`가 이상하게 표시한 것
 
-### `vision/src/main.py` — PATH_NAV/PATH_RETURN 그리드 경로 주행 + 정밀 정렬 승격
-
-- **`--align-only` vs `--align-fwd-first` 비교 결과** — 실물 테스트로 **전진/후진(상하 cy) 먼저 → 회전(좌우 cx) 나중**(`--align-fwd-first` 순서)이 맞는 것으로 확인. 이 순서를 `precise_align`이라는 이름으로 SEARCHING의 실제 grip 로직에 기본 반영함. 두 플래그 자체는 참고용으로 남겨둠 (제거하지 않음)
-- **SEARCHING에 정밀 정렬 단계 추가** — `_is_at_target()`을 area 임계 단독 체크로 단순화(중심 정렬은 더 이상 여기서 안 봄) → area 도달 시 `precise_align=True` 진입 → 전진/후진으로 cy 정렬 → 회전으로 cx 정렬 → 완료되면 기존 `final_approach`(직진 접근+grip) 단계로 이어짐
-- **`PATH_NAV`/`PATH_RETURN` 상태 신규 추가** (`--path-test` 플래그) — 가로 7×세로 6칸(50cm 간격) 그리드 기반 고정 경로 주행: 시작 1m 직진 → 우회전 → 직진(벽까지) → 좌회전 → 직진(지점까지) → 좌회전 → 직진(벽까지) → 좌회전 → 완료 시 `GO_TO_STORAGE`로 자동 전환
-  - 직진1/3(벽 탐색 구간) 중에만 목표 물건 감지 시 `SEARCHING`으로 잠깐 빠져서 집고, 집는 동안 이동/회전한 시간을 누적해뒀다가 grip 후 `PATH_RETURN` 상태에서 그 시간만큼 반대로 후진+반대 회전해서 원래 있던 자리로 복귀한 뒤 경로 재개
-  - **회전/직진 시간 실측 반영**: `PATH_SECS_PER_METER = 4.0`(1m당 4초), `PATH_TURN_90_SECS = 1.5`(제자리 90도 회전 1.5초) — 나머지 구간 시간은 이 값들로 계산됨
-  - 벽 감지(`is_near_wall()`)는 아직 미구현(항상 False) — YOLO 대신 **바닥-벽 경계선의 화면상 높이로 거리 추정하는 방식**을 검토 중 (다음 세션에서 이어서 논의)
-- **`select_target()` 우선순위 변경** — area 최대인 것 우선, area가 비슷한(`AREA_SIMILAR_TOLERANCE`=3000 이내) 후보가 여럿이면 화면 오른쪽(cx 큰 것) 우선 선택
-
-> ⚠️ **다음 세션에서 확인할 것**: `FORWARD_TRIM` 값이 충분한지(계속 오른쪽으로 쏠리면 하드웨어 점검), `dialout` 그룹 등록 여부, 그리퍼 2600 raw가 기계적 한계 안 걸리는지, 새 웹캠 `focus_absolute` 최적값, `PATH_NAV` 좌/우회전 부호(`PATH_LEFT_L/R`, `PATH_RIGHT_L/R`)가 실제 방향과 맞는지, `PATH_TO_POINT_SECS`/`PATH_START_FORWARD_SECS` 실측 재검증, 벽 감지 방식(바닥-벽 경계선 높이 기반) 구현 여부.
+> ⚠️ **다음 세션에서 확인할 것**: `--align-only` vs `--align-fwd-first` 중 실물에서 어느 순서가 더 안정적인지 비교 결과, `FORWARD_TRIM` 값이 충분한지(계속 오른쪽으로 쏠리면 하드웨어 점검), `dialout` 그룹 등록 여부, 그리퍼 2600 raw가 기계적 한계 안 걸리는지, 새 웹캠 `focus_absolute` 최적값.
 
 ---
 
@@ -865,7 +843,6 @@ python vision/src/main.py --cls d8 --timer
 | ✅ 완료 | `CONT_CLOSED_RAW` / `CONT_OPEN_RAW` | **2100 / 1000** (raw) | 실측 완료 | `arm.ino` |
 | ✅ 완료 | 모터 속도(Profile Velocity) | 그리퍼50 / 팔40 / 컨테이너40 | 실측+테스트로 조정 완료 | `gripper.ino`, `arm.ino` |
 | ✅ 완료 | `AREA_GRIP_THRESHOLD` | 30000 (2026-07-21, 기존 `AREA_THRESHOLD` 대체) | 실전 거리에서 재검증 권장 | `main.py` |
-| ✅ 완료 | 카메라 포맷 YUY2→MJPG 전환 | 완료 (2026-07-21) | USB 대역폭 초과 `select()` timeout 문제 해결 | `main.py` |
 | 🔴 높음 | 수집 개수 카운터 / `GO_TO_STORAGE` 트리거 | 제거됨 | 대회에 쓰려면 재구현 필요 (2026-07-17 참고) | `main.py` |
 | 🔴 높음 | `FLAG_AREA_THRESHOLD` | 60000 | 보관함 3m 거리에서 태극기 bbox 면적 측정 | `main.py` |
 | 🔴 높음 | `FLAG_AREA_SLOW_THRESHOLD` | 30000 | 동일 | `main.py` |

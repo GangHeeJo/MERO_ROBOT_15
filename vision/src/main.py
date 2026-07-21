@@ -14,10 +14,6 @@ MERO_AI_ROBOT 메인 실행 파일
                    → 모든 타겟 수집 완료 시 GO_TO_STORAGE
   GO_TO_STORAGE  — 바퀴로 보관함까지 고정 경로 이동 → dump 전송
   DROPPING       — dump 전송 후 dumped 신호 대기 (컨테이너 열어 쏟기 완료)
-  PATH_NAV       — --path-test 시 진입하는 그리드 기반 고정 경로 주행 (실험용, 벽 감지/회전시간 미보정)
-                   → 직진1/3(벽 탐색 구간)에서 목표 물건 감지 시 SEARCHING으로 전환해 잡음
-                   → 경로 완료 시 GO_TO_STORAGE로 전환 (후면 카메라로 태극기 인식 후 접근 → dump)
-  PATH_RETURN    — SEARCHING 중 이동/회전한 시간만큼 반대로 움직여 원위치 복귀 후 PATH_NAV 재개
 
 시리얼:
   /dev/ttyACM0 → ESP32  (UGV02 바퀴)   {"T":1, "L":speed, "R":speed}
@@ -55,17 +51,13 @@ parser.add_argument('--align-only', action='store_true',
 parser.add_argument('--no-wheels', action='store_true',
                     help='바퀴 명령을 ESP32로 보내지 않음 (탐지/그리퍼만 테스트할 때)')
 parser.add_argument('--align-fwd-first', action='store_true',
-                    help='정렬 순서 테스트용 (참고 보관): --align-only와 반대로 전진/후진(상하 cy) 먼저 → 회전(좌우 cx) 나중. '
-                         '실제 grip 로직은 이 순서를 이미 기본값으로 사용함 (SEARCHING의 precise_align)')
-parser.add_argument('--path-test', action='store_true',
-                    help='경로 주행 테스트 모드: SEARCHING 대신 PATH_NAV로 시작 (그리드 기반 고정 경로, 실험용)')
+                    help='정렬 순서 테스트용: --align-only와 반대로 전진/후진(상하 cy) 먼저 → 회전(좌우 cx) 나중')
 args       = parser.parse_args()
 TARGET_CLS    = set(args.cls) if args.cls else None
 TEST_MODE     = args.test
-ALIGN_ONLY      = args.align_only
-NO_WHEELS       = args.no_wheels
+ALIGN_ONLY    = args.align_only
+NO_WHEELS     = args.no_wheels
 ALIGN_FWD_FIRST = args.align_fwd_first
-PATH_TEST_MODE  = args.path_test
 SHAPE_CLASSES = {'d6', 'd8', 'd12', 'd20'}
 FRUIT_CLASSES = {'apple', 'banana', 'orange', 'pineapple'}
 
@@ -135,11 +127,9 @@ def pixel_to_mm(cx, cy):
 
 CONF_THRESHOLD_SHAPE = 0.25  # shape 클래스 confidence 임계값
 CONF_THRESHOLD_FRUIT = 0.6   # 과일 클래스 — 오픽업 패널티 40점이라 높게 설정
-AREA_SIMILAR_TOLERANCE = 3000  # 최대 area와 이 이내로 차이나면 "비슷한 크기"로 보고 오른쪽(cx 큰 것) 우선
 
 def select_target(objects: list) -> dict | None:
-    """--cls 필터 + 클래스별 confidence 임계값 통과한 것 중 area가 큰 것 우선.
-    area가 최대값과 AREA_SIMILAR_TOLERANCE 이내로 비슷한 후보가 여럿이면 화면 오른쪽(cx 큰 것) 우선."""
+    """--cls 필터 + 목표 개수 미달 + 클래스별 confidence 임계값 통과한 것 중 area 최대 반환."""
     if not objects:
         return None
     filtered = []
@@ -151,9 +141,7 @@ def select_target(objects: list) -> dict | None:
             filtered.append(o)
     if not filtered:
         return None
-    max_area   = max(o['area'] for o in filtered)
-    candidates = [o for o in filtered if max_area - o['area'] <= AREA_SIMILAR_TOLERANCE]
-    return max(candidates, key=lambda o: o['cx'])
+    return max(filtered, key=lambda o: o['area'])
 
 
 # ── 시리얼 포트 자동 감지 ────────────────────────────────
@@ -220,47 +208,14 @@ FLAG_SEARCH_SPEED        = 0.15   # 탐색 회전 속도
 FLAG_APPROACH_SPEED      = 0.2    # 후진 접근 속도
 FLAG_APPROACH_SLOW       = 0.1    # 감속 후진 속도
 
-# ── 경로 주행 파라미터 (--path-test, 그리드 기반 고정 경로 실험용) ──
-# 가상 좌표계: 가로 7칸 × 세로 6칸, 간격 50cm, 왼쪽 아래 = (1,1)
-# 경로: 시작점에서 1m 직진 → 우회전
-#       → (5,1)-(6,1) 사이 통과하며 직진 → 벽 근접 시 좌회전
-#       → 직진해서 (2,6)-(3,6) 사이 도달 → 좌회전
-#       → 직진 → 벽 근접 시 좌회전
-#       → 완료 시 GO_TO_STORAGE 전환 (후면 카메라로 태극기 인식 → 접근 → dump)
-# 회전시간(PATH_TURN_90_SECS)/직진시간은 실측값(2026-07-21) 반영. 벽 감지(is_near_wall)는
-# 아직 자리만 잡아둔 상태 — YOLO 벽 감지 모델이 붙기 전까지는 정확히 동작하지 않음
-GRID_SPACING_M       = 0.5    # 그리드 한 칸 간격 (참고용)
-PATH_FORWARD_SPEED   = MOVE_SPEED
-PATH_TURN_SPEED      = 0.2
-PATH_SECS_PER_METER  = 4.0    # 실측: 1m 직진에 약 4초 소요 (PATH_FORWARD_SPEED 기준)
-PATH_TURN_90_SECS    = 1.5    # 실측: 제자리 90도 회전에 약 1.5초 소요
-# 좌회전 시 L/R 부호. 실제 로봇에서 좌회전 방향이 맞는지 확인 후 반대면 부호 스왑
-PATH_LEFT_L          = -PATH_TURN_SPEED
-PATH_LEFT_R          =  PATH_TURN_SPEED
-# 우회전 시 L/R 부호 — 좌회전의 반대 부호. 마찬가지로 실제 방향 확인 필요
-PATH_RIGHT_L         =  PATH_TURN_SPEED
-PATH_RIGHT_R         = -PATH_TURN_SPEED
-# (5,1)-(6,1) → (2,6)-(3,6) 구간: 가로 3칸 = 1.5m 이동
-PATH_TO_POINT_SECS   = PATH_SECS_PER_METER * (GRID_SPACING_M * 3)
-# 시작점에서 1m 직진 구간
-PATH_START_FORWARD_SECS = PATH_SECS_PER_METER * 1.0
-# TODO: is_near_wall()에 YOLO 벽 감지 모델 연동 전까지 쓰는 안전 타임아웃
-PATH_WALL_TIMEOUT_SECS = 20.0
-
-# 직진1/직진3(path_phase 2, 6) 중 목표 물건을 발견해 SEARCHING으로 빠졌다가 grip 후
-# 원위치로 되돌아올 때 쓰는 상태 (PATH_RETURN). 후진 이동 속도는 PATH_FORWARD_SPEED 재사용
-PATH_INTERRUPT_PHASES = (2, 6)
-
 # ── 상태 머신 ────────────────────────────────────────────
 class RobotState(Enum):
     SEARCHING     = "SEARCHING"
     GRIPPING      = "GRIPPING"
     GO_TO_STORAGE = "GO_TO_STORAGE"
     DROPPING      = "DROPPING"
-    PATH_NAV      = "PATH_NAV"
-    PATH_RETURN   = "PATH_RETURN"
 
-robot_state         = RobotState.PATH_NAV if PATH_TEST_MODE else RobotState.SEARCHING
+robot_state         = RobotState.SEARCHING
 grip_sent_at        = 0.0
 drop_sent_at        = 0.0
 _frame_fail_count   = 0
@@ -277,50 +232,10 @@ align_phase          = 0      # --align-only 전용: 0=회전으로 좌우(cx) �
 align_final_forward       = False  # --align-only 전용: cy 정렬 완료 후 1초 직진 중
 align_final_forward_start = 0.0
 align_final_forward_cls   = None
-fb_phase          = 0      # --align-fwd-first 전용 (참고 보관): 0=전진/후진으로 상하(cy) 정렬, 1=회전으로 좌우(cx) 정렬
+fb_phase          = 0      # --align-fwd-first 전용: 0=전진/후진으로 상하(cy) 정렬, 1=회전으로 좌우(cx) 정렬
 fb_final_forward       = False  # --align-fwd-first 전용: cx 정렬 완료 후 직진 중
 fb_final_forward_start = 0.0
 fb_final_forward_cls   = None
-approach_phase = 0      # 실제 grip 정렬: 0=전진/후진으로 상하(cy) 정렬, 1=회전으로 좌우(cx) 정렬
-precise_align  = False  # True면 area 임계 도달 후 정밀 정렬(전진/후진→회전) 진행 중
-
-# PATH_NAV: 0=시작직진(1m) 1=우회전 2=직진1(벽까지) 3=좌회전1 4=직진2(지점까지)
-#           5=좌회전2 6=직진3(벽까지) 7=좌회전3 8=완료
-path_phase        = 0
-path_phase_start  = time.time() if PATH_TEST_MODE else 0.0
-path_resume_phase = None  # 직진1/3 중 목표 물건 발견 시 중단된 path_phase 저장 (원위치 복귀 후 재개용)
-
-# SEARCHING으로 빠져 있는 동안(path_resume_phase가 설정된 구간) 누적한 이동/회전 시간.
-# PATH_RETURN에서 이 시간만큼 반대로 움직여 원위치 근처로 되돌아오는 데 사용
-search_move_secs        = 0.0
-search_turn_secs_signed = 0.0  # 부호: +면 우회전(PATH_RIGHT) 방향 우세, -면 좌회전(PATH_LEFT) 방향 우세
-
-# PATH_RETURN: 0=후진(search_move_secs만큼) 1=반대 방향 회전(search_turn_secs만큼)
-path_return_stage       = 0
-path_return_stage_start = 0.0
-
-
-def _after_grip_return_state():
-    """GRIPPING 종료 후 돌아갈 상태. PATH_NAV 이동 중 grip으로 빠진 경우면 PATH_RETURN(원위치 복귀)으로,
-    아니면 SEARCHING으로."""
-    global path_return_stage, path_return_stage_start
-    if path_resume_phase is not None:
-        path_return_stage       = 0
-        path_return_stage_start = time.time()
-        return RobotState.PATH_RETURN, path_resume_phase
-    return RobotState.SEARCHING, None
-
-
-def _track_search_motion(L, R, dt):
-    """PATH_NAV 중단 중(path_resume_phase 설정 상태)에만 이동/회전 시간을 누적."""
-    global search_move_secs, search_turn_secs_signed
-    if path_resume_phase is None or dt <= 0 or (L == 0.0 and R == 0.0):
-        return
-    if (L > 0) == (R > 0):
-        search_move_secs += dt
-    else:
-        # L>0,R<0 → PATH_RIGHT(우회전) 방향, L<0,R>0 → PATH_LEFT(좌회전) 방향
-        search_turn_secs_signed += dt if L > 0 else -dt
 
 # IMU
 imu_yaw       = None
@@ -402,7 +317,7 @@ def control_wheels(target: dict | None, override_l: float | None = None, overrid
     target=None이면 정지.
     """
     if NO_WHEELS or ser_esp32 is None or not ser_esp32.is_open:
-        return 0.0, 0.0
+        return
 
     if override_l is not None:
         L, R = override_l, override_r
@@ -440,21 +355,18 @@ def control_wheels(target: dict | None, override_l: float | None = None, overrid
             R = max(-0.5, min(0.5, speed * (1.0 - turn)))
 
     ser_esp32.write((json.dumps({"T": 1, "L": round(L, 2), "R": round(R, 2)}) + "\n").encode())
-    return L, R
 
 
 def _is_at_target(target: dict) -> bool:
-    """도달(=정밀 정렬 단계 진입) 여부 판단. mm 모드 → 거리, 픽셀 모드 → area 임계 도달.
-    중심 정렬(cx/cy)은 여기서 보지 않고, 도달 이후 정밀 정렬 단계(전진/후진→회전)에서 별도로 맞춘다."""
+    """도달 여부 판단. mm 모드 → 거리, 픽셀 모드 → area + 중심 정렬."""
     if target.get("mx") is not None:
         dist = (target["mx"] ** 2 + target["my"] ** 2) ** 0.5
         return dist < ARRIVE_THRESHOLD_MM
-    return target.get("area", 0) >= AREA_GRIP_THRESHOLD
-
-
-def is_near_wall(frame) -> bool:
-    """벽 근접 여부 판단. TODO: YOLO 벽 감지 모델(wall.pt 등) 연동 예정 — 현재는 항상 False."""
-    return False
+    frame_w  = FRAME_W or 640
+    frame_h  = FRAME_H or 480
+    cx_ok = abs(target["cx"] - (frame_w / 2 + CENTER_OFFSET_X_PX)) <= CENTER_MARGIN_PX
+    cy_ok = abs(target["cy"] - (frame_h / 2 + CENTER_OFFSET_Y_PX)) <= CENTER_MARGIN_Y_PX
+    return cx_ok and cy_ok and target.get("area", 0) >= AREA_GRIP_THRESHOLD
 
 
 # ── OpenRB 명령 전송 ─────────────────────────────────────
@@ -583,7 +495,6 @@ fps_counter = 0
 fps_display = 0.0
 fps_timer   = time.time()
 _last_print_t = 0.0
-_last_frame_t = time.time()  # 이동/회전 시간 누적용 dt 기준
 frame = None  # 최초 루프 진입 전 초기화
 
 send_start()  # 시작 크기 규정으로 올려둔 팔을 내림 (전진 시작과 함께)
@@ -601,7 +512,6 @@ try:
             target    = None
             at_target = False
         else:
-            # PATH_NAV도 여기로 들어옴 — 이동 중 목표 물건 감지를 위해 물체 탐지 계속 수행
             ret, frame = cap.read()
             if not ret:
                 _frame_fail_count += 1
@@ -652,13 +562,9 @@ try:
         target    = select_target(detected)
         at_target = _is_at_target(target) if target else False
 
-        _frame_now    = time.time()
-        _frame_dt     = max(0.0, _frame_now - _last_frame_t)
-        _last_frame_t = _frame_now
-
-        # ── IMU 주기 요청 (GO_TO_STORAGE, PATH_NAV, PATH_RETURN 제외) ──
+        # ── IMU 주기 요청 (GO_TO_STORAGE 제외) ──────────
         _now_loop = time.time()
-        if robot_state not in (RobotState.GO_TO_STORAGE, RobotState.PATH_NAV, RobotState.PATH_RETURN) and _now_loop - _last_imu_req >= 0.15:
+        if robot_state != RobotState.GO_TO_STORAGE and _now_loop - _last_imu_req >= 0.15:
             if ser_esp32 and ser_esp32.is_open:
                 ser_esp32.write((json.dumps({"T": 126}) + "\n").encode())
             _last_imu_req = _now_loop
@@ -667,8 +573,7 @@ try:
         if robot_state == RobotState.SEARCHING:
             if final_approach:
                 # area 임계 도달 직후 — 정지 상태 유지하며 정면으로 직진
-                L, R = control_wheels(None, override_l=FINAL_APPROACH_SPEED - FORWARD_TRIM / 2, override_r=FINAL_APPROACH_SPEED + FORWARD_TRIM / 2)
-                _track_search_motion(L, R, _frame_dt)
+                control_wheels(None, override_l=FINAL_APPROACH_SPEED - FORWARD_TRIM / 2, override_r=FINAL_APPROACH_SPEED + FORWARD_TRIM / 2)
                 elapsed_fa = time.time() - final_approach_start
                 print(f"[상태] 직진 접근중... ({elapsed_fa:.1f}s)", end="\r")
                 if elapsed_fa >= FINAL_APPROACH_SECS:
@@ -747,7 +652,7 @@ try:
                         print(f"[테스트] {direction} 정렬중... cy={target['cy']:.0f}", end="\r")
 
             elif fb_final_forward:
-                # cx 정렬 완료 후 1초 직진 → grip 전송 → GRIPPING (완료되면 다시 SEARCHING으로 반복, --align-fwd-first 참고용)
+                # cx 정렬 완료 후 1초 직진 → grip 전송 → GRIPPING (완료되면 다시 SEARCHING으로 반복)
                 control_wheels(None, override_l=FINAL_APPROACH_SPEED - FORWARD_TRIM / 2, override_r=FINAL_APPROACH_SPEED + FORWARD_TRIM / 2)
                 elapsed_fb = time.time() - fb_final_forward_start
                 print(f"[테스트] 직진중... ({elapsed_fb:.1f}s)", end="\r")
@@ -766,8 +671,7 @@ try:
                     print(f"[상태] SEARCHING → GRIPPING (grip: {fb_final_forward_cls})")
 
             elif target and ALIGN_FWD_FIRST:
-                # 방향 검증 전용 (순서 반대, 참고 보관): 1단계 전진/후진(상하 cy) → 2단계 제자리 회전(좌우 cx)
-                # 실제 grip 로직(precise_align)이 이미 이 순서를 기본값으로 사용 중
+                # 방향 검증 전용 (순서 반대): 1단계 전진/후진(상하 cy) → 2단계 제자리 회전(좌우 cx)
                 frame_w = FRAME_W or 640
                 frame_h = FRAME_H or 480
                 cx_ref  = frame_w / 2 + CENTER_OFFSET_X_PX
@@ -804,52 +708,6 @@ try:
                         control_wheels(None, override_l=TURN_ONLY_SPEED * turn, override_r=-TURN_ONLY_SPEED * turn)
                         print(f"[테스트] 회전 정렬중... cx={target['cx']:.0f}", end="\r")
 
-            elif precise_align:
-                # 실제 grip 정렬: area 임계 도달 후 1단계 전진/후진(상하 cy) → 2단계 제자리 회전(좌우 cx)
-                if not target:
-                    # 정밀 정렬 중 타겟을 놓침 — 코스 탐색으로 복귀
-                    precise_align  = False
-                    approach_phase = 0
-                    print("\n[상태] 정밀 정렬 중 타겟 놓침 → 재탐색")
-                else:
-                    frame_w = FRAME_W or 640
-                    frame_h = FRAME_H or 480
-                    cx_ref  = frame_w / 2 + CENTER_OFFSET_X_PX
-                    cy_ref  = frame_h / 2 + CENTER_OFFSET_Y_PX
-                    cx_aligned = abs(target["cx"] - cx_ref) <= CENTER_MARGIN_PX
-                    cy_aligned = abs(target["cy"] - cy_ref) <= CENTER_MARGIN_Y_PX
-
-                    if approach_phase == 0:
-                        if cy_aligned:
-                            control_wheels(None)
-                            approach_phase = 1
-                            print(f"\n[상태] 상하 정렬 완료 (cy={target['cy']:.0f}) → 좌우 정렬")
-                        else:
-                            # cy_ref보다 위(작음)=목표가 더 멀리 있음 → 전진, 아래(큼)=너무 가까움 → 후진
-                            fwd = SLOW_SPEED if target["cy"] < cy_ref else -SLOW_SPEED
-                            L, R = control_wheels(None, override_l=fwd, override_r=fwd)
-                            _track_search_motion(L, R, _frame_dt)
-                            direction = "전진" if fwd > 0 else "후진"
-                            print(f"[상태] {direction} 정렬중... cy={target['cy']:.0f}", end="\r")
-
-                    else:
-                        if not cy_aligned:
-                            # 회전 중 상하가 틀어지면 전후 단계로 복귀
-                            approach_phase = 0
-                        elif cx_aligned:
-                            control_wheels(None)
-                            precise_align        = False
-                            approach_phase       = 0
-                            final_approach       = True
-                            final_approach_start = time.time()
-                            final_approach_cls   = target["cls"]
-                            print(f"\n[상태] 좌우 정렬 완료 (cx={target['cx']:.0f}) → 직진 접근 시작")
-                        else:
-                            turn = max(-1.0, min(1.0, (target["cx"] - cx_ref) / (frame_w / 2)))
-                            L, R = control_wheels(None, override_l=TURN_ONLY_SPEED * turn, override_r=-TURN_ONLY_SPEED * turn)
-                            _track_search_motion(L, R, _frame_dt)
-                            print(f"[상태] 회전 정렬중... cx={target['cx']:.0f}", end="\r")
-
             elif target:
                 if time.time() - _last_print_t >= 0.5:
                     print(f"[타겟] {target['cls']} | area={target['area']}")
@@ -857,21 +715,18 @@ try:
 
                 if at_target:
                     control_wheels(None)
-                    # area 임계 최초 도달 — 정밀 정렬(전진/후진→회전) 단계 진입
-                    precise_align  = True
-                    approach_phase = 0
-                    print(f"\n[상태] 목표 크기 도달 (area={target['area']}) → 정밀 정렬 시작")
+                    # area 임계 최초 도달 — 정지 후 직진 접근 단계 진입
+                    final_approach       = True
+                    final_approach_start = time.time()
+                    final_approach_cls   = target["cls"]
+                    print(f"\n[상태] 목표 크기 도달 (area={target['area']}) → 직진 접근 시작")
                 else:
-                    L, R = control_wheels(target)
-                    _track_search_motion(L, R, _frame_dt)
+                    control_wheels(target)
 
             else:
-                align_phase    = 0
-                fb_phase       = 0
-                approach_phase = 0
-                precise_align  = False
-                L, R = control_wheels(None, override_l=-SEARCH_ROTATE_SPEED, override_r=SEARCH_ROTATE_SPEED)
-                _track_search_motion(L, R, _frame_dt)
+                align_phase = 0
+                fb_phase    = 0
+                control_wheels(None, override_l=-SEARCH_ROTATE_SPEED, override_r=SEARCH_ROTATE_SPEED)
                 send_idle()
 
         elif robot_state == RobotState.GRIPPING:
@@ -884,30 +739,21 @@ try:
                 gripped_cls = None
                 confirm_count  = 0
                 last_target_id = -1
-                robot_state, _resumed = _after_grip_return_state()
-                if _resumed is not None:
-                    print(f"[상태] GRIPPING → PATH_RETURN ({elapsed:.1f}s, 복귀 후 phase={_resumed} 재개)")
-                else:
-                    print(f"[상태] GRIPPING → SEARCHING ({elapsed:.1f}s)")
+                robot_state    = RobotState.SEARCHING
+                print(f"[상태] GRIPPING → SEARCHING ({elapsed:.1f}s)")
             elif openrb_grip_failed:
                 openrb_grip_failed = False
                 openrb_gripped     = False
                 openrb_dumped      = False
                 confirm_count      = 0
                 last_target_id     = -1
-                robot_state, _resumed = _after_grip_return_state()
-                if _resumed is not None:
-                    print(f"\n[상태] GRIPPING → PATH_RETURN (집기 실패, 복귀 후 phase={_resumed} 재개)")
-                else:
-                    print(f"\n[상태] GRIPPING → SEARCHING (집기 실패)")
+                robot_state        = RobotState.SEARCHING
+                print(f"\n[상태] GRIPPING → SEARCHING (집기 실패)")
             elif elapsed > GRIP_TIMEOUT_SECS:
+                print(f"\n[경고] grip 타임아웃 → SEARCHING 복귀")
                 confirm_count  = 0
                 last_target_id = -1
-                robot_state, _resumed = _after_grip_return_state()
-                if _resumed is not None:
-                    print(f"\n[경고] grip 타임아웃 → PATH_RETURN (복귀 후 phase={_resumed} 재개)")
-                else:
-                    print(f"\n[경고] grip 타임아웃 → SEARCHING 복귀")
+                robot_state    = RobotState.SEARCHING
             else:
                 print(f"[상태] 집어서 컨테이너 투하중... ({elapsed:.1f}s)", end="\r")
 
@@ -995,158 +841,6 @@ try:
             else:
                 print(f"[상태] 컨테이너 쏟는중... ({elapsed:.1f}s)", end="\r")
 
-        elif robot_state == RobotState.PATH_NAV:
-            if target and path_phase in PATH_INTERRUPT_PHASES:
-                # 직진1/3(벽 탐색 중)에서만 목표 물건 감지 시 경로 중단 → SEARCHING(정렬→접근→grip) 전환.
-                # 이동/회전 시간은 SEARCHING 동안 _track_search_motion()이 누적하고,
-                # grip 완료 후 PATH_RETURN이 그 시간만큼 반대로 움직여 원위치로 되돌아온 뒤 phase를 재개시킴
-                path_resume_phase       = path_phase
-                search_move_secs        = 0.0
-                search_turn_secs_signed = 0.0
-                control_wheels(None)
-                robot_state = RobotState.SEARCHING
-                print(f"\n[경로] 이동 중 목표 물건 감지 ({target['cls']}) → SEARCHING 전환 (phase={path_phase} 저장)")
-
-            else:
-                path_now     = time.time()
-                path_elapsed = path_now - path_phase_start
-
-                if path_phase == 0:
-                    # 시작직진 — 1m (임시로 시간 기반 근사)
-                    if path_elapsed >= PATH_START_FORWARD_SECS:
-                        control_wheels(None)
-                        path_phase       = 1
-                        path_phase_start = path_now
-                        print(f"\n[경로] 시작 1m 직진 완료(추정) → 우회전")
-                    else:
-                        control_wheels(None, override_l=PATH_FORWARD_SPEED, override_r=PATH_FORWARD_SPEED)
-                        print(f"[경로] 시작직진 (1m 이동중)... ({path_elapsed:.1f}s)", end="\r")
-
-                elif path_phase == 1:
-                    # 우회전
-                    control_wheels(None, override_l=PATH_RIGHT_L, override_r=PATH_RIGHT_R)
-                    if path_elapsed >= PATH_TURN_90_SECS:
-                        control_wheels(None)
-                        path_phase       = 2
-                        path_phase_start = path_now
-                        print(f"[경로] 우회전 완료 → 직진1 (벽까지)")
-
-                elif path_phase == 2:
-                    # 직진1 — 벽 근접까지 (is_near_wall 미구현이라 현재는 타임아웃으로만 종료)
-                    if is_near_wall(frame):
-                        control_wheels(None)
-                        path_phase       = 3
-                        path_phase_start = path_now
-                        print(f"\n[경로] 벽 근접 감지 → 좌회전 1")
-                    elif path_elapsed > PATH_WALL_TIMEOUT_SECS:
-                        control_wheels(None)
-                        path_phase       = 3
-                        path_phase_start = path_now
-                        print(f"\n[경로] 벽 감지 타임아웃({PATH_WALL_TIMEOUT_SECS}s) → 좌회전 1 (임시)")
-                    else:
-                        control_wheels(None, override_l=PATH_FORWARD_SPEED, override_r=PATH_FORWARD_SPEED)
-                        print(f"[경로] 직진1 (벽 탐색중)... ({path_elapsed:.1f}s)", end="\r")
-
-                elif path_phase == 3:
-                    # 좌회전 1
-                    control_wheels(None, override_l=PATH_LEFT_L, override_r=PATH_LEFT_R)
-                    if path_elapsed >= PATH_TURN_90_SECS:
-                        control_wheels(None)
-                        path_phase       = 4
-                        path_phase_start = path_now
-                        print(f"[경로] 좌회전 1 완료 → 직진2 ((2,6)-(3,6) 지점까지)")
-
-                elif path_phase == 4:
-                    # 직진2 — (2,6)-(3,6) 지점까지 (임시로 시간 기반 근사)
-                    if path_elapsed >= PATH_TO_POINT_SECS:
-                        control_wheels(None)
-                        path_phase       = 5
-                        path_phase_start = path_now
-                        print(f"\n[경로] (2,6)-(3,6) 지점 도달(추정) → 좌회전 2")
-                    else:
-                        control_wheels(None, override_l=PATH_FORWARD_SPEED, override_r=PATH_FORWARD_SPEED)
-                        print(f"[경로] 직진2 (지점 이동중)... ({path_elapsed:.1f}s)", end="\r")
-
-                elif path_phase == 5:
-                    # 좌회전 2
-                    control_wheels(None, override_l=PATH_LEFT_L, override_r=PATH_LEFT_R)
-                    if path_elapsed >= PATH_TURN_90_SECS:
-                        control_wheels(None)
-                        path_phase       = 6
-                        path_phase_start = path_now
-                        print(f"[경로] 좌회전 2 완료 → 직진3 (벽까지)")
-
-                elif path_phase == 6:
-                    # 직진3 — 벽 근접까지
-                    if is_near_wall(frame):
-                        control_wheels(None)
-                        path_phase       = 7
-                        path_phase_start = path_now
-                        print(f"\n[경로] 벽 근접 감지 → 좌회전 3")
-                    elif path_elapsed > PATH_WALL_TIMEOUT_SECS:
-                        control_wheels(None)
-                        path_phase       = 7
-                        path_phase_start = path_now
-                        print(f"\n[경로] 벽 감지 타임아웃({PATH_WALL_TIMEOUT_SECS}s) → 좌회전 3 (임시)")
-                    else:
-                        control_wheels(None, override_l=PATH_FORWARD_SPEED, override_r=PATH_FORWARD_SPEED)
-                        print(f"[경로] 직진3 (벽 탐색중)... ({path_elapsed:.1f}s)", end="\r")
-
-                elif path_phase == 7:
-                    # 좌회전 3
-                    control_wheels(None, override_l=PATH_LEFT_L, override_r=PATH_LEFT_R)
-                    if path_elapsed >= PATH_TURN_90_SECS:
-                        control_wheels(None)
-                        path_phase = 8
-                        print(f"[경로] 좌회전 3 완료 → 경로 종료")
-
-                else:
-                    # path_phase == 8, 완료 → 후면 카메라 태극기 인식 기반 보관함 접근(GO_TO_STORAGE)으로 전환
-                    control_wheels(None)
-                    robot_state         = RobotState.GO_TO_STORAGE
-                    storage_phase       = 0
-                    storage_phase_start = path_now
-                    storage_enter_time  = path_now
-                    print(f"\n[경로] PATH_NAV 완료 → GO_TO_STORAGE 전환 (태극기 탐색 시작)")
-
-        elif robot_state == RobotState.PATH_RETURN:
-            # SEARCHING 중 누적된 이동/회전 시간만큼 반대로 움직여 원위치 근처로 복귀
-            return_now     = time.time()
-            return_elapsed = return_now - path_return_stage_start
-
-            if path_return_stage == 0:
-                # 후진 — search_move_secs만큼
-                if return_elapsed >= search_move_secs:
-                    control_wheels(None)
-                    path_return_stage       = 1
-                    path_return_stage_start = return_now
-                    print(f"\n[경로] 원위치 후진 완료({search_move_secs:.1f}s) → 반대 방향 회전")
-                else:
-                    control_wheels(None, override_l=-PATH_FORWARD_SPEED, override_r=-PATH_FORWARD_SPEED)
-                    print(f"[경로] 원위치 복귀 후진중... ({return_elapsed:.1f}/{search_move_secs:.1f}s)", end="\r")
-
-            else:
-                # 반대 방향 회전 — search_turn_secs_signed 부호의 반대 방향으로, 그 크기만큼
-                turn_secs = abs(search_turn_secs_signed)
-                if search_turn_secs_signed > 0:
-                    rl, rr = PATH_LEFT_L, PATH_LEFT_R    # SEARCHING 중 우회전 우세 → 반대인 좌회전으로 복귀
-                else:
-                    rl, rr = PATH_RIGHT_L, PATH_RIGHT_R  # SEARCHING 중 좌회전 우세 → 반대인 우회전으로 복귀
-
-                if return_elapsed >= turn_secs:
-                    control_wheels(None)
-                    resumed_phase           = path_resume_phase
-                    robot_state             = RobotState.PATH_NAV
-                    path_phase              = resumed_phase
-                    path_phase_start        = return_now
-                    path_resume_phase       = None
-                    search_move_secs        = 0.0
-                    search_turn_secs_signed = 0.0
-                    print(f"\n[경로] 원위치 회전 복귀 완료({turn_secs:.1f}s) → PATH_NAV phase={resumed_phase} 재개")
-                else:
-                    control_wheels(None, override_l=rl, override_r=rr)
-                    print(f"[경로] 원위치 복귀 회전중... ({return_elapsed:.1f}/{turn_secs:.1f}s)", end="\r")
-
         # ── 시각화 ──────────────────────────────────────
         if results is not None:
             annotated_frame = results[0].plot()
@@ -1190,8 +884,6 @@ try:
             RobotState.GRIPPING:      (0, 165, 255),
             RobotState.GO_TO_STORAGE: (255, 165, 0),
             RobotState.DROPPING:      (0, 165, 255),
-            RobotState.PATH_NAV:      (255, 0, 255),
-            RobotState.PATH_RETURN:   (180, 0, 180),
         }
         overlay = annotated_frame.copy()
         cv2.rectangle(overlay, (0, h - 80), (w, h), (0, 0, 0), -1)
