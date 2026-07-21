@@ -179,9 +179,8 @@ MAX_MY              = 150.0
 AREA_GRIP_THRESHOLD = 30000   # 이 면적 이상이면 정지 후 직진 접근 → grip
 AREA_SLOW_THRESHOLD = 20000   # 이 면적 이상이면 감속 시작
 AREA_ROTATE_THRESHOLD = 15000 # 이 이하일 때만 제자리 회전 정렬
-FAR_OBJECT_AREA_THRESHOLD = 10000  # 타겟 미검출 시 탐색 이동 기준 — 이 이하 면적(=먼 물체)이 보이면
-                                   # 그 방향은 벽에 막히지 않았다는 신호로 보고 그쪽으로 이동 (실측 필요)
-MIN_DETECTED_FOR_EXPLORE = 3      # 탐색 이동 조건: 클래스 무관 총 탐지 개수가 이 이상이어야 시도
+MIN_DETECTED_FOR_EXPLORE = 2      # 탐색 이동 조건: 클래스 무관 총 탐지 개수가 이 이상이어야 시도
+                                   # (이 미만, 즉 0~1개면 회전 탐색 프로세스로 방향을 잡는다)
 MAX_ROTATE_SECS           = 5.0   # 제자리 회전 탐색 최대 지속 시간 — 넘으면 강제로 현재 방향 직진 (실측 필요)
 SEARCH_FORWARD_BURST_SECS = 1.0   # 최대 회전 시간 초과 시 현재 방향으로 직진하는 시간 (실측 필요)
 CENTER_MARGIN_PX    = 42      # 픽셀 모드: 가로 중심에서 이 픽셀 이내 (시각화 가이드용, 면적 2배)
@@ -769,15 +768,11 @@ try:
                 fb_phase      = 0
                 precise_align = False
 
-                # 타겟 미검출 — 클래스/신뢰도 상관없이 이번 프레임에 탐지된 물체가
-                # 3개 이상이고, 그중 가장 먼(area 최소) 물체가 threshold 이하면
-                # 그 방향은 벽에 막히지 않았다는 신호이므로 그쪽으로 이동하며 탐색한다.
+                # 타겟 미검출 — 클래스/신뢰도 상관없이 탐지된 물체가 2개 이상이면
+                # 그중 가장 먼(area 최소) 물체가 카메라 중심에 오도록 이동하며 탐색한다.
+                # 1개 이하면(=비교 대상 없음) 회전 탐색 프로세스로 방향을 잡는다.
                 farthest = min(detected, key=lambda o: o["area"]) if detected else None
-                can_explore = (
-                    len(detected) >= MIN_DETECTED_FOR_EXPLORE
-                    and farthest is not None
-                    and farthest["area"] <= FAR_OBJECT_AREA_THRESHOLD
-                )
+                can_explore = len(detected) >= MIN_DETECTED_FOR_EXPLORE and farthest is not None
 
                 if can_explore:
                     control_wheels(farthest)
