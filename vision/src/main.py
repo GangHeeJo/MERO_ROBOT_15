@@ -774,16 +774,14 @@ try:
                     print(f"[타겟] {target['cls']} | area={target['area']}")
                     _last_print_t = time.time()
 
-                if at_target:
-                    control_wheels(None)
-                    # area 임계 최초 도달 — 정밀 정렬(전진/후진→회전) 진입 전에 그리퍼부터 미리 연다
-                    precise_align = True
-                    fb_phase      = 0
-                    send_gripper_open()
-                    gripper_prepped = True
-                    print(f"\n[상태] 목표 크기 도달 (area={target['area']}) → 그리퍼 열기 + 정밀 정렬 시작")
-                else:
-                    control_wheels(target)
+                # 타겟이 보이면 area/중앙정렬 상관없이 바로 정밀 정렬(전진/후진→회전) 진입 —
+                # 예전 --align-fwd-first와 동일한 방식 (거리 무관하게 즉시 시작)
+                control_wheels(None)
+                precise_align = True
+                fb_phase      = 0
+                send_gripper_open()
+                gripper_prepped = True
+                print(f"\n[상태] 타겟 발견 (area={target['area']}) → 그리퍼 열기 + 정밀 정렬 시작")
 
             else:
                 align_phase   = 0
