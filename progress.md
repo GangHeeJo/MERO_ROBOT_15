@@ -1,6 +1,6 @@
 # MERO AI ROBOT — Progress
 
-> 최종 업데이트: 2026-07-21  
+> 최종 업데이트: 2026-07-22  
 > 비전 담당: 조강희
 
 ---
@@ -536,6 +536,56 @@ yolo val model=vision/model/best.pt     data=data.yaml   # 신규
 Colab 노트북 실행 전 필요한 것:
 - Roboflow API 키
 - Google Drive 마운트
+
+---
+
+## 2026-07-22 작업 내역
+
+> 통합 모델(도형+과일+flag) 학습·반영, 그리퍼 오탐 디버깅, 팔 모터 미해결 이슈로 세션 종료.
+
+### 모델 — flag 포함 9클래스 통합 학습
+
+- **flag.pt를 별도로 학습했다가 통합 모델로 다시 병합** — flag 단독 학습은 반례 부족으로 오탐이 심해서, 기존 과일+도형 8클래스 데이터셋(`merong-gurme` Roboflow 프로젝트, zip export)과 flag 데이터셋(`finding_taegeukgi` Roboflow 프로젝트, 버전 미생성이라 zip export 사용 — valid 셋이 없어서 train에서 80/20 수동 분리)을 Colab에서 라벨 인덱스 재부여 후 병합, YOLOv8s로 재학습 → `vision/model/best.pt`를 9클래스(apple/banana/d12/d20/d6/d8/orange/pineapple/flag)로 교체
+- **카메라 1대(전면 Arducam) + 통합 모델 구조로 전면 리팩토링** (`vision/src/main.py`) — 기존에 물체용/태극기용 카메라 2대(cap/cap2)+모델 2개(best.pt/flag.pt) 쓰던 구조를 전부 걷어내고 하나로 통일. `select_target()`이 flag 클래스는 항상 후보에서 제외해서 SEARCHING/GRIPPING 중엔 절대 flag를 집으러 안 감. `GO_TO_STORAGE`는 같은 프레임의 탐지 결과에서 cls=='flag'만 걸러 씀 (별도 추론 없음). 카메라가 후면→전면으로 바뀌어서 태극기 접근 방향도 후진→전진으로 변경 (조향 부호 반전)
+- **경기 시작 시 콘솔에서 타겟 클래스 2개 입력받는 방식 추가** — `--cls` 없이 실행하면 카메라/모델 로드 끝난 뒤 프롬프트가 뜨고, Enter 누르는 순간이 곧 "경기 시작" 신호가 되어 그 직후 `send_start()`로 팔이 내려감
+
+### SEARCHING 정렬 로직 — precise_align 진입 조건 수정
+
+- **grip이 갑자기 잘 안 되던 문제의 원인 추정 및 수정**: `area>=AREA_GRIP_THRESHOLD` 될 때까지 기존 조향(대충 접근)을 하다가 그 이후에만 정밀 정렬(전진/후진→회전)로 넘어가던 게이트를 제거. 예전 `--align-fwd-first` 테스트 플래그가 실제로 잘 됐던 방식(타겟이 보이자마자 거리 상관없이 즉시 정밀 정렬 시작)으로 되돌림
+- `--align-fwd-first`/`--align-only`를 둘러싼 시행착오가 있었음: 한때 `--align-fwd-first`를 아예 기본 로직(`precise_align`)으로 승격시키면서 플래그 자체를 지웠는데, 이후 "그리퍼 안전정책도 같이 빼버린" 부작용이 생겨서 다시 복원함(아래 참고). `--align-only`(반대 순서, 회전 먼저)는 비교용으로 계속 남아있음
+
+### 그리퍼 안전정책(미리열기/닫기) — 뺐다가 다시 넣음
+
+- 한때 "안전정책"이라고 생각하고 `gripper_open`/`gripper_close` 호출을 통째로 제거했었는데, **사실 이게 안전정책이 아니라 집기 메커니즘 자체에 필요한 부분이었음** — IDLE 기본값이 "닫힘"이라, 미리 열어두지 않으면 grip 시점에 손가락이 이미 닫혀 있어서 애초에 물체가 들어갈 공간이 없어 못 집는 구조적 문제였음. 다시 복원: 타겟 발견 시(정밀 정렬 진입) `gripper_open` 전송, 정밀 정렬 중 타겟 놓치면 `gripper_close` 전송
+
+### 그리퍼 "찔끔 닫혔다 바로 열리는" 오탐 문제
+
+- **증상**: 물체를 향해 집게가 닫히다가 살짝 닫힌 상태에서 "잡았다"고 오판하고 바로 LIFTING(팔 올림→그리퍼 열기) 단계로 넘어가버림 — 실제로는 아무것도 안 잡힘
+- **원인 추정**: 닫기 시작 직후 정지 관성/스티션 때문에 순간적으로 전류(load)가 튀는데, 이걸 "물체 잡음"으로 오판
+- **1차 수정** (`robot/gripper.ino`): `GRIP_LOAD_THRESHOLD` 200→300(30%)으로 상향, 닫기 시작 후 `GRIPPER_LOAD_GRACE_MS`(150ms) 동안은 load 체크 자체를 건너뛰는 시간 기반 grace 구간 추가
+- **2차 수정** (류상윤, 팀원 push): 시간 기반 grace만으론 열림 근처에서 발생하는 오탐을 다 못 걸러서, `GRIPPER_LOAD_CHECK_RAW`(1600) raw 위치 게이트를 추가 — 닫히는 방향으로 이 raw값에 도달하기 전까지는 무조건 계속 조이기만 하고 load 판별 자체를 안 함. 실측 후 조정 필요 표시됨
+- **LIFTING 순서 변경** (류상윤): 기존엔 "그리퍼 열기(투하)→팔 내림→그리퍼 닫기" 순서였는데, "그리퍼 열기(투하)→공중에서 먼저 그리퍼 닫기→팔 내림" 순서로 변경 — 팔 내리면서 엉뚱한 물체가 벌어진 집게에 끼는 걸 방지. 투하 대기시간도 800ms→2000ms로 늘려 물체가 완전히 떨어질 시간 확보
+- **집기~팔 올림 사이 대기시간**: 500ms→2000ms로 상향 (완전히 쥘 시간 확보) — 이 변경은 조강희/류상윤 양쪽에서 동시에 동일하게 만들어서 병합 시 충돌 없었음
+
+### 디버깅 3건 (`vision/src/main.py`)
+
+- `--test` 플래그가 죽어있던 버그 수정 — 실제 grip 전송 위치가 `fb_final_forward` 블록으로 옮겨갔는데 `TEST_MODE` 체크는 옛 `final_approach` 블록에만 남아있어서, `--test`를 줘도 1회성 종료가 안 되고 계속 반복되고 있었음
+- 아무도 `True`로 안 만드는 `final_approach`/`final_approach_start`/`final_approach_cls` 죽은 변수·블록 제거 (precise_align 게이트 제거 이후 미사용 상태였음)
+- 타겟 미검출 시 탐색-이동 로직이 flag 클래스까지 포함해서 "가장 먼 물체"로 고를 수 있던 버그 수정 — flag는 절대 grip 대상이 될 수 없는데 탐색 이동 방향으로는 여전히 고려되고 있었음
+
+### 기타
+
+- `MOVE_SPEED` 0.2→0.25 (전진 속도 소폭 상향)
+- `robot/test_camera_servo/`, `robot/test_arm_updown/`, `robot/test_container/` 독립 테스트 스케치 3개 신규 추가 (각각 카메라 회전 서보 ID4, 팔 ID2, 컨테이너 ID3 단독 검증용). `test_arm_updown`은 고정 delay 대신 실제 도달 위치를 폴링하는 방식이라 속도 설정과 무관하게 확실하게 확인 가능
+- `robot.ino`에 디버깅용 `arm_up` 명령 추가 — 팔을 시작 크기 규정 위치(올림)로 수동 복귀시키는 용도
+- 팀원(`sssyun3270`)이 GitHub push 권한이 없어서(Collaborator로 등록은 돼있었으나 Write 권한 확인이 안 된 상태로 추정) 로컬 git 저장소 전체를 zip으로 압축해서 전달 → 로컬에 임시 remote로 추가해서 fetch 후 merge하는 방식으로 반영함 (그리퍼 idle 기본값 닫힘 전환, 타겟 미검출 시 탐색 이동 로직 등). 이후 팀원(`류상윤`)은 정상적으로 직접 push 가능했던 것으로 보아 `sssyun3270`만의 권한 문제였을 가능성
+
+> ⚠️ **다음 세션 최우선 확인 사항 — 팔(ID2) 모터가 명령에 응답만 하고 실제로 안 움직이는 문제 (미해결, 세션 중단)**
+> - 증상: `{"cmd":"arm_up"}`, `{"cmd":"start"}` 모두 `{"status":"arm_up_done"}`/`{"status":"started"}` 정상 응답이 오는데 팔이 물리적으로 전혀 안 움직임
+> - `reset_fault`로 그리퍼(ID1) fault(hw_error=83, fatal fault 조합)는 리셋했지만 팔은 계속 무반응
+> - 배선은 문제없다고 확인됨(사용자 보고) — 즉 안전정책(safety.ino)이 조용히 개입해서 명령을 무시하고 있거나, 팔도 별도로 fault 상태에 들어가 있는데 `arm_up`/`start` 핸들러가 `safeSetGoalPosition()` 실패를 제대로 안 알리고 있을 가능성
+> - `robot/test_arm_updown/`(실제 위치 폴링 확인용 독립 스케치) 업로드까지는 했으나 `arduino-cli monitor` 포트 연결 실패(`no such file or directory`)로 로그를 못 본 상태에서 세션 종료됨 — **다음에 반드시 `ls /dev/ttyACM*`로 포트 재확인 후 `arduino-cli monitor`로 실제 위치 로그부터 확인할 것**
+> - 의심 지점: (1) safety.ino가 팔(ID2)에 대해 조용히 fault 처리 중인지 `safetyGetLastFaultId()`/`safetyGetLastHardwareError()` 값 확인, (2) `arm_up`/`start` 핸들러가 `armUp()`/`armDown()` 반환값(false)을 받고도 `sendSafetyAbortStatus()`가 실제로 안 불렸는지 코드 재검토, (3) ID2는 물리 모터 2개가 같은 ID를 공유하는 구조라 한쪽만 fault 걸렸을 가능성
 
 ---
 
