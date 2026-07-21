@@ -205,7 +205,7 @@ void updateStateMachine() {
       }
 
       // 집은 뒤 팔 올리기 전에 조금 더 대기 (완전히 쥘 시간을 준다)
-      if (!safeDelay(500)) {
+      if (!safeDelay(2000)) {
         sendSafetyAbortStatus("grip_settle_wait");
         break;
       }
