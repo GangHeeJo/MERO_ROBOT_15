@@ -12,7 +12,8 @@ select_target()이 flag 클래스는 항상 제외하므로 SEARCHING/GRIPPING �
 flag를 집으러 가지 않고, GO_TO_STORAGE에서만 같은 탐지 결과 중 flag를 걸러 씀.
 
 상태 머신:
-  SEARCHING      — flag 제외 물체 탐지+이동, area 임계 도달 시 정밀 정렬(전진/후진→회전) 후 grip 전송
+  SEARCHING      — flag 제외 물체 탐지, 보이면 거리 상관없이 바로 정밀 정렬
+                   (전진/후진→회전) 진입 → 정렬 끝나면 직진 접근 후 grip 전송
   GRIPPING       — grip 전송 후 gripped 신호 대기 (집기+팔올림+투하+팔내림 완료)
                    → gripped 수신 시 SEARCHING 복귀 (반복 수집)
                    → 모든 타겟 수집 완료 시 GO_TO_STORAGE
@@ -21,20 +22,12 @@ flag를 집으러 가지 않고, GO_TO_STORAGE에서만 같은 탐지 결과 중
 
 시리얼:
   /dev/ttyACM0 → ESP32  (UGV02 바퀴)   {"T":1, "L":speed, "R":speed}
-  /dev/ttyACM1 → OpenRB (팔·그리퍼)    {"cmd":"grip"/"dump"/"idle"/"gripper_open"/"gripper_close"}
+  /dev/ttyACM1 → OpenRB (팔·그리퍼)    {"cmd":"grip"/"dump"/"idle"}
 
 OpenRB 응답:
-  {"status":"gripped"}        — 집기+컨테이너 투하+그리퍼 재닫힘 완료 → SEARCHING 복귀
-  {"status":"grip_failed"}    — 집기 실패 → SEARCHING 복귀
-  {"status":"dumped"}         — 컨테이너 열기 완료 → SEARCHING 복귀
-  {"status":"gripper_opened"} — 접근 전 그리퍼 미리 열기 완료
-  {"status":"gripper_closed"} — 접근 취소 후 그리퍼 대기 상태로 닫힘 완료
-
-그리퍼 안전 정책:
-  IDLE 기본값은 "닫힘" (엉뚱한 물체가 벌어진 집게로 들어와 잡히는 것 방지).
-  area 임계 도달(정밀 정렬 진입) 시 gripper_open 전송 → 실제 전진/접근 시작.
-  정밀 정렬 중 타겟을 놓치면 gripper_close 전송 후 재탐색.
-  grip 성공적으로 전송되면 이후 재닫힘은 OpenRB(robot.ino LIFTING 단계)가 자체 처리.
+  {"status":"gripped"}     — 집기+컨테이너 투하 완료 → SEARCHING 복귀
+  {"status":"grip_failed"} — 집기 실패 → SEARCHING 복귀
+  {"status":"dumped"}      — 컨테이너 열기 완료 → SEARCHING 복귀
 """
 
 import argparse
@@ -270,7 +263,6 @@ fb_final_forward       = False  # cx 정렬 완료 후 직진 중
 fb_final_forward_start = 0.0
 fb_final_forward_cls   = None
 precise_align = False  # True면 area 임계 도달 후 정밀 정렬(전진/후진→회전) 진행 중
-gripper_prepped = False  # True면 이번 접근을 위해 그리퍼를 미리 열어둔 상태 (grip 전송 또는 취소 시 False로 복귀)
 search_rotate_start        = None   # 제자리 회전 탐색이 연속으로 시작된 시각 (None=회전 중 아님)
 search_forward_burst       = False  # True면 회전 최대 시간 초과로 현재 방향 강제 직진 중
 search_forward_burst_start = 0.0
@@ -430,18 +422,6 @@ def send_start():
     if ser_openrb is None or not ser_openrb.is_open:
         return
     ser_openrb.write((json.dumps({"cmd": "start"}) + "\n").encode())
-
-def send_gripper_open():
-    """물체 쪽으로 전진하기 직전 — 그리퍼를 미리 열어둔다."""
-    if ser_openrb is None or not ser_openrb.is_open:
-        return
-    ser_openrb.write((json.dumps({"cmd": "gripper_open"}) + "\n").encode())
-
-def send_gripper_close():
-    """접근을 포기하고 재탐색으로 돌아갈 때 — 열어뒀던 그리퍼를 대기 상태로 되돌린다."""
-    if ser_openrb is None or not ser_openrb.is_open:
-        return
-    ser_openrb.write((json.dumps({"cmd": "gripper_close"}) + "\n").encode())
 
 _last_idle_t = 0.0
 def send_idle():
@@ -714,7 +694,6 @@ try:
                     openrb_dumped      = False
                     openrb_grip_failed = False
                     send_grip({"cls": fb_final_forward_cls})
-                    gripper_prepped = False  # 이제부터는 OpenRB가 집기~재닫힘까지 직접 관리
                     print(f"\n[상태] grip 전송 ({fb_final_forward_cls})")
                     robot_state  = RobotState.GRIPPING
                     grip_sent_at = time.time()
@@ -726,10 +705,7 @@ try:
                     # 정밀 정렬 중 타겟을 놓침 — 재탐색으로 복귀
                     precise_align = False
                     fb_phase      = 0
-                    if gripper_prepped:
-                        send_gripper_close()
-                        gripper_prepped = False
-                    print("\n[상태] 정밀 정렬 중 타겟 놓침 → 재탐색 (그리퍼 닫음)")
+                    print("\n[상태] 정밀 정렬 중 타겟 놓침 → 재탐색")
                 else:
                     frame_w = FRAME_W or 640
                     frame_h = FRAME_H or 480
@@ -779,9 +755,7 @@ try:
                 control_wheels(None)
                 precise_align = True
                 fb_phase      = 0
-                send_gripper_open()
-                gripper_prepped = True
-                print(f"\n[상태] 타겟 발견 (area={target['area']}) → 그리퍼 열기 + 정밀 정렬 시작")
+                print(f"\n[상태] 타겟 발견 (area={target['area']}) → 정밀 정렬 시작")
 
             else:
                 align_phase   = 0
