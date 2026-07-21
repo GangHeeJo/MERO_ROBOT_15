@@ -259,9 +259,6 @@ storage_enter_time  = 0.0
 confirm_count       = 0
 last_target_id      = -1
 gripped_cls         = None
-final_approach       = False  # True면 정지 후 직진 접근 중 (area 임계 도달~grip 전송 사이)
-final_approach_start = 0.0
-final_approach_cls   = None
 align_phase          = 0      # --align-only 전용: 0=회전으로 좌우(cx) 정렬, 1=전진/후진으로 상하(cy) 정렬
 align_final_forward       = False  # --align-only 전용: cy 정렬 완료 후 1초 직진 중
 align_final_forward_start = 0.0
@@ -622,29 +619,7 @@ try:
 
         # ── 상태 머신 ──────────────────────────────────
         if robot_state == RobotState.SEARCHING:
-            if final_approach:
-                # area 임계 도달 직후 — 정지 상태 유지하며 정면으로 직진
-                control_wheels(None, override_l=FINAL_APPROACH_SPEED - FORWARD_TRIM / 2, override_r=FINAL_APPROACH_SPEED + FORWARD_TRIM / 2)
-                elapsed_fa = time.time() - final_approach_start
-                print(f"[상태] 직진 접근중... ({elapsed_fa:.1f}s)", end="\r")
-                if elapsed_fa >= FINAL_APPROACH_SECS:
-                    control_wheels(None)
-                    final_approach = False
-                    last_target_id = -1
-                    gripped_cls    = final_approach_cls
-                    openrb_gripped     = False
-                    openrb_dumped      = False
-                    openrb_grip_failed = False
-                    send_grip({"cls": final_approach_cls})
-                    print(f"\n[상태] grip 전송 ({final_approach_cls})")
-                    if TEST_MODE:
-                        print("[테스트] 1회성 테스트 — grip 전송 후 종료")
-                        break
-                    robot_state  = RobotState.GRIPPING
-                    grip_sent_at = time.time()
-                    print(f"[상태] SEARCHING → GRIPPING (grip: {final_approach_cls})")
-
-            elif align_final_forward:
+            if align_final_forward:
                 # cy 정렬 완료 후 1초 직진 → grip 전송 → GRIPPING (완료되면 다시 SEARCHING으로 반복)
                 control_wheels(None, override_l=FINAL_APPROACH_SPEED - FORWARD_TRIM / 2, override_r=FINAL_APPROACH_SPEED + FORWARD_TRIM / 2)
                 elapsed_af = time.time() - align_final_forward_start
@@ -718,6 +693,9 @@ try:
                     send_grip({"cls": fb_final_forward_cls})
                     gripper_prepped = False  # 이제부터는 OpenRB가 집기~재닫힘까지 직접 관리
                     print(f"\n[상태] grip 전송 ({fb_final_forward_cls})")
+                    if TEST_MODE:
+                        print("[테스트] 1회성 테스트 — grip 전송 후 종료")
+                        break
                     robot_state  = RobotState.GRIPPING
                     grip_sent_at = time.time()
                     print(f"[상태] SEARCHING → GRIPPING (grip: {fb_final_forward_cls})")
@@ -790,18 +768,19 @@ try:
                 fb_phase      = 0
                 precise_align = False
 
-                # 타겟 미검출 — 클래스/신뢰도 상관없이 탐지된 물체가 2개 이상이면
+                # 타겟 미검출 — 클래스/신뢰도 상관없이(flag는 제외) 탐지된 물체가 2개 이상이면
                 # 그중 가장 먼(area 최소) 물체가 카메라 중심에 오도록 이동하며 탐색한다.
                 # 1개 이하면(=비교 대상 없음) 회전 탐색 프로세스로 방향을 잡는다.
-                farthest = min(detected, key=lambda o: o["area"]) if detected else None
-                can_explore = len(detected) >= MIN_DETECTED_FOR_EXPLORE and farthest is not None
+                explorable = [o for o in detected if o['cls'] != 'flag']
+                farthest = min(explorable, key=lambda o: o["area"]) if explorable else None
+                can_explore = len(explorable) >= MIN_DETECTED_FOR_EXPLORE and farthest is not None
 
                 if can_explore:
                     control_wheels(farthest)
                     search_rotate_start  = None
                     search_forward_burst = False
                     if time.time() - _last_print_t >= 0.5:
-                        print(f"[탐색] 물체 {len(detected)}개 감지, 가장 먼 물체({farthest['cls']}, area={farthest['area']}) 방향으로 이동")
+                        print(f"[탐색] 물체 {len(explorable)}개 감지, 가장 먼 물체({farthest['cls']}, area={farthest['area']}) 방향으로 이동")
                         _last_print_t = time.time()
 
                 elif search_forward_burst:
