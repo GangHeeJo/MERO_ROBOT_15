@@ -8,7 +8,7 @@ MERO_AI_ROBOT 메인 실행 파일
   - calibration.json 없음 → bbox 면적 기반 판단 (캘리브 전 테스트용)
 
 상태 머신:
-  SEARCHING      — 타겟 탐지 + 이동, 도달 시 grip 전송
+  SEARCHING      — 타겟 탐지 + 이동, area 임계 도달 시 정밀 정렬(전진/후진→회전) 후 grip 전송
   GRIPPING       — grip 전송 후 gripped 신호 대기 (집기+팔올림+투하+팔내림 완료)
                    → gripped 수신 시 SEARCHING 복귀 (반복 수집)
                    → 모든 타겟 수집 완료 시 GO_TO_STORAGE
@@ -47,17 +47,14 @@ parser.add_argument('--timer', action='store_true',
 parser.add_argument('--test', action='store_true',
                     help='테스트 모드: 집으면 1초 직진 후 바로 drop')
 parser.add_argument('--align-only', action='store_true',
-                    help='정렬 테스트용: 중앙정렬+area 도달 시 정지만 하고 직진/grip 생략')
+                    help='정렬 순서 비교용(참고): 기본 순서(전진/후진→회전)와 반대로 회전→전진/후진 먼저 시도')
 parser.add_argument('--no-wheels', action='store_true',
                     help='바퀴 명령을 ESP32로 보내지 않음 (탐지/그리퍼만 테스트할 때)')
-parser.add_argument('--align-fwd-first', action='store_true',
-                    help='정렬 순서 테스트용: --align-only와 반대로 전진/후진(상하 cy) 먼저 → 회전(좌우 cx) 나중')
 args       = parser.parse_args()
 TARGET_CLS    = set(args.cls) if args.cls else None
 TEST_MODE     = args.test
 ALIGN_ONLY    = args.align_only
 NO_WHEELS     = args.no_wheels
-ALIGN_FWD_FIRST = args.align_fwd_first
 SHAPE_CLASSES = {'d6', 'd8', 'd12', 'd20'}
 FRUIT_CLASSES = {'apple', 'banana', 'orange', 'pineapple'}
 
@@ -232,10 +229,11 @@ align_phase          = 0      # --align-only 전용: 0=회전으로 좌우(cx) �
 align_final_forward       = False  # --align-only 전용: cy 정렬 완료 후 1초 직진 중
 align_final_forward_start = 0.0
 align_final_forward_cls   = None
-fb_phase          = 0      # --align-fwd-first 전용: 0=전진/후진으로 상하(cy) 정렬, 1=회전으로 좌우(cx) 정렬
-fb_final_forward       = False  # --align-fwd-first 전용: cx 정렬 완료 후 직진 중
+fb_phase          = 0      # 실제 grip 정밀 정렬: 0=전진/후진으로 상하(cy) 정렬, 1=회전으로 좌우(cx) 정렬
+fb_final_forward       = False  # cx 정렬 완료 후 직진 중
 fb_final_forward_start = 0.0
 fb_final_forward_cls   = None
+precise_align = False  # True면 area 임계 도달 후 정밀 정렬(전진/후진→회전) 진행 중
 
 # IMU
 imu_yaw       = None
@@ -358,15 +356,12 @@ def control_wheels(target: dict | None, override_l: float | None = None, overrid
 
 
 def _is_at_target(target: dict) -> bool:
-    """도달 여부 판단. mm 모드 → 거리, 픽셀 모드 → area + 중심 정렬."""
+    """도달(=정밀 정렬 진입) 여부 판단. mm 모드 → 거리, 픽셀 모드 → area 임계 도달.
+    중심 정렬(cx/cy)은 여기서 안 보고, 도달 이후 정밀 정렬 단계(전진/후진→회전)에서 맞춘다."""
     if target.get("mx") is not None:
         dist = (target["mx"] ** 2 + target["my"] ** 2) ** 0.5
         return dist < ARRIVE_THRESHOLD_MM
-    frame_w  = FRAME_W or 640
-    frame_h  = FRAME_H or 480
-    cx_ok = abs(target["cx"] - (frame_w / 2 + CENTER_OFFSET_X_PX)) <= CENTER_MARGIN_PX
-    cy_ok = abs(target["cy"] - (frame_h / 2 + CENTER_OFFSET_Y_PX)) <= CENTER_MARGIN_Y_PX
-    return cx_ok and cy_ok and target.get("area", 0) >= AREA_GRIP_THRESHOLD
+    return target.get("area", 0) >= AREA_GRIP_THRESHOLD
 
 
 # ── OpenRB 명령 전송 ─────────────────────────────────────
@@ -655,7 +650,7 @@ try:
                 # cx 정렬 완료 후 1초 직진 → grip 전송 → GRIPPING (완료되면 다시 SEARCHING으로 반복)
                 control_wheels(None, override_l=FINAL_APPROACH_SPEED - FORWARD_TRIM / 2, override_r=FINAL_APPROACH_SPEED + FORWARD_TRIM / 2)
                 elapsed_fb = time.time() - fb_final_forward_start
-                print(f"[테스트] 직진중... ({elapsed_fb:.1f}s)", end="\r")
+                print(f"[상태] 직진 접근중... ({elapsed_fb:.1f}s)", end="\r")
                 if elapsed_fb >= FINAL_APPROACH_SECS:
                     control_wheels(None)
                     fb_final_forward   = False
@@ -665,48 +660,54 @@ try:
                     openrb_dumped      = False
                     openrb_grip_failed = False
                     send_grip({"cls": fb_final_forward_cls})
-                    print(f"\n[테스트] grip 전송 ({fb_final_forward_cls})")
+                    print(f"\n[상태] grip 전송 ({fb_final_forward_cls})")
                     robot_state  = RobotState.GRIPPING
                     grip_sent_at = time.time()
                     print(f"[상태] SEARCHING → GRIPPING (grip: {fb_final_forward_cls})")
 
-            elif target and ALIGN_FWD_FIRST:
-                # 방향 검증 전용 (순서 반대): 1단계 전진/후진(상하 cy) → 2단계 제자리 회전(좌우 cx)
-                frame_w = FRAME_W or 640
-                frame_h = FRAME_H or 480
-                cx_ref  = frame_w / 2 + CENTER_OFFSET_X_PX
-                cy_ref  = frame_h / 2 + CENTER_OFFSET_Y_PX
-                cx_aligned = abs(target["cx"] - cx_ref) <= CENTER_MARGIN_PX
-                cy_aligned = abs(target["cy"] - cy_ref) <= CENTER_MARGIN_Y_PX
-
-                if fb_phase == 0:
-                    if cy_aligned:
-                        control_wheels(None)
-                        print(f"\n[테스트] 상하 정렬 완료 (cy={target['cy']:.0f}) → 1초 대기 후 회전 정렬 시작")
-                        time.sleep(1.0)
-                        fb_phase = 1
-                    else:
-                        # cy_ref보다 위(작음)=목표가 더 멀리 있음 → 전진, 아래(큼)=너무 가까움 → 후진
-                        fwd = SLOW_SPEED if target["cy"] < cy_ref else -SLOW_SPEED
-                        control_wheels(None, override_l=fwd, override_r=fwd)
-                        direction = "전진" if fwd > 0 else "후진"
-                        print(f"[테스트] {direction} 정렬중... cy={target['cy']:.0f}", end="\r")
-
+            elif precise_align:
+                # 실제 grip 정밀 정렬: 1단계 전진/후진(상하 cy) → 2단계 제자리 회전(좌우 cx)
+                if not target:
+                    # 정밀 정렬 중 타겟을 놓침 — 재탐색으로 복귀
+                    precise_align = False
+                    fb_phase      = 0
+                    print("\n[상태] 정밀 정렬 중 타겟 놓침 → 재탐색")
                 else:
-                    if not cy_aligned:
-                        # 회전 중 상하가 틀어지면 전후 단계로 복귀
-                        fb_phase = 0
-                    elif cx_aligned:
-                        control_wheels(None)
-                        fb_phase                = 0
-                        fb_final_forward        = True
-                        fb_final_forward_start  = time.time()
-                        fb_final_forward_cls    = target["cls"]
-                        print(f"\n[테스트] 좌우 정렬 완료 (cx={target['cx']:.0f}) → 1초 직진")
+                    frame_w = FRAME_W or 640
+                    frame_h = FRAME_H or 480
+                    cx_ref  = frame_w / 2 + CENTER_OFFSET_X_PX
+                    cy_ref  = frame_h / 2 + CENTER_OFFSET_Y_PX
+                    cx_aligned = abs(target["cx"] - cx_ref) <= CENTER_MARGIN_PX
+                    cy_aligned = abs(target["cy"] - cy_ref) <= CENTER_MARGIN_Y_PX
+
+                    if fb_phase == 0:
+                        if cy_aligned:
+                            control_wheels(None)
+                            fb_phase = 1
+                            print(f"\n[상태] 상하 정렬 완료 (cy={target['cy']:.0f}) → 좌우 정렬")
+                        else:
+                            # cy_ref보다 위(작음)=목표가 더 멀리 있음 → 전진, 아래(큼)=너무 가까움 → 후진
+                            fwd = SLOW_SPEED if target["cy"] < cy_ref else -SLOW_SPEED
+                            control_wheels(None, override_l=fwd, override_r=fwd)
+                            direction = "전진" if fwd > 0 else "후진"
+                            print(f"[상태] {direction} 정렬중... cy={target['cy']:.0f}", end="\r")
+
                     else:
-                        turn = max(-1.0, min(1.0, (target["cx"] - cx_ref) / (frame_w / 2)))
-                        control_wheels(None, override_l=TURN_ONLY_SPEED * turn, override_r=-TURN_ONLY_SPEED * turn)
-                        print(f"[테스트] 회전 정렬중... cx={target['cx']:.0f}", end="\r")
+                        if not cy_aligned:
+                            # 회전 중 상하가 틀어지면 전후 단계로 복귀
+                            fb_phase = 0
+                        elif cx_aligned:
+                            control_wheels(None)
+                            precise_align          = False
+                            fb_phase                = 0
+                            fb_final_forward        = True
+                            fb_final_forward_start  = time.time()
+                            fb_final_forward_cls    = target["cls"]
+                            print(f"\n[상태] 좌우 정렬 완료 (cx={target['cx']:.0f}) → 직진 접근 시작")
+                        else:
+                            turn = max(-1.0, min(1.0, (target["cx"] - cx_ref) / (frame_w / 2)))
+                            control_wheels(None, override_l=TURN_ONLY_SPEED * turn, override_r=-TURN_ONLY_SPEED * turn)
+                            print(f"[상태] 회전 정렬중... cx={target['cx']:.0f}", end="\r")
 
             elif target:
                 if time.time() - _last_print_t >= 0.5:
@@ -715,17 +716,17 @@ try:
 
                 if at_target:
                     control_wheels(None)
-                    # area 임계 최초 도달 — 정지 후 직진 접근 단계 진입
-                    final_approach       = True
-                    final_approach_start = time.time()
-                    final_approach_cls   = target["cls"]
-                    print(f"\n[상태] 목표 크기 도달 (area={target['area']}) → 직진 접근 시작")
+                    # area 임계 최초 도달 — 정밀 정렬(전진/후진→회전) 단계 진입
+                    precise_align = True
+                    fb_phase      = 0
+                    print(f"\n[상태] 목표 크기 도달 (area={target['area']}) → 정밀 정렬 시작")
                 else:
                     control_wheels(target)
 
             else:
-                align_phase = 0
-                fb_phase    = 0
+                align_phase   = 0
+                fb_phase      = 0
+                precise_align = False
                 control_wheels(None, override_l=-SEARCH_ROTATE_SPEED, override_r=SEARCH_ROTATE_SPEED)
                 send_idle()
 
