@@ -179,6 +179,11 @@ MAX_MY              = 150.0
 AREA_GRIP_THRESHOLD = 30000   # 이 면적 이상이면 정지 후 직진 접근 → grip
 AREA_SLOW_THRESHOLD = 20000   # 이 면적 이상이면 감속 시작
 AREA_ROTATE_THRESHOLD = 15000 # 이 이하일 때만 제자리 회전 정렬
+FAR_OBJECT_AREA_THRESHOLD = 10000  # 타겟 미검출 시 탐색 이동 기준 — 이 이하 면적(=먼 물체)이 보이면
+                                   # 그 방향은 벽에 막히지 않았다는 신호로 보고 그쪽으로 이동 (실측 필요)
+MIN_DETECTED_FOR_EXPLORE = 3      # 탐색 이동 조건: 클래스 무관 총 탐지 개수가 이 이상이어야 시도
+MAX_ROTATE_SECS           = 5.0   # 제자리 회전 탐색 최대 지속 시간 — 넘으면 강제로 현재 방향 직진 (실측 필요)
+SEARCH_FORWARD_BURST_SECS = 1.0   # 최대 회전 시간 초과 시 현재 방향으로 직진하는 시간 (실측 필요)
 CENTER_MARGIN_PX    = 42      # 픽셀 모드: 가로 중심에서 이 픽셀 이내 (시각화 가이드용, 면적 2배)
 CENTER_MARGIN_Y_PX  = 35      # 픽셀 모드: 세로 중심에서 이 픽셀 이내 (시각화 가이드용, 면적 2배)
 CENTER_OFFSET_Y_PX  = 220     # 세로 중심 오프셋 (양수=아래)
@@ -243,6 +248,9 @@ fb_final_forward_start = 0.0
 fb_final_forward_cls   = None
 precise_align = False  # True면 area 임계 도달 후 정밀 정렬(전진/후진→회전) 진행 중
 gripper_prepped = False  # True면 이번 접근을 위해 그리퍼를 미리 열어둔 상태 (grip 전송 또는 취소 시 False로 복귀)
+search_rotate_start        = None   # 제자리 회전 탐색이 연속으로 시작된 시각 (None=회전 중 아님)
+search_forward_burst       = False  # True면 회전 최대 시간 초과로 현재 방향 강제 직진 중
+search_forward_burst_start = 0.0
 
 # IMU
 imu_yaw       = None
@@ -739,6 +747,8 @@ try:
                             print(f"[상태] 회전 정렬중... cx={target['cx']:.0f}", end="\r")
 
             elif target:
+                search_rotate_start  = None
+                search_forward_burst = False
                 if time.time() - _last_print_t >= 0.5:
                     print(f"[타겟] {target['cls']} | area={target['area']}")
                     _last_print_t = time.time()
@@ -758,7 +768,44 @@ try:
                 align_phase   = 0
                 fb_phase      = 0
                 precise_align = False
-                control_wheels(None, override_l=-SEARCH_ROTATE_SPEED, override_r=SEARCH_ROTATE_SPEED)
+
+                # 타겟 미검출 — 클래스/신뢰도 상관없이 이번 프레임에 탐지된 물체가
+                # 3개 이상이고, 그중 가장 먼(area 최소) 물체가 threshold 이하면
+                # 그 방향은 벽에 막히지 않았다는 신호이므로 그쪽으로 이동하며 탐색한다.
+                farthest = min(detected, key=lambda o: o["area"]) if detected else None
+                can_explore = (
+                    len(detected) >= MIN_DETECTED_FOR_EXPLORE
+                    and farthest is not None
+                    and farthest["area"] <= FAR_OBJECT_AREA_THRESHOLD
+                )
+
+                if can_explore:
+                    control_wheels(farthest)
+                    search_rotate_start  = None
+                    search_forward_burst = False
+                    if time.time() - _last_print_t >= 0.5:
+                        print(f"[탐색] 물체 {len(detected)}개 감지, 가장 먼 물체({farthest['cls']}, area={farthest['area']}) 방향으로 이동")
+                        _last_print_t = time.time()
+
+                elif search_forward_burst:
+                    # 회전 최대 시간 초과 — 멈춘 방향으로 잠깐 직진 후 회전 재개
+                    control_wheels(None, override_l=FINAL_APPROACH_SPEED, override_r=FINAL_APPROACH_SPEED)
+                    print(f"[탐색] 회전 시간 초과 → 현재 방향 직진중...", end="\r")
+                    if time.time() - search_forward_burst_start >= SEARCH_FORWARD_BURST_SECS:
+                        search_forward_burst = False
+                        search_rotate_start   = time.time()
+
+                else:
+                    if search_rotate_start is None:
+                        search_rotate_start = time.time()
+
+                    if time.time() - search_rotate_start >= MAX_ROTATE_SECS:
+                        search_forward_burst       = True
+                        search_forward_burst_start = time.time()
+                        print(f"\n[탐색] 제자리 회전 {MAX_ROTATE_SECS:.0f}초 초과 → 현재 방향으로 직진 전환")
+                    else:
+                        control_wheels(None, override_l=-SEARCH_ROTATE_SPEED, override_r=SEARCH_ROTATE_SPEED)
+
                 send_idle()
 
         elif robot_state == RobotState.GRIPPING:
