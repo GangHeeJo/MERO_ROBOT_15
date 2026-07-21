@@ -59,8 +59,8 @@ void gripperSetup() {
   dxl.writeControlTableItem(ControlTableItem::PWM_LIMIT, GRIPPER_ID, 885 * GRIPPER_TORQUE_LIMIT_PCT / 100);
   dxl.torqueOn(GRIPPER_ID);
   dxl.writeControlTableItem(ControlTableItem::PROFILE_VELOCITY, GRIPPER_ID, GRIPPER_SPEED);
-  gripperOpen();
-  Serial.println("[그리퍼] ✅ 초기화 완료 (열림 상태)");
+  gripperCloseIdle();
+  Serial.println("[그리퍼] ✅ 초기화 완료 (닫힘 상태 — 대기 중 오탐 방지)");
 }
 
 // ── 그리퍼 열기 ──────────────────────────────────────────
@@ -68,6 +68,17 @@ bool gripperOpen() {
   bool ok = safeSetGoalPosition(GRIPPER_ID, FINGER_OPEN_RAW, 600);
   if (ok) {
     Serial.println("[그리퍼] 열림");
+  }
+  return ok;
+}
+
+// ── 그리퍼 닫기 (대기 상태용 — load 감지 없이 단순 위치 이동) ──
+// gripperClose()와 달리 물체를 잡으려는 게 아니라 그냥 손가락을 오므려두는 용도.
+// IDLE 진입/복귀 시 엉뚱한 물체가 벌어진 집게 안으로 들어와 잡히는 걸 막기 위해 사용.
+bool gripperCloseIdle() {
+  bool ok = safeSetGoalPosition(GRIPPER_ID, FINGER_CLOSE_RAW, 600);
+  if (ok) {
+    Serial.println("[그리퍼] 닫힘 (대기 상태)");
   }
   return ok;
 }

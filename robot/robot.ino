@@ -10,16 +10,20 @@
  *     ID 1: 그리퍼  ID 2: 팔(양쪽, 한쪽 Reverse Mode)  ID 3: 바스켓 힌지(양쪽, 한쪽 Reverse Mode)
  *
  * Jetson이 보내는 명령:
- *   {"cmd":"grip", "cls":"d8"}  ← 집기 → 팔 올려 컨테이너 투하 → 팔 내림
+ *   {"cmd":"grip", "cls":"d8"}  ← 집기 → 팔 올려 컨테이너 투하 → 팔 내림 → 그리퍼 다시 닫기
  *   {"cmd":"dump"}              ← 컨테이너 열어서 쏟기 (도착 지점)
+ *   {"cmd":"gripper_open"}      ← 그리퍼 미리 열기 (물체로 접근/전진하기 직전)
+ *   {"cmd":"gripper_close"}     ← 그리퍼 대기 상태로 닫기 (접근 중 타겟 놓쳐 취소할 때)
  *   {"cmd":"idle"}              ← 대기
  *   {"cmd":"start"}             ← 경기 시작 — 전원 켤 때 시작 크기 규정으로 올려둔 팔을 내림
  *   {"cmd":"reset_fault"}       ← safety.ino가 fatal fault로 멈춘 뒤 사람이 확인하고 재개할 때
  *
  * OpenRB가 보내는 응답:
- *   {"status":"gripped"}         ← 집기+투하+복귀 완료 (Python → SEARCHING 복귀)
+ *   {"status":"gripped"}         ← 집기+투하+복귀+재닫힘 완료 (Python → SEARCHING 복귀)
  *   {"status":"grip_failed"}     ← 전류 미달, 집기 실패 (Python → SEARCHING 복귀)
  *   {"status":"dumped"}          ← 컨테이너 열기 완료 (Python → SEARCHING 복귀)
+ *   {"status":"gripper_opened"}  ← gripper_open 명령 처리 완료
+ *   {"status":"gripper_closed"}  ← gripper_close 명령 처리 완료
  *   {"status":"started"}         ← start 명령으로 팔 내리기 완료
  *   {"status":"motor_fault"}     ← 과열/전압/충격/엔코더 등 자동복구 불가 (reset_fault 필요)
  *   {"status":"motor_recovered"} ← overload 자동복구 성공, 현재 동작은 중단하고 IDLE 복귀
@@ -27,10 +31,13 @@
  *   {"status":"fault_reset"}     ← reset_fault 처리 완료
  *
  * 상태 머신:
- *   IDLE → (grip) → GRIPPING → (성공) → LIFTING → IDLE
- *                             → (실패) → IDLE
+ *   IDLE(그리퍼 닫힘) → (grip) → GRIPPING → (성공) → LIFTING → IDLE(그리퍼 다시 닫힘)
+ *                                          → (실패) → IDLE(그리퍼 다시 닫힘)
  *        → (dump) → DUMPING → IDLE
+ *        → (gripper_open/gripper_close) → IDLE (그리퍼만 열고/닫고 상태 변화 없음)
  *   safety.ino가 overload/hardware error를 감지하면 어느 상태에서든 즉시 IDLE로 복귀한다.
+ *   IDLE 상태의 그리퍼 기본값은 "닫힘" — 대기 중 엉뚱한 물체가 벌어진 집게 안으로
+ *   들어와 잡히는 걸 방지하기 위함. 실제로 집으러 갈 때만 gripper_open으로 미리 연다.
  *
  * 파일 구성:
  *   main.ino    — 시리얼 수신, 상태 머신 (이 파일)
@@ -159,6 +166,26 @@ void parseCommand(const String& json) {
     JETSON_SERIAL.println("{\"status\":\"started\"}");
     return;
   }
+
+  // 물체 쪽으로 전진하기 직전 — 그리퍼를 미리 열어둔다.
+  if (strcmp(cmd, "gripper_open") == 0 && currentState == IDLE) {
+    if (!gripperOpen()) {
+      sendSafetyAbortStatus("gripper_open_request");
+      return;
+    }
+    JETSON_SERIAL.println("{\"status\":\"gripper_opened\"}");
+    return;
+  }
+
+  // 접근 중 타겟을 놓쳐 grip을 포기할 때 — 열어뒀던 그리퍼를 대기 상태로 되돌린다.
+  if (strcmp(cmd, "gripper_close") == 0 && currentState == IDLE) {
+    if (!gripperCloseIdle()) {
+      sendSafetyAbortStatus("gripper_close_request");
+      return;
+    }
+    JETSON_SERIAL.println("{\"status\":\"gripper_closed\"}");
+    return;
+  }
 }
 
 // ── 상태 머신 ─────────────────────────────────────────────
@@ -203,6 +230,11 @@ void updateStateMachine() {
       }
       if (!armDown()) {
         sendSafetyAbortStatus("arm_down");
+        break;
+      }
+      // 대기 상태 안전을 위해 그리퍼를 다시 닫아둔다 (엉뚱한 물체가 끼어드는 것 방지).
+      if (!gripperCloseIdle()) {
+        sendSafetyAbortStatus("gripper_close_after_drop");
         break;
       }
 

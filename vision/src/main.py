@@ -17,12 +17,20 @@ MERO_AI_ROBOT 메인 실행 파일
 
 시리얼:
   /dev/ttyACM0 → ESP32  (UGV02 바퀴)   {"T":1, "L":speed, "R":speed}
-  /dev/ttyACM1 → OpenRB (팔·그리퍼)    {"cmd":"grip"/"dump"/"idle"}
+  /dev/ttyACM1 → OpenRB (팔·그리퍼)    {"cmd":"grip"/"dump"/"idle"/"gripper_open"/"gripper_close"}
 
 OpenRB 응답:
-  {"status":"gripped"}     — 집기+컨테이너 투하 완료 → SEARCHING 복귀
-  {"status":"grip_failed"} — 집기 실패 → SEARCHING 복귀
-  {"status":"dumped"}      — 컨테이너 열기 완료 → SEARCHING 복귀
+  {"status":"gripped"}        — 집기+컨테이너 투하+그리퍼 재닫힘 완료 → SEARCHING 복귀
+  {"status":"grip_failed"}    — 집기 실패 → SEARCHING 복귀
+  {"status":"dumped"}         — 컨테이너 열기 완료 → SEARCHING 복귀
+  {"status":"gripper_opened"} — 접근 전 그리퍼 미리 열기 완료
+  {"status":"gripper_closed"} — 접근 취소 후 그리퍼 대기 상태로 닫힘 완료
+
+그리퍼 안전 정책:
+  IDLE 기본값은 "닫힘" (엉뚱한 물체가 벌어진 집게로 들어와 잡히는 것 방지).
+  area 임계 도달(정밀 정렬 진입) 시 gripper_open 전송 → 실제 전진/접근 시작.
+  정밀 정렬 중 타겟을 놓치면 gripper_close 전송 후 재탐색.
+  grip 성공적으로 전송되면 이후 재닫힘은 OpenRB(robot.ino LIFTING 단계)가 자체 처리.
 """
 
 import argparse
@@ -181,6 +189,10 @@ MAX_MY              = 150.0
 AREA_GRIP_THRESHOLD = 30000   # 이 면적 이상이면 정지 후 직진 접근 → grip
 AREA_SLOW_THRESHOLD = 20000   # 이 면적 이상이면 감속 시작
 AREA_ROTATE_THRESHOLD = 15000 # 이 이하일 때만 제자리 회전 정렬
+MIN_DETECTED_FOR_EXPLORE = 2      # 탐색 이동 조건: 클래스 무관 총 탐지 개수가 이 이상이어야 시도
+                                   # (이 미만, 즉 0~1개면 회전 탐색 프로세스로 방향을 잡는다)
+MAX_ROTATE_SECS           = 5.0   # 제자리 회전 탐색 최대 지속 시간 — 넘으면 강제로 현재 방향 직진 (실측 필요)
+SEARCH_FORWARD_BURST_SECS = 1.0   # 최대 회전 시간 초과 시 현재 방향으로 직진하는 시간 (실측 필요)
 CENTER_MARGIN_PX    = 42      # 픽셀 모드: 가로 중심에서 이 픽셀 이내 (시각화 가이드용, 면적 2배)
 CENTER_MARGIN_Y_PX  = 35      # 픽셀 모드: 세로 중심에서 이 픽셀 이내 (시각화 가이드용, 면적 2배)
 CENTER_OFFSET_Y_PX  = 220     # 세로 중심 오프셋 (양수=아래)
@@ -244,6 +256,10 @@ fb_final_forward       = False  # cx 정렬 완료 후 직진 중
 fb_final_forward_start = 0.0
 fb_final_forward_cls   = None
 precise_align = False  # True면 area 임계 도달 후 정밀 정렬(전진/후진→회전) 진행 중
+gripper_prepped = False  # True면 이번 접근을 위해 그리퍼를 미리 열어둔 상태 (grip 전송 또는 취소 시 False로 복귀)
+search_rotate_start        = None   # 제자리 회전 탐색이 연속으로 시작된 시각 (None=회전 중 아님)
+search_forward_burst       = False  # True면 회전 최대 시간 초과로 현재 방향 강제 직진 중
+search_forward_burst_start = 0.0
 
 # IMU
 imu_yaw       = None
@@ -307,6 +323,10 @@ def _read_openrb_loop():
                 elif data.get("status") == "grip_failed":
                     openrb_grip_failed = True
                     print("\n[OpenRB] 집기 실패 (전류 미달)")
+                elif data.get("status") == "gripper_opened":
+                    print("\n[OpenRB] 그리퍼 미리 열기 완료")
+                elif data.get("status") == "gripper_closed":
+                    print("\n[OpenRB] 그리퍼 대기 상태로 닫힘")
         except Exception:
             pass
         time.sleep(0.01)
@@ -396,6 +416,18 @@ def send_start():
     if ser_openrb is None or not ser_openrb.is_open:
         return
     ser_openrb.write((json.dumps({"cmd": "start"}) + "\n").encode())
+
+def send_gripper_open():
+    """물체 쪽으로 전진하기 직전 — 그리퍼를 미리 열어둔다."""
+    if ser_openrb is None or not ser_openrb.is_open:
+        return
+    ser_openrb.write((json.dumps({"cmd": "gripper_open"}) + "\n").encode())
+
+def send_gripper_close():
+    """접근을 포기하고 재탐색으로 돌아갈 때 — 열어뒀던 그리퍼를 대기 상태로 되돌린다."""
+    if ser_openrb is None or not ser_openrb.is_open:
+        return
+    ser_openrb.write((json.dumps({"cmd": "gripper_close"}) + "\n").encode())
 
 _last_idle_t = 0.0
 def send_idle():
@@ -670,6 +702,7 @@ try:
                     openrb_dumped      = False
                     openrb_grip_failed = False
                     send_grip({"cls": fb_final_forward_cls})
+                    gripper_prepped = False  # 이제부터는 OpenRB가 집기~재닫힘까지 직접 관리
                     print(f"\n[상태] grip 전송 ({fb_final_forward_cls})")
                     robot_state  = RobotState.GRIPPING
                     grip_sent_at = time.time()
@@ -681,7 +714,10 @@ try:
                     # 정밀 정렬 중 타겟을 놓침 — 재탐색으로 복귀
                     precise_align = False
                     fb_phase      = 0
-                    print("\n[상태] 정밀 정렬 중 타겟 놓침 → 재탐색")
+                    if gripper_prepped:
+                        send_gripper_close()
+                        gripper_prepped = False
+                    print("\n[상태] 정밀 정렬 중 타겟 놓침 → 재탐색 (그리퍼 닫음)")
                 else:
                     frame_w = FRAME_W or 640
                     frame_h = FRAME_H or 480
@@ -720,16 +756,20 @@ try:
                             print(f"[상태] 회전 정렬중... cx={target['cx']:.0f}", end="\r")
 
             elif target:
+                search_rotate_start  = None
+                search_forward_burst = False
                 if time.time() - _last_print_t >= 0.5:
                     print(f"[타겟] {target['cls']} | area={target['area']}")
                     _last_print_t = time.time()
 
                 if at_target:
                     control_wheels(None)
-                    # area 임계 최초 도달 — 정밀 정렬(전진/후진→회전) 단계 진입
+                    # area 임계 최초 도달 — 정밀 정렬(전진/후진→회전) 진입 전에 그리퍼부터 미리 연다
                     precise_align = True
                     fb_phase      = 0
-                    print(f"\n[상태] 목표 크기 도달 (area={target['area']}) → 정밀 정렬 시작")
+                    send_gripper_open()
+                    gripper_prepped = True
+                    print(f"\n[상태] 목표 크기 도달 (area={target['area']}) → 그리퍼 열기 + 정밀 정렬 시작")
                 else:
                     control_wheels(target)
 
@@ -737,7 +777,40 @@ try:
                 align_phase   = 0
                 fb_phase      = 0
                 precise_align = False
-                control_wheels(None, override_l=-SEARCH_ROTATE_SPEED, override_r=SEARCH_ROTATE_SPEED)
+
+                # 타겟 미검출 — 클래스/신뢰도 상관없이 탐지된 물체가 2개 이상이면
+                # 그중 가장 먼(area 최소) 물체가 카메라 중심에 오도록 이동하며 탐색한다.
+                # 1개 이하면(=비교 대상 없음) 회전 탐색 프로세스로 방향을 잡는다.
+                farthest = min(detected, key=lambda o: o["area"]) if detected else None
+                can_explore = len(detected) >= MIN_DETECTED_FOR_EXPLORE and farthest is not None
+
+                if can_explore:
+                    control_wheels(farthest)
+                    search_rotate_start  = None
+                    search_forward_burst = False
+                    if time.time() - _last_print_t >= 0.5:
+                        print(f"[탐색] 물체 {len(detected)}개 감지, 가장 먼 물체({farthest['cls']}, area={farthest['area']}) 방향으로 이동")
+                        _last_print_t = time.time()
+
+                elif search_forward_burst:
+                    # 회전 최대 시간 초과 — 멈춘 방향으로 잠깐 직진 후 회전 재개
+                    control_wheels(None, override_l=FINAL_APPROACH_SPEED, override_r=FINAL_APPROACH_SPEED)
+                    print(f"[탐색] 회전 시간 초과 → 현재 방향 직진중...", end="\r")
+                    if time.time() - search_forward_burst_start >= SEARCH_FORWARD_BURST_SECS:
+                        search_forward_burst = False
+                        search_rotate_start   = time.time()
+
+                else:
+                    if search_rotate_start is None:
+                        search_rotate_start = time.time()
+
+                    if time.time() - search_rotate_start >= MAX_ROTATE_SECS:
+                        search_forward_burst       = True
+                        search_forward_burst_start = time.time()
+                        print(f"\n[탐색] 제자리 회전 {MAX_ROTATE_SECS:.0f}초 초과 → 현재 방향으로 직진 전환")
+                    else:
+                        control_wheels(None, override_l=-SEARCH_ROTATE_SPEED, override_r=SEARCH_ROTATE_SPEED)
+
                 send_idle()
 
         elif robot_state == RobotState.GRIPPING:
