@@ -216,7 +216,7 @@ CENTER_OFFSET_X_PX  = 0       # 가로 중심 오프셋 (양수=오른쪽)
 ALIGN_THRESHOLD     = 0.25    # 이 이상 turn값이면 전진 없이 제자리 회전 우선
 TURN_ONLY_SPEED     = 0.2     # 제자리 회전 속도
 FINAL_APPROACH_SECS  = 1.7        # area 임계 도달 후 정지→직진하는 시간
-FINAL_APPROACH_SPEED = MOVE_SPEED # 직진 접근 속도
+FINAL_APPROACH_SPEED = 0.15       # 직진 접근 속도
 FORWARD_TRIM = 0.025  # 직진 시 우측으로 쏠리는 것 보정 (양수=오른쪽 바퀴를 더 빠르게)
 
 # 오인식 방지
@@ -712,7 +712,7 @@ try:
                     print(f"[상태] SEARCHING → GRIPPING (grip: {fb_final_forward_cls})")
 
             elif precise_align:
-                # 실제 grip 정밀 정렬: 1단계 전진/후진(상하 cy) → 2단계 제자리 회전(좌우 cx)
+                # 실제 grip 정밀 정렬: 1단계 제자리 회전(좌우 cx) → 2단계 전진/후진(상하 cy)
                 if not target:
                     # 정밀 정렬 중 타겟을 놓침 — 재탐색으로 복귀
                     precise_align = False
@@ -730,33 +730,33 @@ try:
                     cy_aligned = abs(target["cy"] - cy_ref) <= CENTER_MARGIN_Y_PX
 
                     if fb_phase == 0:
-                        if cy_aligned:
+                        if cx_aligned:
                             control_wheels(None)
                             fb_phase = 1
-                            print(f"\n[상태] 상하 정렬 완료 (cy={target['cy']:.0f}) → 좌우 정렬")
+                            print(f"\n[상태] 좌우 정렬 완료 (cx={target['cx']:.0f}) → 상하 정렬")
                         else:
-                            # cy_ref보다 위(작음)=목표가 더 멀리 있음 → 전진, 아래(큼)=너무 가까움 → 후진
-                            fwd = SLOW_SPEED if target["cy"] < cy_ref else -SLOW_SPEED
-                            control_wheels(None, override_l=fwd, override_r=fwd)
-                            direction = "전진" if fwd > 0 else "후진"
-                            print(f"[상태] {direction} 정렬중... cy={target['cy']:.0f}", end="\r")
+                            turn = max(-1.0, min(1.0, (target["cx"] - cx_ref) / (frame_w / 2)))
+                            control_wheels(None, override_l=TURN_ONLY_SPEED * turn, override_r=-TURN_ONLY_SPEED * turn)
+                            print(f"[상태] 회전 정렬중... cx={target['cx']:.0f}", end="\r")
 
                     else:
-                        if not cy_aligned:
-                            # 회전 중 상하가 틀어지면 전후 단계로 복귀
+                        if not cx_aligned:
+                            # 전후 중 좌우가 틀어지면 회전 단계로 복귀
                             fb_phase = 0
-                        elif cx_aligned:
+                        elif cy_aligned:
                             control_wheels(None)
                             precise_align          = False
                             fb_phase                = 0
                             fb_final_forward        = True
                             fb_final_forward_start  = time.time()
                             fb_final_forward_cls    = target["cls"]
-                            print(f"\n[상태] 좌우 정렬 완료 (cx={target['cx']:.0f}) → 직진 접근 시작")
+                            print(f"\n[상태] 상하 정렬 완료 (cy={target['cy']:.0f}) → 직진 접근 시작")
                         else:
-                            turn = max(-1.0, min(1.0, (target["cx"] - cx_ref) / (frame_w / 2)))
-                            control_wheels(None, override_l=TURN_ONLY_SPEED * turn, override_r=-TURN_ONLY_SPEED * turn)
-                            print(f"[상태] 회전 정렬중... cx={target['cx']:.0f}", end="\r")
+                            # cy_ref보다 위(작음)=목표가 더 멀리 있음 → 전진, 아래(큼)=너무 가까움 → 후진
+                            fwd = SLOW_SPEED if target["cy"] < cy_ref else -SLOW_SPEED
+                            control_wheels(None, override_l=fwd, override_r=fwd)
+                            direction = "전진" if fwd > 0 else "후진"
+                            print(f"[상태] {direction} 정렬중... cy={target['cy']:.0f}", end="\r")
 
             elif target:
                 search_rotate_start  = None
