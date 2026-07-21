@@ -124,9 +124,12 @@ def pixel_to_mm(cx, cy):
 
 CONF_THRESHOLD_SHAPE = 0.25  # shape 클래스 confidence 임계값
 CONF_THRESHOLD_FRUIT = 0.6   # 과일 클래스 — 오픽업 패널티 40점이라 높게 설정
+CLUSTER_RADIUS_PX    = 300   # 이 픽셀 반경 안에 있는 다른 물체 개수로 밀집도 계산
 
 def select_target(objects: list) -> dict | None:
-    """--cls 필터 + 목표 개수 미달 + 클래스별 confidence 임계값 통과한 것 중 area 최대 반환."""
+    """--cls 필터 + 클래스별 confidence 임계값 통과한 것 중,
+    주변에 다른 물체가 많이 몰려있는(밀집도 높은) 것 우선 선택 → 여러 개 연속으로 집기 쉬운 쪽으로 이동.
+    밀집도가 같으면 area(가까운 정도)가 큰 쪽 우선."""
     if not objects:
         return None
     filtered = []
@@ -138,7 +141,14 @@ def select_target(objects: list) -> dict | None:
             filtered.append(o)
     if not filtered:
         return None
-    return max(filtered, key=lambda o: o['area'])
+
+    def cluster_score(o):
+        return sum(
+            1 for other in filtered
+            if other is not o and ((other['cx'] - o['cx']) ** 2 + (other['cy'] - o['cy']) ** 2) ** 0.5 <= CLUSTER_RADIUS_PX
+        )
+
+    return max(filtered, key=lambda o: (cluster_score(o), o['area']))
 
 
 # ── 시리얼 포트 자동 감지 ────────────────────────────────
