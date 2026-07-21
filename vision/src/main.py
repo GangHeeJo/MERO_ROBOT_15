@@ -222,8 +222,6 @@ CONFIRM_FRAMES      = 3       # 연속 N프레임 도달 조건 만족해야 gri
 
 # 탐색 회전
 SEARCH_ROTATE_SPEED = 0.2     # 타겟 없을 때 제자리 회전 속도
-START_ROTATE_SECS   = 2.0     # 경기 시작 직후 이 시간 동안은 약하게 좌회전 (중앙 시작 지점 천천히 스캔)
-START_ROTATE_SPEED  = 0.1     # 시작 직후 약한 좌회전 속도
 
 # 타임아웃
 GRIP_TIMEOUT_SECS    = 15.0   # grip 전송 후 gripped 신호 최대 대기
@@ -276,7 +274,6 @@ gripper_prepped = False  # True면 이번 접근을 위해 그리퍼를 미리 �
 search_rotate_start        = None   # 제자리 회전 탐색이 연속으로 시작된 시각 (None=회전 중 아님)
 search_forward_burst       = False  # True면 회전 최대 시간 초과로 현재 방향 강제 직진 중
 search_forward_burst_start = 0.0
-_run_start_time = None  # send_start() 호출 시각 — 시작 직후 약한 회전 구간 판단용
 
 # IMU
 imu_yaw       = None
@@ -558,7 +555,6 @@ _last_print_t = 0.0
 frame = None  # 최초 루프 진입 전 초기화
 
 send_start()  # 시작 크기 규정으로 올려둔 팔을 내림 (전진 시작과 함께)
-_run_start_time = time.time()
 
 # ── 메인 루프 ────────────────────────────────────────────
 try:
@@ -825,10 +821,7 @@ try:
                         search_forward_burst_start = time.time()
                         print(f"\n[탐색] 제자리 회전 {MAX_ROTATE_SECS:.0f}초 초과 → 현재 방향으로 직진 전환")
                     else:
-                        # 경기 시작 직후 START_ROTATE_SECS 동안은 중앙 시작지점 천천히 스캔하도록 약하게 회전
-                        just_started = _run_start_time is not None and time.time() - _run_start_time < START_ROTATE_SECS
-                        rotate_speed = START_ROTATE_SPEED if just_started else SEARCH_ROTATE_SPEED
-                        control_wheels(None, override_l=-rotate_speed, override_r=rotate_speed)
+                        control_wheels(None, override_l=-SEARCH_ROTATE_SPEED, override_r=SEARCH_ROTATE_SPEED)
 
                 send_idle()
 
