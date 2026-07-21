@@ -53,7 +53,7 @@ from ultralytics import YOLO
 # ── 인수 파싱 ───────────────────────────────────────────
 parser = argparse.ArgumentParser()
 parser.add_argument('--cls', nargs='+', default=None,
-                    help='타겟 클래스 목록 (예: --cls d8 apple). 미지정 시 모든 클래스 대상')
+                    help='타겟 클래스 목록 (예: --cls d8 apple). 미지정 시 카메라/모델 로드 후 콘솔에서 2개 직접 입력받음')
 parser.add_argument('--timer', action='store_true',
                     help='3분 경기 타이머 표시')
 parser.add_argument('--test', action='store_true',
@@ -487,7 +487,20 @@ if not HEADLESS:
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_AUTOSIZE)
 
 mode_str = "mm 모드" if MM_PER_PIXEL else "픽셀 모드 (캘리브 없음)"
-cls_str  = ' + '.join(sorted(TARGET_CLS)) if TARGET_CLS else '전체'
+
+# --cls 미지정 시: 카메라/모델 다 뜬 상태에서 경기 당일 타겟 클래스 2개를 직접 입력받음.
+# Enter 누르는 순간이 곧 "경기 시작" 신호 — 이 직후 send_start()로 팔이 내려감.
+if TARGET_CLS is None:
+    valid_classes = SHAPE_CLASSES | FRUIT_CLASSES
+    while True:
+        raw = input(f"[시작] 타겟 클래스 2개 입력 후 Enter (예: d8 apple) — 도형:{sorted(SHAPE_CLASSES)} 과일:{sorted(FRUIT_CLASSES)}: ").strip()
+        cls_list = raw.split()
+        if len(cls_list) == 2 and all(c in valid_classes for c in cls_list):
+            TARGET_CLS = set(cls_list)
+            break
+        print("[오류] 정확히 2개, 유효한 클래스 이름만 입력하세요.")
+
+cls_str = ' + '.join(sorted(TARGET_CLS))
 print(f"[시작] 타겟: {cls_str} | {mode_str}")
 if HEADLESS:
     print("[시작] 헤드리스 모드")
