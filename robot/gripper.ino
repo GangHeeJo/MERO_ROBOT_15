@@ -37,13 +37,16 @@ bool safetyPoll();
 #define GRIPPER_SPEED 50
 
 // Load 기반 집기 감지 (실측: 물체 잡을 때 ~30%, 빈 손 ~0%)
-// PRESENT_LOAD 단위: 0.1% (200 = 20%)
-#define GRIP_LOAD_THRESHOLD 200
+// PRESENT_LOAD 단위: 0.1% (300 = 30%)
+#define GRIP_LOAD_THRESHOLD 300
 
 // 닫힘 중 load 감지 기반 안전 정지 설정
 #define GRIPPER_CLOSE_TIMEOUT_MS       1000
 #define GRIPPER_LOAD_CHECK_INTERVAL_MS 20
 #define GRIPPER_LOAD_CONFIRM_COUNT     3
+// 닫기 시작 직후(정지 관성/스티션으로 순간 전류 튀는 구간)는 load 체크를 건너뛴다 —
+// 안 그러면 물체에 닿기도 전에 "잡았다"고 오판해서 조금만 닫혔다 바로 열리는 문제 발생
+#define GRIPPER_LOAD_GRACE_MS          150
 #define GRIPPER_EXTRA_CLOSE_RAW        46
 #define GRIPPER_EXTRA_CLOSE_MS         150
 #define GRIPPER_TARGET_TOLERANCE_RAW   23
@@ -106,9 +109,11 @@ bool gripperClose() {
 
     int32_t abs_load = load < 0 ? -load : load;
     int32_t current_raw = dxl.getPresentPosition(GRIPPER_ID, UNIT_RAW);
+    bool past_grace = (millis() - start_ms) >= GRIPPER_LOAD_GRACE_MS;
 
     // 순간적인 충격이나 노이즈를 피하기 위해 연속 기준을 둔다.
-    if (abs_load >= GRIP_LOAD_THRESHOLD) {
+    // 닫기 시작 직후(grace 구간)는 스티션으로 튀는 전류를 잡기 오판으로 안 본다.
+    if (past_grace && abs_load >= GRIP_LOAD_THRESHOLD) {
       load_confirm_count++;
     } else {
       load_confirm_count = 0;
