@@ -186,6 +186,16 @@ void parseCommand(const String& json) {
     JETSON_SERIAL.println("{\"status\":\"gripper_closed\"}");
     return;
   }
+
+  // 디버깅용 — 팔을 시작 크기 규정 위치(올림)로 수동 복귀
+  if (strcmp(cmd, "arm_up") == 0 && currentState == IDLE) {
+    if (!armUp()) {
+      sendSafetyAbortStatus("arm_up_request");
+      return;
+    }
+    JETSON_SERIAL.println("{\"status\":\"arm_up_done\"}");
+    return;
+  }
 }
 
 // ── 상태 머신 ─────────────────────────────────────────────
