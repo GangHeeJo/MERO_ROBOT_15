@@ -7,12 +7,16 @@ MERO_AI_ROBOT 메인 실행 파일
   - calibration.json 있음 → mm 기반 거리 판단 (정확)
   - calibration.json 없음 → bbox 면적 기반 판단 (캘리브 전 테스트용)
 
+카메라 1대(전면) + 통합 모델(best.pt: 도형+과일+flag) 구조.
+select_target()이 flag 클래스는 항상 제외하므로 SEARCHING/GRIPPING 중엔 절대
+flag를 집으러 가지 않고, GO_TO_STORAGE에서만 같은 탐지 결과 중 flag를 걸러 씀.
+
 상태 머신:
-  SEARCHING      — 타겟 탐지 + 이동, area 임계 도달 시 정밀 정렬(전진/후진→회전) 후 grip 전송
+  SEARCHING      — flag 제외 물체 탐지+이동, area 임계 도달 시 정밀 정렬(전진/후진→회전) 후 grip 전송
   GRIPPING       — grip 전송 후 gripped 신호 대기 (집기+팔올림+투하+팔내림 완료)
                    → gripped 수신 시 SEARCHING 복귀 (반복 수집)
                    → 모든 타겟 수집 완료 시 GO_TO_STORAGE
-  GO_TO_STORAGE  — 바퀴로 보관함까지 고정 경로 이동 → dump 전송
+  GO_TO_STORAGE  — flag 탐지해서 전진 접근 → dump 전송
   DROPPING       — dump 전송 후 dumped 신호 대기 (컨테이너 열어 쏟기 완료)
 
 시리얼:
@@ -66,20 +70,16 @@ NO_WHEELS     = args.no_wheels
 SHAPE_CLASSES = {'d6', 'd8', 'd12', 'd20'}
 FRUIT_CLASSES = {'apple', 'banana', 'orange', 'pineapple'}
 
-# ── 모델 로드 ────────────────────────────────────────────
-BASE_DIR        = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODEL_PATH      = os.path.join(BASE_DIR, "model", "best.pt")
-FLAG_MODEL_PATH = os.path.join(BASE_DIR, "model", "flag.pt")
+# ── 모델 로드 (통합 모델 하나 — 도형+과일+flag 전부 포함) ──
+BASE_DIR   = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MODEL_PATH = os.path.join(BASE_DIR, "model", "best.pt")
 # Jetson TensorRT 변환 후: MODEL_PATH = os.path.join(BASE_DIR, "model", "best.engine")
-model      = YOLO(MODEL_PATH)
-if os.path.exists(FLAG_MODEL_PATH):
-    flag_model = YOLO(FLAG_MODEL_PATH)
-    print(f"[모델] flag.pt 로드 완료")
-else:
-    flag_model = None
-    print(f"[모델] flag.pt 없음 — GO_TO_STORAGE 태극기 감지 비활성화")
+model = YOLO(MODEL_PATH)
+FLAG_CLASS_AVAILABLE = 'flag' in model.names.values()
+if not FLAG_CLASS_AVAILABLE:
+    print("[모델] best.pt에 flag 클래스 없음 — GO_TO_STORAGE 태극기 감지 비활성화")
 
-# ── 카메라 인덱스 자동 감지 ──────────────────────────────
+# ── 카메라 인덱스 자동 감지 (카메라 1대만 사용) ──────────
 def _find_camera_index(keywords, fallback):
     """장치 이름 키워드로 카메라 인덱스 자동 탐지 (/sys/class/video4linux 기반).
     카메라 하나가 capture/metadata 등 여러 /dev/videoN 노드를 가질 수 있어
@@ -101,8 +101,7 @@ def _find_camera_index(keywords, fallback):
     print(f"[카메라] {keywords[0]} 자동 탐지 실패 → 기본값 {fallback}")
     return fallback
 
-CAMERA_INDEX_OBJ  = _find_camera_index(["arducam"], 2)             # 물체 카메라 (전면)
-CAMERA_INDEX_FLAG = _find_camera_index(["nv76", "cm400"], 0)       # 태극기 카메라 (후면)
+CAMERA_INDEX_OBJ = _find_camera_index(["arducam"], 2)  # 물체+태극기 겸용 카메라 (전면)
 
 # ── 캘리브레이션 로드 ────────────────────────────────────
 CALIB_PATH   = os.path.join(BASE_DIR, "model", "calibration.json")
@@ -145,6 +144,8 @@ def select_target(objects: list) -> dict | None:
         return None
     filtered = []
     for o in objects:
+        if o['cls'] == 'flag':
+            continue  # flag는 GO_TO_STORAGE 전용 — SEARCHING/GRIPPING 중엔 집을 대상으로 절대 선택 안 함
         if TARGET_CLS and o['cls'] not in TARGET_CLS:
             continue
         threshold = CONF_THRESHOLD_FRUIT if o['cls'] in FRUIT_CLASSES else CONF_THRESHOLD_SHAPE
@@ -469,8 +470,7 @@ def _init_camera(index, name):
         print(f"[카메라] {name} ({index}번) 준비: {w}×{h}")
     return cap
 
-cap  = _init_camera(CAMERA_INDEX_OBJ,  "물체캠")   # 1사분면, 아래 대각
-cap2 = _init_camera(CAMERA_INDEX_FLAG, "태극기캠") # 4사분면, 뒤쪽
+cap = _init_camera(CAMERA_INDEX_OBJ, "물체캠")  # 물체+태극기 겸용 (전면)
 
 if cap is None:
     print("[오류] 물체 카메라 없음 — 종료"); exit()
@@ -480,12 +480,6 @@ if FRAME_W is None:
     _ret, _f = cap.read()
     if _ret:
         FRAME_H, FRAME_W = _f.shape[:2]
-
-FRAME_W2 = FRAME_H2 = None
-if cap2 is not None:
-    _ret2, _f2 = cap2.read()
-    if _ret2:
-        FRAME_H2, FRAME_W2 = _f2.shape[:2]
 
 HEADLESS    = True  # X11 imshow 비활성화 (SSH+WiFi 병목 방지)
 WINDOW_NAME = "MERO_AI_ROBOT"
@@ -552,28 +546,20 @@ send_start()  # 시작 크기 규정으로 올려둔 팔을 내림 (전진 시�
 # ── 메인 루프 ────────────────────────────────────────────
 try:
     while True:
-        # GO_TO_STORAGE 중에는 cap2+flag_model 사용 (GO_TO_STORAGE 블록 내부에서 처리)
-        # 그 외 상태는 cap1+model로 물체 탐지
-        if robot_state == RobotState.GO_TO_STORAGE:
-            cap.read()  # 버퍼 비우기만
-            results   = None
-            boxes     = None
-            detected  = []
-            target    = None
-            at_target = False
-        else:
-            ret, frame = cap.read()
-            if not ret:
-                _frame_fail_count += 1
-                if _frame_fail_count >= 10:
-                    print("[오류] 프레임 읽기 연속 10회 실패 — 종료")
-                    break
-                continue
-            _frame_fail_count = 0
+        # 카메라 1대로 모든 상태(SEARCHING/GRIPPING/GO_TO_STORAGE)에서 동일하게 탐지
+        # GO_TO_STORAGE는 아래에서 detected 중 cls=='flag'만 걸러서 씀
+        ret, frame = cap.read()
+        if not ret:
+            _frame_fail_count += 1
+            if _frame_fail_count >= 10:
+                print("[오류] 프레임 읽기 연속 10회 실패 — 종료")
+                break
+            continue
+        _frame_fail_count = 0
 
-            results  = model.track(frame, persist=True, conf=0.25, verbose=False, device="cuda", tracker="bytetrack.yaml")
-            boxes    = results[0].boxes
-            detected = []
+        results  = model.track(frame, persist=True, conf=0.25, verbose=False, device="cuda", tracker="bytetrack.yaml")
+        boxes    = results[0].boxes
+        detected = []
 
         if boxes is not None and len(boxes) > 0:
             ids = boxes.id
@@ -864,39 +850,29 @@ try:
                 print(f"\n[경고] GO_TO_STORAGE 타임아웃 → SEARCHING 복귀")
                 robot_state = RobotState.SEARCHING
 
-            # 태극기 카메라로 플래그 감지
-            elif cap2 is None or flag_model is None:
-                print("[경고] 태극기 카메라 또는 flag.pt 없음 — SEARCHING 복귀")
+            # 같은 카메라/모델의 detected에서 flag 클래스만 걸러서 사용
+            elif not FLAG_CLASS_AVAILABLE:
+                print("[경고] flag 클래스 없음 — SEARCHING 복귀")
                 robot_state = RobotState.SEARCHING
 
             else:
-                ret2, frame2 = cap2.read()
-                flag_detected = None
-                if ret2:
-                    flag_res  = flag_model(frame2, conf=FLAG_CONF_THRESHOLD, verbose=False, device="cuda")
-                    flag_boxes = flag_res[0].boxes
-                    if flag_boxes is not None and len(flag_boxes) > 0:
-                        best = max(flag_boxes, key=lambda b: float(b.conf[0]))
-                        x1, y1, x2, y2 = best.xyxy[0].tolist()
-                        flag_detected = {
-                            "cx":   (x1 + x2) / 2,
-                            "area": (x2 - x1) * (y2 - y1),
-                        }
+                flag_candidates = [o for o in detected if o['cls'] == 'flag' and o['conf'] >= FLAG_CONF_THRESHOLD]
+                flag_detected = max(flag_candidates, key=lambda o: o['conf']) if flag_candidates else None
 
-                fw2 = FRAME_W2 or 640
+                fw2 = FRAME_W or 640
 
                 if storage_phase == 0:
                     # 태극기 탐색 — 제자리 회전
                     if flag_detected:
                         storage_phase       = 1
                         storage_phase_start = now
-                        print(f"\n[상태] 태극기 발견 → 후진 접근 시작")
+                        print(f"\n[상태] 태극기 발견 → 전진 접근 시작")
                     else:
                         control_wheels(None, override_l=FLAG_SEARCH_SPEED, override_r=-FLAG_SEARCH_SPEED)
                         print(f"[상태] 태극기 탐색 회전중... ({total_elapsed:.1f}s)", end="\r")
 
                 elif storage_phase == 1:
-                    # 태극기 후진 접근
+                    # 태극기 전진 접근 (전면 카메라라 정방향으로 다가감)
                     if not flag_detected:
                         # 태극기 놓침 → 탐색으로 복귀
                         control_wheels(None)
@@ -912,14 +888,13 @@ try:
                         robot_state   = RobotState.DROPPING
                         print(f"\n[상태] 태극기 도달 → dump 전송")
                     else:
-                        # 후진하면서 정렬
-                        # 후방 카메라: flag.cx 기준 조향 (좌우 반전 없음 — 후진이므로 동일 부호)
+                        # 전진하면서 정렬
                         turn  = (flag_detected["cx"] - fw2 / 2) / (fw2 / 2)
                         speed = FLAG_APPROACH_SLOW if flag_detected["area"] > FLAG_AREA_SLOW_THRESHOLD else FLAG_APPROACH_SPEED
-                        L = -(speed + turn * 0.3)
-                        R = -(speed - turn * 0.3)
+                        L = speed + turn * 0.3
+                        R = speed - turn * 0.3
                         control_wheels(None, override_l=L, override_r=R)
-                        print(f"[상태] 후진 접근중... area={flag_detected['area']:.0f}", end="\r")
+                        print(f"[상태] 전진 접근중... area={flag_detected['area']:.0f}", end="\r")
 
         elif robot_state == RobotState.DROPPING:
             control_wheels(None)
