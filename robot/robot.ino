@@ -10,7 +10,7 @@
  *     ID 1: 그리퍼  ID 2: 팔(양쪽, 한쪽 Reverse Mode)  ID 3: 바스켓 힌지(양쪽, 한쪽 Reverse Mode)
  *
  * Jetson이 보내는 명령:
- *   {"cmd":"grip", "cls":"d8"}  ← 집기 → 팔 올려 컨테이너 투하 → 팔 내림 → 그리퍼 다시 닫기
+ *   {"cmd":"grip", "cls":"d8"}  ← 집기 → 팔 올려 컨테이너 투하 → 그리퍼 다시 닫기 → 팔 내림
  *   {"cmd":"dump"}              ← 컨테이너 열어서 쏟기 (도착 지점)
  *   {"cmd":"gripper_open"}      ← 그리퍼 미리 열기 (물체로 접근/전진하기 직전)
  *   {"cmd":"gripper_close"}     ← 그리퍼 대기 상태로 닫기 (접근 중 타겟 놓쳐 취소할 때)
@@ -223,18 +223,22 @@ void updateStateMachine() {
         sendSafetyAbortStatus("gripper_open_after_lift");
         break;
       }
-      // 그리퍼 다 열리고 물체가 실제로 떨어질 시간을 더 준다.
-      if (!safeDelay(800)) {
+      // 그리퍼 다 열리고 물체가 바스켓에 완전히 떨어질 시간을 충분히 준다.
+      // 이 delay가 짧으면 물체가 아직 집게 사이에 걸쳐있는 상태에서 다시
+      // 닫혀버릴 수 있으므로, 팔을 내리기 전 공중에서 미리 닫는 지금 순서에서는
+      // 특히 넉넉하게 잡아야 한다.
+      if (!safeDelay(2000)) {
         sendSafetyAbortStatus("drop_wait");
+        break;
+      }
+      // 대기 상태 안전을 위해 팔을 내리기 전, 공중에서 먼저 그리퍼를 닫아둔다
+      // (엉뚱한 물체가 끼어드는 것 방지).
+      if (!gripperCloseIdle()) {
+        sendSafetyAbortStatus("gripper_close_after_drop");
         break;
       }
       if (!armDown()) {
         sendSafetyAbortStatus("arm_down");
-        break;
-      }
-      // 대기 상태 안전을 위해 그리퍼를 다시 닫아둔다 (엉뚱한 물체가 끼어드는 것 방지).
-      if (!gripperCloseIdle()) {
-        sendSafetyAbortStatus("gripper_close_after_drop");
         break;
       }
 

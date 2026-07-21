@@ -47,6 +47,10 @@ bool safetyPoll();
 // 닫기 시작 직후(정지 관성/스티션으로 순간 전류 튀는 구간)는 load 체크를 건너뛴다 —
 // 안 그러면 물체에 닿기도 전에 "잡았다"고 오판해서 조금만 닫혔다 바로 열리는 문제 발생
 #define GRIPPER_LOAD_GRACE_MS          150
+// 이 raw 값(닫히는 방향, OPEN→CLOSE 사이)에 도달하기 전까지는 load를 아예 판별하지
+// 않고 무조건 계속 조인다 — 물체와 접촉하기엔 아직 너무 벌어진 구간이라 여기서
+// load가 튀는 건 전부 오탐이기 때문. 실측 후 조정.
+#define GRIPPER_LOAD_CHECK_RAW         1600
 #define GRIPPER_EXTRA_CLOSE_RAW        46
 #define GRIPPER_EXTRA_CLOSE_MS         150
 #define GRIPPER_TARGET_TOLERANCE_RAW   23
@@ -111,9 +115,15 @@ bool gripperClose() {
     int32_t current_raw = dxl.getPresentPosition(GRIPPER_ID, UNIT_RAW);
     bool past_grace = (millis() - start_ms) >= GRIPPER_LOAD_GRACE_MS;
 
+    // FINGER_CLOSE_RAW < FINGER_OPEN_RAW면 닫히는 방향은 raw 감소 방향이다.
+    bool past_raw_gate = (FINGER_CLOSE_RAW < FINGER_OPEN_RAW)
+      ? (current_raw <= GRIPPER_LOAD_CHECK_RAW)
+      : (current_raw >= GRIPPER_LOAD_CHECK_RAW);
+
     // 순간적인 충격이나 노이즈를 피하기 위해 연속 기준을 둔다.
-    // 닫기 시작 직후(grace 구간)는 스티션으로 튀는 전류를 잡기 오판으로 안 본다.
-    if (past_grace && abs_load >= GRIP_LOAD_THRESHOLD) {
+    // 닫기 시작 직후(grace 구간)나 아직 raw 게이트를 안 지난 구간은
+    // 스티션/오탐으로 보고 load 판별 자체를 건너뛴다.
+    if (past_grace && past_raw_gate && abs_load >= GRIP_LOAD_THRESHOLD) {
       load_confirm_count++;
     } else {
       load_confirm_count = 0;
