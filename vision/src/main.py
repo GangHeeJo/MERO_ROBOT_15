@@ -234,6 +234,7 @@ FORWARD_TRIM = 0.025  # 직진 시 우측으로 쏠리는 것 보정 (양수=오
 
 # 오인식 방지
 CONFIRM_FRAMES      = 3       # 연속 N프레임 도달 조건 만족해야 grip 전송
+TARGET_MISS_GRACE_FRAMES = 3  # 정밀 정렬 중 순간적으로 타겟을 놓쳐도 이 프레임 수까지는 포기 안 하고 정지 대기 (모션블러 등 프레임 단위 오탐 대응)
 
 # 탐색 회전
 SEARCH_ROTATE_SPEED = 0.1     # 타겟 없을 때 제자리 회전 속도
@@ -286,6 +287,7 @@ fb_final_forward_start = 0.0
 fb_final_forward_cls   = None
 precise_align = False  # True면 area 임계 도달 후 정밀 정렬(전진/후진→회전) 진행 중
 gripper_prepped = False  # True면 이번 접근을 위해 그리퍼를 미리 열어둔 상태 (grip 전송 또는 취소 시 False로 복귀)
+target_miss_count = 0  # precise_align 중 연속으로 타겟을 못 잡은 프레임 수 (TARGET_MISS_GRACE_FRAMES까지는 정지 대기)
 search_rotate_start        = None   # 제자리 회전 탐색이 연속으로 시작된 시각 (None=회전 중 아님)
 search_forward_burst       = False  # True면 회전 최대 시간 초과로 현재 방향 강제 직진 중
 search_forward_burst_start = 0.0
@@ -754,14 +756,22 @@ try:
             elif precise_align:
                 # 실제 grip 정밀 정렬: 1단계 전진/후진(상하 cy) → 2단계 제자리 회전(좌우 cx)
                 if not target:
-                    # 정밀 정렬 중 타겟을 놓침 — 재탐색으로 복귀
-                    precise_align = False
-                    fb_phase      = 0
-                    if gripper_prepped:
-                        send_gripper_close()
-                        gripper_prepped = False
-                    print("\n[상태] 정밀 정렬 중 타겟 놓침 → 재탐색 (그리퍼 닫음)")
+                    target_miss_count += 1
+                    if target_miss_count <= TARGET_MISS_GRACE_FRAMES:
+                        # 모션블러 등으로 순간적으로 놓친 것일 수 있음 — 몇 프레임은 정지하고 재등장을 기다린다
+                        control_wheels(None)
+                        print(f"[상태] 정밀 정렬 중 순간 놓침 ({target_miss_count}/{TARGET_MISS_GRACE_FRAMES}) — 정지 대기", end="\r")
+                    else:
+                        # grace 프레임 다 지나도 안 잡힘 — 진짜 놓친 것으로 보고 재탐색으로 복귀
+                        precise_align     = False
+                        fb_phase          = 0
+                        target_miss_count = 0
+                        if gripper_prepped:
+                            send_gripper_close()
+                            gripper_prepped = False
+                        print("\n[상태] 정밀 정렬 중 타겟 놓침 → 재탐색 (그리퍼 닫음)")
                 else:
+                    target_miss_count = 0
                     frame_w = FRAME_W or 640
                     frame_h = FRAME_H or 480
                     cx_ref  = frame_w / 2 + CENTER_OFFSET_X_PX
