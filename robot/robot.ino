@@ -16,6 +16,8 @@
  *   {"cmd":"gripper_close"}     ← 그리퍼 대기 상태로 닫기 (접근 중 타겟 놓쳐 취소할 때)
  *   {"cmd":"idle"}              ← 대기
  *   {"cmd":"start"}             ← 경기 시작 — 전원 켤 때 시작 크기 규정으로 올려둔 팔을 내림
+ *   {"cmd":"cam_backward"}      ← 보관함 이동 전 카메라를 뒤로 180도 회전 (후방을 봄)
+ *   {"cmd":"cam_forward"}       ← 보관함 왕복 끝나고 카메라를 다시 정면으로 회전
  *   {"cmd":"reset_fault"}       ← safety.ino가 fatal fault로 멈춘 뒤 사람이 확인하고 재개할 때
  *
  * OpenRB가 보내는 응답:
@@ -25,6 +27,8 @@
  *   {"status":"gripper_opened"}  ← gripper_open 명령 처리 완료
  *   {"status":"gripper_closed"}  ← gripper_close 명령 처리 완료
  *   {"status":"started"}         ← start 명령으로 팔 내리기 완료
+ *   {"status":"cam_backward_done"} ← 카메라 후방 회전 완료
+ *   {"status":"cam_forward_done"}  ← 카메라 정면 회전 완료
  *   {"status":"motor_fault"}     ← 과열/전압/충격/엔코더 등 자동복구 불가 (reset_fault 필요)
  *   {"status":"motor_recovered"} ← overload 자동복구 성공, 현재 동작은 중단하고 IDLE 복귀
  *   {"status":"motion_aborted"}  ← 위 두 경우 외 safety 개입으로 동작 중단
@@ -196,6 +200,26 @@ void parseCommand(const String& json) {
     JETSON_SERIAL.println("{\"status\":\"arm_up_done\"}");
     return;
   }
+
+  // 보관함으로 이동하기 직전 — 카메라를 뒤로 180도 돌려 후방을 보게 한다.
+  if (strcmp(cmd, "cam_backward") == 0 && currentState == IDLE) {
+    if (!camBackward()) {
+      sendSafetyAbortStatus("cam_backward_request");
+      return;
+    }
+    JETSON_SERIAL.println("{\"status\":\"cam_backward_done\"}");
+    return;
+  }
+
+  // 보관함 왕복 끝나고 복귀 — 카메라를 다시 정면으로 돌린다.
+  if (strcmp(cmd, "cam_forward") == 0 && currentState == IDLE) {
+    if (!camForward()) {
+      sendSafetyAbortStatus("cam_forward_request");
+      return;
+    }
+    JETSON_SERIAL.println("{\"status\":\"cam_forward_done\"}");
+    return;
+  }
 }
 
 // ── 상태 머신 ─────────────────────────────────────────────
@@ -284,6 +308,7 @@ void setup() {
   dxl.setPortProtocolVersion(DXL_PROTOCOL_VERSION);
   gripperSetup();
   armSetup();
+  camSetup();
   JETSON_SERIAL.println("[OpenRB] 준비 완료. grip/dump 명령 대기 중...");
 }
 
