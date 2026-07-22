@@ -283,7 +283,6 @@ class RobotState(Enum):
 
 robot_state          = RobotState.SEARCHING
 grip_sent_at         = 0.0
-_frame_fail_count    = 0
 storage_phase        = 0   # 0=탐색회전, 1=후진접근
 storage_phase_start  = 0.0
 flag_aligned         = False  # phase 1 진입 후 좌우(cx) 정렬 완료 여부 — 한 번 맞으면 재확인 없이 직진만 함
@@ -570,6 +569,33 @@ if FRAME_W is None:
     if _ret:
         FRAME_H, FRAME_W = _f.shape[:2]
 
+# ── 카메라 캡처 스레드 ────────────────────────────────────
+# cap.read()가 USB 대역폭 타이밍 노이즈(select() timeout)로 몇 초씩 블로킹되는
+# 경우가 있는데, 예전엔 메인 루프에서 직접 cap.read()를 불러서 그 몇 초 동안
+# control_wheels()/send_idle()이 전혀 안 불렸다. ESP32는 ~3초 안에 새 속도
+# 명령이 안 오면 하트비트 워치독으로 모터를 자동 정지시키는데(progress.md 기록),
+# 이게 바로 "갑자기 전원 나간 것처럼 멈추는" 증상의 실제 원인으로 보임 —
+# 배터리 전압 문제가 아니라 카메라 블로킹→명령 끊김→ESP32 자체 안전정지였음.
+# 캡처를 별도 스레드로 분리해서 메인 루프는 항상 최신 프레임(또는 잠깐 멈췄으면
+# 마지막 프레임)으로 계속 돌게 하고, control_wheels/send_idle이 카메라 상태와
+# 무관하게 매 루프 계속 불리게 한다.
+_cap_lock          = threading.Lock()
+_cap_latest_frame  = None
+_cap_fail_count    = 0
+
+def _camera_capture_loop():
+    global _cap_latest_frame, _cap_fail_count
+    while True:
+        ret, f = cap.read()
+        with _cap_lock:
+            if ret:
+                _cap_latest_frame = f
+                _cap_fail_count   = 0
+            else:
+                _cap_fail_count += 1
+
+threading.Thread(target=_camera_capture_loop, daemon=True).start()
+
 HEADLESS    = True  # X11 imshow 비활성화 (SSH+WiFi 병목 방지)
 WINDOW_NAME = "MERO_AI_ROBOT"
 if not HEADLESS:
@@ -703,14 +729,20 @@ try:
     while True:
         # 카메라 1대로 모든 상태(SEARCHING/GRIPPING/GO_TO_STORAGE)에서 동일하게 탐지
         # GO_TO_STORAGE는 아래에서 detected 중 cls=='flag'만 걸러서 씀
-        ret, frame = cap.read()
-        if not ret:
-            _frame_fail_count += 1
-            if _frame_fail_count >= FRAME_FAIL_LIMIT:
-                print(f"[오류] 프레임 읽기 연속 {FRAME_FAIL_LIMIT}회 실패 — 종료")
-                break
+        # 캡처는 별도 스레드가 담당 — cap.read()가 잠깐 블로킹돼도(select() timeout
+        # 등) 여기선 마지막으로 받은 프레임을 그대로 써서 control_wheels/send_idle이
+        # 계속 불리게 한다 (ESP32 하트비트 워치독이 3초 무명령시 모터를 자동 정지시킴).
+        with _cap_lock:
+            frame      = _cap_latest_frame
+            fail_count = _cap_fail_count
+
+        if frame is None:
+            time.sleep(0.01)  # 시작 직후 캡처 스레드의 첫 프레임 대기 (매우 짧음)
             continue
-        _frame_fail_count = 0
+
+        if fail_count >= FRAME_FAIL_LIMIT:
+            print(f"[오류] 프레임 읽기 연속 {FRAME_FAIL_LIMIT}회 실패 — 종료")
+            break
 
         results  = model.track(frame, persist=True, conf=0.25, verbose=False, device="cuda", tracker="bytetrack.yaml")
         boxes    = results[0].boxes
