@@ -24,6 +24,8 @@ from ultralytics import YOLO
 parser = argparse.ArgumentParser()
 parser.add_argument('--pt', action='store_true',
                     help='best.engine(TensorRT) 대신 best.pt(PyTorch)로 실행 — 속도 비교용')
+parser.add_argument('--resize', action='store_true',
+                    help='model()에 넣기 전 프레임을 640x640으로 직접 축소 — 전처리(letterbox resize) 병목 여부 확인용')
 args = parser.parse_args()
 
 BASE_DIR   = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -122,7 +124,8 @@ try:
         if not ret:
             continue
 
-        results = model(frame, conf=0.25, verbose=False, device="cuda")
+        infer_frame = cv2.resize(frame, (640, 640)) if args.resize else frame
+        results = model(infer_frame, conf=0.25, verbose=False, device="cuda")
         boxes = results[0].boxes
 
         if boxes is not None and len(boxes) > 0 and time.time() - _last_print_t >= 0.5:
