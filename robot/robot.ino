@@ -202,19 +202,23 @@ void parseCommand(const String& json) {
   }
 
   // 보관함으로 이동하기 직전 — 카메라를 뒤로 180도 돌려 후방을 보게 한다.
-  if (strcmp(cmd, "cam_backward") == 0 && currentState == IDLE) {
+  // ID4(카메라)는 그리퍼/팔/컨테이너와 완전히 별개 모터라, 그쪽이 GRIPPING/LIFTING/
+  // DUMPING 중이어도 상관없이 처리한다 (currentState==IDLE 조건 없음). 실패해도
+  // sendSafetyAbortStatus()는 부르지 않는다 — 그건 currentState를 IDLE로 되돌려서
+  // 한창 진행 중이던 그리퍼/팔 시퀀스를 끊어버릴 수 있기 때문.
+  if (strcmp(cmd, "cam_backward") == 0) {
     if (!camBackward()) {
-      sendSafetyAbortStatus("cam_backward_request");
+      JETSON_SERIAL.println("{\"status\":\"cam_backward_failed\"}");
       return;
     }
     JETSON_SERIAL.println("{\"status\":\"cam_backward_done\"}");
     return;
   }
 
-  // 보관함 왕복 끝나고 복귀 — 카메라를 다시 정면으로 돌린다.
-  if (strcmp(cmd, "cam_forward") == 0 && currentState == IDLE) {
+  // 보관함 왕복 끝나고 복귀 — 카메라를 다시 정면으로 돌린다. (마찬가지로 IDLE 무관)
+  if (strcmp(cmd, "cam_forward") == 0) {
     if (!camForward()) {
-      sendSafetyAbortStatus("cam_forward_request");
+      JETSON_SERIAL.println("{\"status\":\"cam_forward_failed\"}");
       return;
     }
     JETSON_SERIAL.println("{\"status\":\"cam_forward_done\"}");
