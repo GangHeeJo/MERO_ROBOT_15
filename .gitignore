@@ -15,3 +15,6 @@ DEVLOG.md
 # 시스템
 .DS_Store
 Thumbs.db
+
+# 영수증 (로컬 전용)
+영수증/
