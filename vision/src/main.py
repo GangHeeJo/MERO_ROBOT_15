@@ -1231,14 +1231,17 @@ try:
                         avg_area = sum(o["area"] for o in flag_candidates) / len(flag_candidates)
 
                         if not flag_aligned:
-                            # 좌우 정렬 — 카메라는 뒤(=진행방향)를 보는 중, 제자리 회전으로 방향만 맞춤
+                            # 좌우 정렬 — 화면 오른쪽에 있으면 시계방향(오른쪽)으로 회전해서 중앙으로
+                            # 가져온다. 카메라가 뒤를 보고 있어도 이 회전 방향(부호)은 정면 카메라일
+                            # 때와 동일 — 로봇 전체가 그대로 회전하는 거라 카메라가 어느 쪽을 보든
+                            # "화면 오른쪽 물체 → 시계방향 회전"은 안 바뀜(뒤집으면 반대로 돔, 확인됨).
                             offset = avg_cx - fw2 / 2
                             if abs(offset) <= FLAG_CENTER_MARGIN_PX:
                                 flag_aligned = True
                                 print(f"\n[상태] 태극기 방향 정렬 완료 (cx={avg_cx:.0f}) → 직진 진입")
                             else:
                                 turn = max(-1.0, min(1.0, offset / (fw2 / 2)))
-                                control_wheels(None, override_l=-FLAG_ALIGN_SPEED * turn, override_r=FLAG_ALIGN_SPEED * turn)
+                                control_wheels(None, override_l=FLAG_ALIGN_SPEED * turn, override_r=-FLAG_ALIGN_SPEED * turn)
                                 print(f"[상태] 태극기 방향 정렬중... cx={avg_cx:.0f} (n={len(flag_candidates)})", end="\r")
                         else:
                             # 정렬 끝 — 멈추지 않고 그 상태로 계속 직진, 가까워질수록만 감속
