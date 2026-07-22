@@ -263,7 +263,6 @@ _frame_fail_count    = 0
 storage_phase        = 0   # 0=탐색회전, 1=후진접근
 storage_phase_start  = 0.0
 storage_enter_time   = 0.0
-CAMERA_REVERSED      = False  # True면 카메라가 물리적으로 180도 돌아간 상태 (경기당 1회, GO_TO_STORAGE 진입 시)
 confirm_count        = 0
 last_target_id       = -1
 post_grip_scan_start = 0.0   # POST_GRIP_SCAN 진입 시각
@@ -583,8 +582,6 @@ try:
         # 카메라 1대로 모든 상태(SEARCHING/GRIPPING/GO_TO_STORAGE)에서 동일하게 탐지
         # GO_TO_STORAGE는 아래에서 detected 중 cls=='flag'만 걸러서 씀
         ret, frame = cap.read()
-        if CAMERA_REVERSED and ret:
-            frame = cv2.rotate(frame, cv2.ROTATE_180)  # 카메라가 물리적으로 180도 돌아간 만큼 영상도 보정
         if not ret:
             _frame_fail_count += 1
             if _frame_fail_count >= 10:
@@ -658,7 +655,6 @@ try:
                 storage_phase        = 0
                 storage_enter_time   = time.time()
                 send_cam_backward()   # 경기당 1회 — 이후 다시 정면으로 돌릴 일 없음
-                CAMERA_REVERSED      = True
                 print(f"\n[상태] 픽업 시간 종료({PICK_PHASE_SECS:.0f}s) → GO_TO_STORAGE 전환")
 
             elif align_final_forward:
@@ -955,7 +951,7 @@ try:
                         robot_state   = RobotState.DROPPING
                         print(f"\n[상태] 태극기 도달 → dump 전송")
                     else:
-                        # 카메라가 뒤로 돌아간 채 로봇은 후진으로 다가감 (프레임은 위에서 180도 보정된 상태)
+                        # 카메라는 뒤(=진행방향)를 보는 중, 로봇은 후진으로 다가감 — 뒤가 앞인 것처럼 취급
                         turn  = (flag_detected["cx"] - fw2 / 2) / (fw2 / 2)
                         speed = FLAG_APPROACH_SLOW if flag_detected["area"] > FLAG_AREA_SLOW_THRESHOLD else FLAG_APPROACH_SPEED
                         L = -(speed + turn * 0.3)
