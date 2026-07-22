@@ -274,7 +274,7 @@ FLAG_AREA_STOP_THRESHOLD  = 200000 # 도달 판단 면적 (px²) — 이 이상�
 FLAG_FINAL_FORWARD_SECS   = 0.5    # 도달 판정 후 직진하는 시간
 FLAG_SEARCH_SPEED        = 0.15   # 탐색 회전 속도
 FLAG_ALIGN_SPEED         = 0.15   # 좌우 정렬(제자리 회전) 속도
-FLAG_APPROACH_SPEED      = 0.2    # 후진 접근 속도
+FLAG_APPROACH_SPEED      = 0.4    # 후진 접근 속도
 FLAG_APPROACH_SLOW       = 0.1    # 감속 후진 속도
 
 # ── 상태 머신 ────────────────────────────────────────────
