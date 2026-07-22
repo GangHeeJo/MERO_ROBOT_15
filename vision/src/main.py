@@ -24,7 +24,7 @@ cam_backward(카메라 후방)와 arm_up(팔 규정 크기 위치 복귀)을 동
 상태 머신:
   SEARCHING      — 경기 시작 직후 탐지 결과 무시하고 오프닝 무브(전진하며 좌회전하는
                    코너링, OPENING_ARC_SECS초, 1회) 먼저 수행 → 이후 flag 제외 물체 탐지,
-                   보이면 거리 상관없이 바로 정밀 정렬(전진/후진→회전) 진입 → 정렬 끝나면
+                   보이면 거리 상관없이 바로 정밀 정렬(전후진+회전 동시 보정) 진입 → 정렬 끝나면
                    직진 접근 후 grip 전송
   GRIPPING       — grip 전송 후 gripped 신호 대기 (집기+팔올림+투하+팔내림 완료)
                    → gripped 수신 시 POST_GRIP_SCAN
@@ -215,8 +215,8 @@ BAUD_RATE   = 115200
 FRAME_FAIL_LIMIT = 100  # 연속 이 횟수만큼 실패해야 진짜 종료
 
 # ── 바퀴 제어 파라미터 ───────────────────────────────────
-MOVE_SPEED          = 0.25
-SLOW_SPEED          = 0.15
+MOVE_SPEED          = 0.35
+SLOW_SPEED          = 0.25
 
 # ── 경기 시작 오프닝 무브 (탐지 결과 무시하고 무조건 실행, 1회) ──
 # 시작 위치가 필드 가장자리라 중앙 쪽으로 먼저 진입시키기 위함.
@@ -254,6 +254,11 @@ FORWARD_TRIM = 0.025  # 직진 시 우측으로 쏠리는 것 보정 (양수=오
 CONFIRM_FRAMES      = 3       # 연속 N프레임 도달 조건 만족해야 grip 전송
 TARGET_MISS_GRACE_FRAMES = 3  # 정밀 정렬 중 순간적으로 타겟을 놓쳐도 이 프레임 수까지는 포기 안 하고 정지 대기 (모션블러 등 프레임 단위 오탐 대응)
 
+# 정밀 정렬 (precise_align) 전용 속도 — SLOW_SPEED/TURN_ONLY_SPEED는 탐색 밀집이동에서도
+# 같이 쓰여서 건드리면 그쪽도 같이 바뀌므로, 정밀 정렬만 따로 뗀 전용 상수를 쓴다.
+PRECISE_ALIGN_FB_SPEED   = 0.25  # 1단계 전후(cy) 정렬 속도
+PRECISE_ALIGN_TURN_SPEED = 0.25  # 2단계 좌우(cx) 회전 정렬 속도
+
 # 탐색 회전
 SEARCH_ROTATE_SPEED = 0.1     # 타겟 없을 때 제자리 회전 속도
 
@@ -272,8 +277,8 @@ FLAG_CENTER_MARGIN_PX     = 100    # 가로 정렬 허용 범위 (px)
 FLAG_AREA_SLOW_THRESHOLD  = 30000  # 감속 시작 면적 (px²)  ⚠️ 임의값 — 실측 필요
 FLAG_AREA_STOP_THRESHOLD  = 200000 # 도달 판단 면적 (px²) — 이 이상이면 고정 시간 직진 후 정지
 FLAG_FINAL_FORWARD_SECS   = 0.5    # 도달 판정 후 직진하는 시간
-FLAG_SEARCH_SPEED        = 0.15   # 탐색 회전 속도
-FLAG_ALIGN_SPEED         = 0.15   # 좌우 정렬(제자리 회전) 속도
+FLAG_SEARCH_SPEED        = 0.07   # 탐색 회전 속도
+FLAG_ALIGN_SPEED         = 0.25   # 좌우 정렬(제자리 회전) 속도
 FLAG_APPROACH_SPEED      = 0.4    # 후진 접근 속도
 FLAG_APPROACH_SLOW       = 0.1    # 감속 후진 속도
 
@@ -286,9 +291,8 @@ class RobotState(Enum):
 
 robot_state          = RobotState.SEARCHING
 grip_sent_at         = 0.0
-storage_phase        = 0   # 0=탐색회전, 1=후진접근
+storage_phase        = 0   # 0=탐색회전, 1=회전+접근 동시 조향
 storage_phase_start  = 0.0
-flag_aligned         = False  # phase 1 진입 후 좌우(cx) 정렬 완료 여부 — 한 번 맞으면 재확인 없이 직진만 함
 flag_final_forward       = False  # area가 FLAG_AREA_STOP_THRESHOLD 도달 후 고정 시간 직진 중
 flag_final_forward_start = 0.0
 flag_arrived             = False  # 직진 끝나고 정지 완료 — 이후 아무 것도 안 함
@@ -301,11 +305,10 @@ align_phase          = 0      # --align-only 전용: 0=회전으로 좌우(cx) �
 align_final_forward       = False  # --align-only 전용: cy 정렬 완료 후 1초 직진 중
 align_final_forward_start = 0.0
 align_final_forward_cls   = None
-fb_phase          = 0      # 실제 grip 정밀 정렬: 0=전진/후진으로 상하(cy) 정렬, 1=회전으로 좌우(cx) 정렬
-fb_final_forward       = False  # cx 정렬 완료 후 직진 중
+fb_final_forward       = False  # cx/cy 정렬 완료 후 직진 중
 fb_final_forward_start = 0.0
 fb_final_forward_cls   = None
-precise_align = False  # True면 area 임계 도달 후 정밀 정렬(전진/후진→회전) 진행 중
+precise_align = False  # True면 area 임계 도달 후 정밀 정렬(전후진+회전 동시 보정) 진행 중
 gripper_prepped = False  # True면 이번 접근을 위해 그리퍼를 미리 열어둔 상태 (grip 전송 또는 취소 시 False로 복귀)
 target_miss_count = 0  # precise_align 중 연속으로 타겟을 못 잡은 프레임 수 (TARGET_MISS_GRACE_FRAMES까지는 정지 대기)
 search_rotate_start        = None   # 제자리 회전 탐색이 연속으로 시작된 시각 (None=회전 중 아님, 로그 표시용)
@@ -543,7 +546,7 @@ def control_wheels(target: dict | None, override_l: float | None = None, overrid
 
 def _is_at_target(target: dict) -> bool:
     """도달(=정밀 정렬 진입) 여부 판단. mm 모드 → 거리, 픽셀 모드 → area 임계 도달.
-    중심 정렬(cx/cy)은 여기서 안 보고, 도달 이후 정밀 정렬 단계(전진/후진→회전)에서 맞춘다."""
+    중심 정렬(cx/cy)은 여기서 안 보고, 도달 이후 정밀 정렬 단계(전후진+회전 동시 보정)에서 맞춘다."""
     if target.get("mx") is not None:
         dist = (target["mx"] ** 2 + target["my"] ** 2) ** 0.5
         return dist < ARRIVE_THRESHOLD_MM
@@ -874,7 +877,6 @@ if STORAGE_ONLY:
     # 태극기 정렬+접근+dump 로직만 단독으로 테스트할 때 사용.
     robot_state        = RobotState.GO_TO_STORAGE
     storage_phase       = 0
-    flag_aligned         = False
     flag_final_forward   = False
     flag_arrived         = False
     storage_enter_time   = time.time()
@@ -963,13 +965,11 @@ try:
                 send_gripper_close()
                 gripper_prepped = False
             precise_align        = False
-            fb_phase             = 0
             align_phase          = 0
             align_final_forward  = False
             fb_final_forward     = False
             robot_state          = RobotState.GO_TO_STORAGE
             storage_phase        = 0
-            flag_aligned         = False
             flag_final_forward   = False
             flag_arrived         = False
             storage_enter_time   = time.time()
@@ -1070,7 +1070,9 @@ try:
                     print(f"[상태] SEARCHING → GRIPPING (grip: {fb_final_forward_cls})")
 
             elif precise_align:
-                # 실제 grip 정밀 정렬: 1단계 전진/후진(상하 cy) → 2단계 제자리 회전(좌우 cx)
+                # 실제 grip 정밀 정렬: 전진/후진(상하 cy)과 회전(좌우 cx)을 동시에 섞어서 조향
+                # (예전엔 cy 먼저 맞추고 나서 cx를 맞추는 순차 방식이었는데, 둘 다 한 번에
+                # 보정하도록 변경 — L/R에 전후진 성분과 회전 성분을 더해서 같이 움직인다).
                 # select_target()을 매 프레임 다시 부르지 않고 last_target_id로 같은 물체만 계속
                 # 추적한다 — 후보가 여러 개고 점수가 비슷하면 프레임마다 다른 물체로 선택이 튈 수
                 # 있어서, 한 번 정하면 그 물체가 완전히 사라지기(+grace) 전까진 안 바꾼다.
@@ -1084,7 +1086,6 @@ try:
                     else:
                         # grace 프레임 다 지나도 안 잡힘 — 진짜 놓친 것으로 보고 재탐색으로 복귀
                         precise_align     = False
-                        fb_phase          = 0
                         target_miss_count = 0
                         last_target_id    = -1
                         if gripper_prepped:
@@ -1100,36 +1101,27 @@ try:
                     cx_aligned = abs(locked["cx"] - cx_ref) <= CENTER_MARGIN_PX
                     cy_aligned = abs(locked["cy"] - cy_ref) <= CENTER_MARGIN_Y_PX
 
-                    if fb_phase == 0:
-                        if cy_aligned:
-                            control_wheels(None)
-                            fb_phase = 1
-                            print(f"\n[상태] 상하 정렬 완료 (cy={locked['cy']:.0f}) → 좌우 정렬")
-                        else:
-                            # cy_ref보다 위(작음)=목표가 더 멀리 있음 → 전진, 아래(큼)=너무 가까움 → 후진
-                            fwd = SLOW_SPEED if locked["cy"] < cy_ref else -SLOW_SPEED
-                            control_wheels(None, override_l=fwd, override_r=fwd)
-                            direction = "전진" if fwd > 0 else "후진"
-                            print(f"[상태] {direction} 정렬중... cy={locked['cy']:.0f}", end="\r")
-
+                    if cx_aligned and cy_aligned:
+                        control_wheels(None)
+                        precise_align          = False
+                        fb_final_forward        = True
+                        fb_final_forward_start  = time.time()
+                        fb_final_forward_cls    = locked["cls"]
+                        send_gripper_open()
+                        gripper_prepped = True
+                        print(f"\n[상태] 정렬 완료 (cx={locked['cx']:.0f}, cy={locked['cy']:.0f}) → 그리퍼 열기 + 직진 접근 시작")
                     else:
+                        # cy_ref보다 위(작음)=목표가 더 멀리 있음 → 전진, 아래(큼)=너무 가까움 → 후진
+                        fwd = 0.0
                         if not cy_aligned:
-                            # 회전 중 상하가 틀어지면 전후 단계로 복귀
-                            fb_phase = 0
-                        elif cx_aligned:
-                            control_wheels(None)
-                            precise_align          = False
-                            fb_phase                = 0
-                            fb_final_forward        = True
-                            fb_final_forward_start  = time.time()
-                            fb_final_forward_cls    = locked["cls"]
-                            send_gripper_open()
-                            gripper_prepped = True
-                            print(f"\n[상태] 좌우 정렬 완료 (cx={locked['cx']:.0f}) → 그리퍼 열기 + 직진 접근 시작")
-                        else:
+                            fwd = PRECISE_ALIGN_FB_SPEED if locked["cy"] < cy_ref else -PRECISE_ALIGN_FB_SPEED
+                        turn = 0.0
+                        if not cx_aligned:
                             turn = max(-1.0, min(1.0, (locked["cx"] - cx_ref) / (frame_w / 2)))
-                            control_wheels(None, override_l=TURN_ONLY_SPEED * turn, override_r=-TURN_ONLY_SPEED * turn)
-                            print(f"[상태] 회전 정렬중... cx={locked['cx']:.0f}", end="\r")
+                        control_wheels(None,
+                                       override_l=fwd + PRECISE_ALIGN_TURN_SPEED * turn,
+                                       override_r=fwd - PRECISE_ALIGN_TURN_SPEED * turn)
+                        print(f"[상태] 동시 정렬중... cy={locked['cy']:.0f} cx={locked['cx']:.0f}", end="\r")
 
             elif target:
                 search_rotate_start = None
@@ -1137,20 +1129,18 @@ try:
                     print(f"[타겟] {target['cls']} | area={target['area']}")
                     _last_print_t = time.time()
 
-                # 타겟이 보이면 area/중앙정렬 상관없이 바로 정밀 정렬(전진/후진→회전) 진입 —
+                # 타겟이 보이면 area/중앙정렬 상관없이 바로 정밀 정렬(전후진+회전 동시 보정) 진입 —
                 # 예전 --align-fwd-first와 동일한 방식 (거리 무관하게 즉시 시작)
                 # 그리퍼는 정렬 중엔 닫힌 채로 두고, 좌우 정렬까지 끝나 최종 직진 접근
                 # 직전에만 연다 (엉뚱한 물체가 정렬 중 벌어진 집게에 끼는 것 방지).
                 control_wheels(None)
                 precise_align     = True
-                fb_phase          = 0
                 target_miss_count = 0  # 이전 정렬 시도가 grace 소진 없이 중간에 끊겼을 수 있어 새로 시작할 때 항상 리셋
                 last_target_id    = target["id"]  # 이 물체 id로 락 — 이후 select_target() 재호출 없이 이 id만 추적
                 print(f"\n[상태] 타겟 발견 (area={target['area']}) → 정밀 정렬 시작 (그리퍼는 닫힌 채 유지)")
 
             else:
                 align_phase   = 0
-                fb_phase      = 0
                 precise_align = False
 
                 # 타겟 미검출 — 클래스/신뢰도 상관없이(flag는 제외) 탐지된 물체가 2개 이상이면
@@ -1260,17 +1250,16 @@ try:
                     if flag_candidates:
                         storage_phase       = 1
                         storage_phase_start = now
-                        flag_aligned        = False
-                        print(f"\n[상태] 태극기 발견 → 방향 정렬 시작")
+                        print(f"\n[상태] 태극기 발견 → 접근 시작")
                     else:
                         control_wheels(None, override_l=FLAG_SEARCH_SPEED, override_r=-FLAG_SEARCH_SPEED)
                         print(f"[상태] 태극기 탐색 회전중... ({total_elapsed:.1f}s)", end="\r")
 
                 elif storage_phase == 1:
-                    # 보이는 모든 태극기의 중심(cx 평균)을 화면 중앙 세로선에 맞추는
-                    # 좌우 정렬만 수행 (상하 정렬 없음 — 거리는 area로만 판단).
-                    # 정렬되면(flag_aligned) 더 이상 방향 안 고치고 area 임계(FLAG_AREA_STOP_THRESHOLD)
-                    # 도달할 때까지 직진 → 도달하면 FLAG_FINAL_FORWARD_SECS만 더 직진 후 정지.
+                    # 보이는 모든 태극기의 중심(cx 평균)을 화면 중앙 세로선에 맞추는 좌우 보정과
+                    # 접근(직진)을 동시에 섞어서 조향 (상하 정렬 없음 — 거리는 area로만 판단).
+                    # area 임계(FLAG_AREA_STOP_THRESHOLD) 도달하면 FLAG_FINAL_FORWARD_SECS만
+                    # 더 직진 후 정지.
                     if flag_arrived:
                         # 이미 도달해서 정지 완료 — 더 이상 아무 것도 안 함(경기 종료 취급)
                         control_wheels(None)
@@ -1289,34 +1278,26 @@ try:
                         control_wheels(None)
                         storage_phase       = 0
                         storage_phase_start = now
-                        flag_aligned        = False
                         print(f"\n[상태] 태극기 놓침 → 탐색 복귀")
                     else:
                         avg_cx   = sum(o["cx"] for o in flag_candidates) / len(flag_candidates)
                         avg_area = sum(o["area"] for o in flag_candidates) / len(flag_candidates)
 
-                        if not flag_aligned:
-                            # 좌우 정렬 — 화면 오른쪽에 있으면 시계방향(오른쪽)으로 회전해서 중앙으로
-                            # 가져온다. 카메라가 뒤를 보고 있어도 이 회전 방향(부호)은 정면 카메라일
-                            # 때와 동일 — 로봇 전체가 그대로 회전하는 거라 카메라가 어느 쪽을 보든
-                            # "화면 오른쪽 물체 → 시계방향 회전"은 안 바뀜(뒤집으면 반대로 돔, 확인됨).
-                            offset = avg_cx - fw2 / 2
-                            if abs(offset) <= FLAG_CENTER_MARGIN_PX:
-                                flag_aligned = True
-                                print(f"\n[상태] 태극기 방향 정렬 완료 (cx={avg_cx:.0f}) → 직진 진입")
-                            else:
-                                turn = max(-1.0, min(1.0, offset / (fw2 / 2)))
-                                control_wheels(None, override_l=FLAG_ALIGN_SPEED * turn, override_r=-FLAG_ALIGN_SPEED * turn)
-                                print(f"[상태] 태극기 방향 정렬중... cx={avg_cx:.0f} (n={len(flag_candidates)})", end="\r")
-                        elif avg_area >= FLAG_AREA_STOP_THRESHOLD:
+                        if avg_area >= FLAG_AREA_STOP_THRESHOLD:
                             flag_final_forward       = True
                             flag_final_forward_start = now
                             print(f"\n[상태] 태극기 area={avg_area:.0f} 도달 → {FLAG_FINAL_FORWARD_SECS:.1f}초 직진 후 정지")
                         else:
-                            # 정렬 끝, 아직 임계 미도달 — 계속 직진, 가까워질수록만 감속
-                            speed = FLAG_APPROACH_SLOW if avg_area > FLAG_AREA_SLOW_THRESHOLD else FLAG_APPROACH_SPEED
-                            control_wheels(None, override_l=-speed, override_r=-speed)
-                            print(f"[상태] 스토리지 진입중... area={avg_area:.0f} (n={len(flag_candidates)})", end="\r")
+                            # 좌우 보정(회전)과 접근(직진)을 동시에 섞어서 조향 — 화면 오른쪽에
+                            # 있으면 시계방향으로 도는 성분을 더한다. 카메라가 뒤를 보고 있어도
+                            # 이 회전 방향(부호)은 정면 카메라일 때와 동일(뒤집으면 반대로 돔, 확인됨).
+                            offset = avg_cx - fw2 / 2
+                            turn   = max(-1.0, min(1.0, offset / (fw2 / 2)))
+                            speed  = FLAG_APPROACH_SLOW if avg_area > FLAG_AREA_SLOW_THRESHOLD else FLAG_APPROACH_SPEED
+                            control_wheels(None,
+                                           override_l=-speed + FLAG_ALIGN_SPEED * turn,
+                                           override_r=-speed - FLAG_ALIGN_SPEED * turn)
+                            print(f"[상태] 태극기로 동시 접근중... cx={avg_cx:.0f} area={avg_area:.0f} (n={len(flag_candidates)})", end="\r")
 
         # ── 시각화 ──────────────────────────────────────
         if results is not None:
