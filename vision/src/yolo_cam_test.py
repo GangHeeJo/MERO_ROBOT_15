@@ -1,12 +1,14 @@
 """
-yolo_cam_test.py — 카메라 + YOLO(best.engine) 탐지만 테스트 (로봇/시리얼 전혀 안 건드림)
+yolo_cam_test.py — 카메라 + YOLO 탐지만 테스트 (로봇/시리얼 전혀 안 건드림)
 ─────────────────────────────────────────────
 목적: TensorRT 엔진 전환 후 탐지 품질/FPS 확인용. main.py와 달리 ESP32/OpenRB에
       아예 연결하지 않아서 바퀴·그리퍼·팔이 절대 움직이지 않음.
-실행: python vision/src/yolo_cam_test.py
+실행: python vision/src/yolo_cam_test.py          # best.engine (TensorRT, 기본값)
+      python vision/src/yolo_cam_test.py --pt     # best.pt (PyTorch) — 속도 A/B 비교용
 브라우저에서 http://<젯슨IP>:8083 접속하면 전체 클래스 탐지 박스 확인 가능
 """
 
+import argparse
 import cv2
 import glob
 import os
@@ -16,8 +18,13 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from ultralytics import YOLO
 
+parser = argparse.ArgumentParser()
+parser.add_argument('--pt', action='store_true',
+                    help='best.engine(TensorRT) 대신 best.pt(PyTorch)로 실행 — 속도 비교용')
+args = parser.parse_args()
+
 BASE_DIR   = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODEL_PATH = os.path.join(BASE_DIR, "model", "best.engine")
+MODEL_PATH = os.path.join(BASE_DIR, "model", "best.pt" if args.pt else "best.engine")
 model = YOLO(MODEL_PATH)
 print(f"[모델] {MODEL_PATH} 로드 완료 — 클래스: {sorted(model.names.values())}")
 
