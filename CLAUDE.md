@@ -16,7 +16,7 @@ pick-and-place 로봇 대회. 카메라로 물체 분류·트래킹 → 집게�
   - ID 2: 팔 관절 — 물리 모터 2개가 같은 ID 공유 (한쪽은 Dynamixel Wizard에서 미리 DRIVE_MODE=Reverse로 구워둠)
   - ID 3: 컨테이너 힌지 — 물리 모터 2개, 동일한 ID 공유 구조
   - ID 4: 카메라 회전 서보 — `robot/camera.ino`로 `robot.ino` 본체에 통합 완료. 전원 켤 때 카메라가 보던 위치를 "정면"으로 저장해두고, `cam_backward`(180도 회전)/`cam_forward`(정면 복귀) 명령으로 제어
-- 카메라: ArduCAM 2.3MP AR0234 글로벌 셔터 USB 3.0 — 전면 1대만 사용 (2026-07-22부터 통합 모델로 단일 카메라 구조로 리팩토링, 후면 태극기 전용 카메라는 폐기). `GO_TO_STORAGE` 진입 시 ID4 서보로 카메라 자체를 180도 돌려서 같은 카메라로 후방(보관함 방향)을 봄 — 카메라 회전축이 지면과 수평(팬 회전)이라 영상 상하 반전은 없음
+- 카메라: ArduCAM 2.3MP AR0234 글로벌 셔터 USB 3.0 — 전면 1대만 사용 (2026-07-22부터 통합 모델로 단일 카메라 구조로 리팩토링, 후면 태극기 전용 카메라는 폐기). `GO_TO_STORAGE` 진입 시 ID4 서보로 카메라 자체를 180도 돌려서 같은 카메라로 후방(보관함 방향)을 봄 — 카메라 회전축이 지면과 수평(팬 회전)이라 영상 상하 반전은 없음. USB 대역폭 타이밍 노이즈로 `select() timeout` 경고가 간헐적으로 뜨는데(1920×1200@50fps 고해상도 유지 중), `FRAME_FAIL_LIMIT`(`main.py`, 연속 100회)까지는 자동 복구 시도 — 그 이상 멈추면 `cap.read()` 자체가 블로킹된 것으로 보고 USB 재연결 필요
 
 **대회 태스크**
 - shape-based: d6, d8, d12, d20
@@ -37,6 +37,8 @@ MERO_AI_ROBOT/
 │   │   ├── imu_test.py            # IMU 값 확인용
 │   │   ├── wheels_test.py         # ESP32 바퀴 단독 구동 테스트 (w/a/s/d, f <초> 직진, r <초> 회전, L R 속도 직접)
 │   │   ├── camera_test.py         # 카메라만 단독 가동 — 연결/해상도/FPS 확인, 브라우저 :8082 스트림
+│   │   ├── cam_servo_test.py      # OpenRB 카메라 서보(ID4)만 단독 테스트 — b(후방)/f(정면)/t(왕복), 재업로드 불필요
+│   │   ├── basket_test.py         # OpenRB 바스켓(ID3)만 단독 테스트 — o(열기, 유지)/c(닫기)
 │   │   ├── launcher.py            # 물리 버튼 3개 + OLED로 카메라·젯슨 없이 클래스 선택/실행하는 독립 런처
 │   │   ├── trt_export.py          # TensorRT 변환 스크립트 (Jetson 전용)
 │   │   └── video_to_frames.py
@@ -117,14 +119,16 @@ Jetson main.py
   ├─→ /dev/ttyACM0 → ESP32 (UGV 바퀴)   {"T":1, "L":speed, "R":speed}
   └─→ /dev/ttyACM1 → OpenRB-150          {"cmd":"grip"/"dump"/"idle"/"start"/
                                            "gripper_open"/"gripper_close"/"reset_fault"/"arm_up"/
-                                           "cam_backward"/"cam_forward", ...}
+                                           "cam_backward"/"cam_forward"/
+                                           "basket_open"/"basket_close", ...}
   └─← /dev/ttyACM1 ← OpenRB-150          {"status":"gripped"/"grip_failed"/"dumped"/
                                            "gripper_opened"/"gripper_closed"/"started"/"arm_up_done"/
                                            "cam_backward_done"/"cam_forward_done"/
+                                           "basket_opened"/"basket_closed"/
                                            "motor_fault"/"motor_recovered"/"motion_aborted"/"fault_reset"}
 ```
 
-`gripper_open`/`gripper_close`는 안전정책이 아니라 집기 메커니즘 자체에 필요 — IDLE 기본값이 "닫힘"이라 미리 열어두지 않으면 집을 공간이 없음. 타겟 발견(정밀 정렬 진입) 시 `gripper_open`, 타겟 놓치면 `gripper_close` 전송. `start`는 경기 시작 시 규정 크기용으로 올려둔 팔을 내리는 명령(전원 켜지면 팔은 기본적으로 올림 상태로 대기). `arm_up`은 디버깅용 — 팔을 수동으로 시작 위치(올림)로 복귀. `cam_backward`/`cam_forward`는 ID4 카메라 서보 제어 — `GO_TO_STORAGE` 진입 시(경기당 1회) `cam_backward`를 보내 카메라가 후방(보관함 방향)을 보게 함.
+`gripper_open`/`gripper_close`는 안전정책이 아니라 집기 메커니즘 자체에 필요 — IDLE 기본값이 "닫힘"이라 미리 열어두지 않으면 집을 공간이 없음. 타겟 발견(정밀 정렬 진입) 시 `gripper_open`, 타겟 놓치면 `gripper_close` 전송. `start`는 경기 시작 시 규정 크기용으로 올려둔 팔을 내리는 명령(전원 켜지면 팔은 기본적으로 올림 상태로 대기). `arm_up`은 디버깅용 — 팔을 수동으로 시작 위치(올림)로 복귀. `cam_backward`/`cam_forward`는 ID4 카메라 서보 제어 — `GO_TO_STORAGE` 진입 시(경기당 1회) `cam_backward`를 보내 카메라가 후방(보관함 방향)을 보게 함. `basket_open`/`basket_close`는 임시 디버깅용 — `dump`와 달리 자동으로 안 닫히고 열린 채로 유지되어 바스켓 안을 직접 확인하거나 수동으로 비울 때 사용 (`vision/src/basket_test.py`로 단독 테스트 가능).
 
 ## 상태 머신
 
@@ -158,7 +162,7 @@ DROPPING → dumped 수신 또는 DROP_TIMEOUT_SECS(15초) 타임아웃 → SEAR
 IDLE(그리퍼 닫힘) → (grip 수신) → GRIPPING → (집기 시도, 성공/실패 무관 항상 진행, 2초 대기) → LIFTING
     (팔 올림 → 그리퍼 열어 투하 → 2초 대기 → 그리퍼 다시 닫기(대기상태) → 팔 내림) → IDLE (gripped 전송)
 IDLE → (dump 수신) → DUMPING → (컨테이너 열고 500ms 후 닫기) → IDLE (dumped 전송)
-IDLE → (gripper_open/gripper_close/start/arm_up/cam_backward/cam_forward 수신) → 해당 동작만 수행, 상태 변화 없음
+IDLE → (gripper_open/gripper_close/start/arm_up/cam_backward/cam_forward/basket_open/basket_close 수신) → 해당 동작만 수행, 상태 변화 없음
 
 safety.ino가 overload/hardware error를 감지하면 어느 상태에서든 즉시 IDLE로 복귀
 (fatal fault면 사람이 reset_fault 보낼 때까지 명령 거부)
