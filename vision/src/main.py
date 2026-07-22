@@ -582,9 +582,10 @@ if FRAME_W is None:
 _cap_lock          = threading.Lock()
 _cap_latest_frame  = None
 _cap_fail_count    = 0
+CAMERA_RECONNECT_AFTER_FAILS = 20  # 이만큼 연속 실패하면 카메라 껐다 켜서 재연결 시도
 
 def _camera_capture_loop():
-    global _cap_latest_frame, _cap_fail_count
+    global cap, _cap_latest_frame, _cap_fail_count
     while True:
         ret, f = cap.read()
         with _cap_lock:
@@ -593,6 +594,20 @@ def _camera_capture_loop():
                 _cap_fail_count   = 0
             else:
                 _cap_fail_count += 1
+            fail_count = _cap_fail_count
+
+        if not ret and fail_count > 0 and fail_count % CAMERA_RECONNECT_AFTER_FAILS == 0:
+            print(f"\n[카메라] 연속 {fail_count}회 읽기 실패 — 재연결 시도")
+            try:
+                cap.release()
+            except Exception:
+                pass
+            new_cap = _init_camera(CAMERA_INDEX_OBJ, "물체캠")
+            if new_cap is not None:
+                cap = new_cap
+                print("[카메라] 재연결 성공")
+            else:
+                print("[카메라] 재연결 실패 — 계속 재시도")
 
 threading.Thread(target=_camera_capture_loop, daemon=True).start()
 
