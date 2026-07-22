@@ -204,7 +204,7 @@ FRAME_FAIL_LIMIT = 100  # 연속 이 횟수만큼 실패해야 진짜 종료
 
 # ── 바퀴 제어 파라미터 ───────────────────────────────────
 MOVE_SPEED          = 0.25
-SLOW_SPEED          = 0.2
+SLOW_SPEED          = 0.15
 
 # mm 모드 (calibration 있을 때)
 ARRIVE_THRESHOLD_MM = 30.0
