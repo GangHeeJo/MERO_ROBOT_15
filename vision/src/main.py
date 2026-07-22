@@ -267,9 +267,11 @@ PICK_PHASE_SECS      = 150.0  # 이 시간(2분30초) 지나면 SEARCHING/GRIPPI
 SHOW_TIMER            = args.timer  # 화면에 카운트다운 표시 여부 (전환 로직 자체는 --timer 없어도 항상 동작)
 
 # ── 태극기 네비게이션 파라미터 ──────────────────────────
-FLAG_CONF_THRESHOLD      = 0.5
-FLAG_CENTER_MARGIN_PX    = 100    # 가로 정렬 허용 범위 (px)
-FLAG_AREA_SLOW_THRESHOLD = 30000  # 감속 시작 면적 (px²)  ⚠️ 임의값 — 실측 필요
+FLAG_CONF_THRESHOLD       = 0.5
+FLAG_CENTER_MARGIN_PX     = 100    # 가로 정렬 허용 범위 (px)
+FLAG_AREA_SLOW_THRESHOLD  = 30000  # 감속 시작 면적 (px²)  ⚠️ 임의값 — 실측 필요
+FLAG_AREA_STOP_THRESHOLD  = 200000 # 도달 판단 면적 (px²) — 이 이상이면 고정 시간 직진 후 정지
+FLAG_FINAL_FORWARD_SECS   = 0.5    # 도달 판정 후 직진하는 시간
 FLAG_SEARCH_SPEED        = 0.15   # 탐색 회전 속도
 FLAG_ALIGN_SPEED         = 0.15   # 좌우 정렬(제자리 회전) 속도
 FLAG_APPROACH_SPEED      = 0.2    # 후진 접근 속도
@@ -287,6 +289,9 @@ grip_sent_at         = 0.0
 storage_phase        = 0   # 0=탐색회전, 1=후진접근
 storage_phase_start  = 0.0
 flag_aligned         = False  # phase 1 진입 후 좌우(cx) 정렬 완료 여부 — 한 번 맞으면 재확인 없이 직진만 함
+flag_final_forward       = False  # area가 FLAG_AREA_STOP_THRESHOLD 도달 후 고정 시간 직진 중
+flag_final_forward_start = 0.0
+flag_arrived             = False  # 직진 끝나고 정지 완료 — 이후 아무 것도 안 함
 storage_enter_time   = 0.0
 confirm_count        = 0
 last_target_id       = -1
@@ -827,6 +832,8 @@ if STORAGE_ONLY:
     robot_state        = RobotState.GO_TO_STORAGE
     storage_phase       = 0
     flag_aligned         = False
+    flag_final_forward   = False
+    flag_arrived         = False
     storage_enter_time   = time.time()
     send_cam_backward()
     send_arm_up()
@@ -920,6 +927,8 @@ try:
             robot_state          = RobotState.GO_TO_STORAGE
             storage_phase        = 0
             flag_aligned         = False
+            flag_final_forward   = False
+            flag_arrived         = False
             storage_enter_time   = time.time()
             send_cam_backward()   # 경기당 1회 — 이후 다시 정면으로 돌릴 일 없음
             send_arm_up()         # 카메라 회전과 동시에 팔도 규정 크기 위치로 복귀
@@ -1217,9 +1226,22 @@ try:
                 elif storage_phase == 1:
                     # 보이는 모든 태극기의 중심(cx 평균)을 화면 중앙 세로선에 맞추는
                     # 좌우 정렬만 수행 (상하 정렬 없음 — 거리는 area로만 판단).
-                    # 정렬되면(flag_aligned) 더 이상 방향 안 고치고 그 상태로 계속 직진 —
-                    # 멈추지 않고 모빌리티 자체가 스토리지 안까지 그대로 진입한다 (dump 없음).
-                    if not flag_candidates:
+                    # 정렬되면(flag_aligned) 더 이상 방향 안 고치고 area 임계(FLAG_AREA_STOP_THRESHOLD)
+                    # 도달할 때까지 직진 → 도달하면 FLAG_FINAL_FORWARD_SECS만 더 직진 후 정지.
+                    if flag_arrived:
+                        # 이미 도달해서 정지 완료 — 더 이상 아무 것도 안 함(경기 종료 취급)
+                        control_wheels(None)
+                    elif flag_final_forward:
+                        # 도달 판정 이후엔 태극기를 놓쳐도 상관없이 고정 시간만 직진 후 정지
+                        control_wheels(None, override_l=-FLAG_APPROACH_SPEED, override_r=-FLAG_APPROACH_SPEED)
+                        elapsed_ff = now - flag_final_forward_start
+                        print(f"[상태] 스토리지 진입 직진중... ({elapsed_ff:.1f}s)", end="\r")
+                        if elapsed_ff >= FLAG_FINAL_FORWARD_SECS:
+                            control_wheels(None)
+                            flag_final_forward = False
+                            flag_arrived       = True
+                            print(f"\n[상태] 스토리지 도달 — 정지")
+                    elif not flag_candidates:
                         # 태극기 전부 놓침 → 탐색으로 복귀
                         control_wheels(None)
                         storage_phase       = 0
@@ -1243,8 +1265,12 @@ try:
                                 turn = max(-1.0, min(1.0, offset / (fw2 / 2)))
                                 control_wheels(None, override_l=FLAG_ALIGN_SPEED * turn, override_r=-FLAG_ALIGN_SPEED * turn)
                                 print(f"[상태] 태극기 방향 정렬중... cx={avg_cx:.0f} (n={len(flag_candidates)})", end="\r")
+                        elif avg_area >= FLAG_AREA_STOP_THRESHOLD:
+                            flag_final_forward       = True
+                            flag_final_forward_start = now
+                            print(f"\n[상태] 태극기 area={avg_area:.0f} 도달 → {FLAG_FINAL_FORWARD_SECS:.1f}초 직진 후 정지")
                         else:
-                            # 정렬 끝 — 멈추지 않고 그 상태로 계속 직진, 가까워질수록만 감속
+                            # 정렬 끝, 아직 임계 미도달 — 계속 직진, 가까워질수록만 감속
                             speed = FLAG_APPROACH_SLOW if avg_area > FLAG_AREA_SLOW_THRESHOLD else FLAG_APPROACH_SPEED
                             control_wheels(None, override_l=-speed, override_r=-speed)
                             print(f"[상태] 스토리지 진입중... area={avg_area:.0f} (n={len(flag_candidates)})", end="\r")
