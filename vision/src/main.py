@@ -204,7 +204,7 @@ FRAME_FAIL_LIMIT = 100  # 연속 이 횟수만큼 실패해야 진짜 종료
 
 # ── 바퀴 제어 파라미터 ───────────────────────────────────
 MOVE_SPEED          = 0.25
-SLOW_SPEED          = 0.1
+SLOW_SPEED          = 0.15
 
 # mm 모드 (calibration 있을 때)
 ARRIVE_THRESHOLD_MM = 30.0
@@ -806,7 +806,9 @@ try:
                             fb_final_forward        = True
                             fb_final_forward_start  = time.time()
                             fb_final_forward_cls    = locked["cls"]
-                            print(f"\n[상태] 좌우 정렬 완료 (cx={locked['cx']:.0f}) → 직진 접근 시작")
+                            send_gripper_open()
+                            gripper_prepped = True
+                            print(f"\n[상태] 좌우 정렬 완료 (cx={locked['cx']:.0f}) → 그리퍼 열기 + 직진 접근 시작")
                         else:
                             turn = max(-1.0, min(1.0, (locked["cx"] - cx_ref) / (frame_w / 2)))
                             control_wheels(None, override_l=TURN_ONLY_SPEED * turn, override_r=-TURN_ONLY_SPEED * turn)
@@ -821,14 +823,14 @@ try:
 
                 # 타겟이 보이면 area/중앙정렬 상관없이 바로 정밀 정렬(전진/후진→회전) 진입 —
                 # 예전 --align-fwd-first와 동일한 방식 (거리 무관하게 즉시 시작)
+                # 그리퍼는 정렬 중엔 닫힌 채로 두고, 좌우 정렬까지 끝나 최종 직진 접근
+                # 직전에만 연다 (엉뚱한 물체가 정렬 중 벌어진 집게에 끼는 것 방지).
                 control_wheels(None)
                 precise_align     = True
                 fb_phase          = 0
                 target_miss_count = 0  # 이전 정렬 시도가 grace 소진 없이 중간에 끊겼을 수 있어 새로 시작할 때 항상 리셋
                 last_target_id    = target["id"]  # 이 물체 id로 락 — 이후 select_target() 재호출 없이 이 id만 추적
-                send_gripper_open()
-                gripper_prepped = True
-                print(f"\n[상태] 타겟 발견 (area={target['area']}) → 그리퍼 열기 + 정밀 정렬 시작")
+                print(f"\n[상태] 타겟 발견 (area={target['area']}) → 정밀 정렬 시작 (그리퍼는 닫힌 채 유지)")
 
             else:
                 align_phase   = 0
