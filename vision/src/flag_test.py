@@ -1,5 +1,5 @@
 """
-flag_test.py — 전면 카메라로 flag.pt 탐지 품질 확인용 테스트 스크립트
+flag_test.py — 전면 카메라로 best.pt(통합 모델)의 flag 탐지 품질 확인용 테스트 스크립트
 ─────────────────────────────────────────────
 실행: python vision/src/flag_test.py
 브라우저에서 http://<젯슨IP>:8081 접속하면 탐지 박스 실시간으로 볼 수 있음
@@ -15,8 +15,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from ultralytics import YOLO
 
 BASE_DIR        = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FLAG_MODEL_PATH = os.path.join(BASE_DIR, "model", "flag.pt")
+FLAG_MODEL_PATH = os.path.join(BASE_DIR, "model", "best.pt")
 model = YOLO(FLAG_MODEL_PATH)
+FLAG_CLASS_IDS = {i for i, n in model.names.items() if n == "flag"}
 
 
 def _find_camera_index(keywords, fallback):
@@ -102,6 +103,10 @@ try:
             continue
 
         results = model(frame, conf=0.5, verbose=False)
+        boxes = results[0].boxes
+        if boxes is not None and len(boxes) > 0:
+            flag_idx = [i for i, c in enumerate(boxes.cls.tolist()) if int(c) in FLAG_CLASS_IDS]
+            results[0].boxes = boxes[flag_idx]
         boxes = results[0].boxes
 
         if boxes is not None and len(boxes) > 0 and time.time() - _last_print_t >= 0.5:

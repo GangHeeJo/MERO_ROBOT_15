@@ -210,23 +210,24 @@ AREA_SLOW_THRESHOLD = 20000   # 이 면적 이상이면 감속 시작
 AREA_ROTATE_THRESHOLD = 15000 # 이 이하일 때만 제자리 회전 정렬
 MIN_DETECTED_FOR_EXPLORE = 2      # 탐색 이동 조건: 클래스 무관 총 탐지 개수가 이 이상이어야 시도
                                    # (이 미만, 즉 0~1개면 회전 탐색 프로세스로 방향을 잡는다)
-MAX_ROTATE_SECS           = 5.0   # 제자리 회전 탐색 최대 지속 시간 — 넘으면 강제로 현재 방향 직진 (실측 필요)
-SEARCH_FORWARD_BURST_SECS = 1.0   # 최대 회전 시간 초과 시 현재 방향으로 직진하는 시간 (실측 필요)
+MAX_ROTATE_SECS           = 1.0   # 제자리 회전 탐색 최대 지속 시간 — 넘으면 강제로 현재 방향 직진 (실측 필요)
+SEARCH_FORWARD_BURST_SECS = 2.0   # 최대 회전 시간 초과 시 현재 방향으로 직진하는 시간 (실측 필요)
+POST_GRIP_SCAN_SECS       = 4.0   # 집기 완료 직후 제자리 360도 스캔 시간 (SEARCH_ROTATE_SPEED 기준, 실측 필요)
 CENTER_MARGIN_PX    = 42      # 픽셀 모드: 가로 중심에서 이 픽셀 이내 (시각화 가이드용, 면적 2배)
 CENTER_MARGIN_Y_PX  = 35      # 픽셀 모드: 세로 중심에서 이 픽셀 이내 (시각화 가이드용, 면적 2배)
 CENTER_OFFSET_Y_PX  = 220     # 세로 중심 오프셋 (양수=아래)
 CENTER_OFFSET_X_PX  = 0       # 가로 중심 오프셋 (양수=오른쪽)
 ALIGN_THRESHOLD     = 0.25    # 이 이상 turn값이면 전진 없이 제자리 회전 우선
-TURN_ONLY_SPEED     = 0.2     # 제자리 회전 속도
+TURN_ONLY_SPEED     = 0.1     # 제자리 회전 속도
 FINAL_APPROACH_SECS  = 1.7        # area 임계 도달 후 정지→직진하는 시간
-FINAL_APPROACH_SPEED = MOVE_SPEED # 직진 접근 속도
+FINAL_APPROACH_SPEED = 0.15       # 직진 접근 속도
 FORWARD_TRIM = 0.025  # 직진 시 우측으로 쏠리는 것 보정 (양수=오른쪽 바퀴를 더 빠르게)
 
 # 오인식 방지
 CONFIRM_FRAMES      = 3       # 연속 N프레임 도달 조건 만족해야 grip 전송
 
 # 탐색 회전
-SEARCH_ROTATE_SPEED = 0.2     # 타겟 없을 때 제자리 회전 속도
+SEARCH_ROTATE_SPEED = 0.1     # 타겟 없을 때 제자리 회전 속도
 
 # 타임아웃
 GRIP_TIMEOUT_SECS    = 15.0   # grip 전송 후 gripped 신호 최대 대기
@@ -249,20 +250,22 @@ FLAG_APPROACH_SLOW       = 0.1    # 감속 후진 속도
 
 # ── 상태 머신 ────────────────────────────────────────────
 class RobotState(Enum):
-    SEARCHING     = "SEARCHING"
-    GRIPPING      = "GRIPPING"
-    GO_TO_STORAGE = "GO_TO_STORAGE"
-    DROPPING      = "DROPPING"
+    SEARCHING      = "SEARCHING"
+    GRIPPING       = "GRIPPING"
+    POST_GRIP_SCAN = "POST_GRIP_SCAN"
+    GO_TO_STORAGE  = "GO_TO_STORAGE"
+    DROPPING       = "DROPPING"
 
-robot_state         = RobotState.SEARCHING
-grip_sent_at        = 0.0
-drop_sent_at        = 0.0
-_frame_fail_count   = 0
-storage_phase       = 0   # 0=탐색회전, 1=후진접근
-storage_phase_start = 0.0
-storage_enter_time  = 0.0
-confirm_count       = 0
-last_target_id      = -1
+robot_state          = RobotState.SEARCHING
+grip_sent_at         = 0.0
+drop_sent_at         = 0.0
+_frame_fail_count    = 0
+storage_phase        = 0   # 0=탐색회전, 1=후진접근
+storage_phase_start  = 0.0
+storage_enter_time   = 0.0
+confirm_count        = 0
+last_target_id       = -1
+post_grip_scan_start = 0.0   # POST_GRIP_SCAN 진입 시각
 gripped_cls         = None
 align_phase          = 0      # --align-only 전용: 0=회전으로 좌우(cx) 정렬, 1=전진/후진으로 상하(cy) 정렬
 align_final_forward       = False  # --align-only 전용: cy 정렬 완료 후 1초 직진 중
@@ -330,7 +333,13 @@ def _read_openrb_loop():
             time.sleep(0.5); continue
         try:
             if ser_openrb.in_waiting > 0:
-                data = json.loads(ser_openrb.readline().decode("utf-8", errors="ignore").strip())
+                raw = ser_openrb.readline().decode("utf-8", errors="ignore").strip()
+                if not raw:
+                    time.sleep(0.01); continue
+                try:
+                    data = json.loads(raw)
+                except json.JSONDecodeError:
+                    time.sleep(0.01); continue
                 if data.get("status") == "gripped":
                     openrb_gripped = True
                     print("\n[OpenRB] 집기+투하 완료")
@@ -791,18 +800,30 @@ try:
                 precise_align = False
 
                 # 타겟 미검출 — 클래스/신뢰도 상관없이(flag는 제외) 탐지된 물체가 2개 이상이면
-                # 그중 가장 먼(area 최소) 물체가 카메라 중심에 오도록 이동하며 탐색한다.
-                # 1개 이하면(=비교 대상 없음) 회전 탐색 프로세스로 방향을 잡는다.
+                # 물체가 가장 많이 몰려있는 방향(밀집도 가중 중심)으로 이동하며 탐색한다.
+                # 고립된 물체 하나 쪽으로 잘못 쏠리지 않도록, 각 물체의 조향 기여도를
+                # "주변 CLUSTER_RADIUS_PX 이내 이웃 개수+1"로 가중해서 평균낸다.
+                # 1개 이하면(=밀집도 비교 불가) 회전 탐색 프로세스로 방향을 잡는다.
                 explorable = [o for o in detected if o['cls'] != 'flag']
-                farthest = min(explorable, key=lambda o: o["area"]) if explorable else None
-                can_explore = len(explorable) >= MIN_DETECTED_FOR_EXPLORE and farthest is not None
+                can_explore = len(explorable) >= MIN_DETECTED_FOR_EXPLORE
 
                 if can_explore:
-                    control_wheels(farthest)
+                    def _neighbor_count(o):
+                        return sum(
+                            1 for other in explorable
+                            if other is not o and ((other['cx'] - o['cx']) ** 2 + (other['cy'] - o['cy']) ** 2) ** 0.5 <= CLUSTER_RADIUS_PX
+                        )
+
+                    weights     = [_neighbor_count(o) + 1 for o in explorable]
+                    weight_sum  = sum(weights)
+                    dense_cx    = sum(o["cx"] * w for o, w in zip(explorable, weights)) / weight_sum
+                    dense_area  = sum(o["area"] * w for o, w in zip(explorable, weights)) / weight_sum
+
+                    control_wheels({"cx": dense_cx, "area": dense_area})
                     search_rotate_start  = None
                     search_forward_burst = False
                     if time.time() - _last_print_t >= 0.5:
-                        print(f"[탐색] 물체 {len(explorable)}개 감지, 가장 먼 물체({farthest['cls']}, area={farthest['area']}) 방향으로 이동")
+                        print(f"[탐색] 물체 {len(explorable)}개 감지, 밀집 방향(cx={dense_cx:.0f}) 으로 이동")
                         _last_print_t = time.time()
 
                 elif search_forward_burst:
@@ -830,29 +851,50 @@ try:
             control_wheels(None)
             elapsed = time.time() - grip_sent_at
             if openrb_gripped:
-                openrb_gripped      = False
-                openrb_dumped       = False
-                openrb_grip_failed  = False
-                gripped_cls = None
-                confirm_count  = 0
-                last_target_id = -1
-                robot_state    = RobotState.SEARCHING
-                print(f"[상태] GRIPPING → SEARCHING ({elapsed:.1f}s)")
+                openrb_gripped       = False
+                openrb_dumped        = False
+                openrb_grip_failed   = False
+                gripped_cls          = None
+                confirm_count        = 0
+                last_target_id       = -1
+                robot_state          = RobotState.POST_GRIP_SCAN
+                post_grip_scan_start = time.time()
+                print(f"[상태] GRIPPING → POST_GRIP_SCAN ({elapsed:.1f}s)")
             elif openrb_grip_failed:
-                openrb_grip_failed = False
-                openrb_gripped     = False
-                openrb_dumped      = False
-                confirm_count      = 0
-                last_target_id     = -1
-                robot_state        = RobotState.SEARCHING
-                print(f"\n[상태] GRIPPING → SEARCHING (집기 실패)")
+                openrb_grip_failed   = False
+                openrb_gripped       = False
+                openrb_dumped        = False
+                confirm_count        = 0
+                last_target_id       = -1
+                robot_state          = RobotState.POST_GRIP_SCAN
+                post_grip_scan_start = time.time()
+                print(f"\n[상태] GRIPPING → POST_GRIP_SCAN (집기 실패)")
             elif elapsed > GRIP_TIMEOUT_SECS:
-                print(f"\n[경고] grip 타임아웃 → SEARCHING 복귀")
-                confirm_count  = 0
-                last_target_id = -1
-                robot_state    = RobotState.SEARCHING
+                print(f"\n[경고] grip 타임아웃 → POST_GRIP_SCAN")
+                confirm_count        = 0
+                last_target_id       = -1
+                robot_state          = RobotState.POST_GRIP_SCAN
+                post_grip_scan_start = time.time()
             else:
                 print(f"[상태] 집어서 컨테이너 투하중... ({elapsed:.1f}s)", end="\r")
+
+        elif robot_state == RobotState.POST_GRIP_SCAN:
+            # 집기 시도(성공/실패 무관) 직후 — 이동하지 않고 제자리에서 한 바퀴 돌며
+            # 주변에 바로 이어서 집을 만한 타겟이 있는지 확인한다. 발견하거나 스캔 시간이
+            # 다 차면 SEARCHING으로 넘겨서 이후 정밀 정렬/탐색은 기존 로직이 그대로 처리한다.
+            elapsed_scan = time.time() - post_grip_scan_start
+            if target:
+                control_wheels(None)
+                robot_state = RobotState.SEARCHING
+                print(f"\n[상태] 스캔 중 타겟 발견 ({target['cls']}) → SEARCHING 복귀")
+            elif elapsed_scan >= POST_GRIP_SCAN_SECS:
+                control_wheels(None)
+                robot_state = RobotState.SEARCHING
+                print(f"\n[상태] 주변 스캔 완료 (새 타겟 없음) → SEARCHING 복귀")
+            else:
+                control_wheels(None, override_l=-SEARCH_ROTATE_SPEED, override_r=SEARCH_ROTATE_SPEED)
+                print(f"[상태] 집기 후 주변 스캔중... ({elapsed_scan:.1f}/{POST_GRIP_SCAN_SECS:.1f}s)", end="\r")
+            send_idle()
 
         elif robot_state == RobotState.GO_TO_STORAGE:
             now           = time.time()
