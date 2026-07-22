@@ -393,35 +393,78 @@ threading.Thread(target=_read_openrb_loop, daemon=True).start()
 # 건너뛰고 계속 돌게 한다 — 예전엔 처리 안 돼 있어서 한 번 끊기면 프로그램 전체가 죽었음.
 # control_wheels()가 매 프레임 _write_esp32를 부르므로, 연결이 끊긴 채 계속 돌면 경고가
 # 초당 수십 번 찍혀 터미널이 도배될 수 있어 경고 출력 자체는 WRITE_FAIL_WARN_INTERVAL마다로 제한.
-# (자동 재연결은 안 함 — ser_esp32/ser_openrb 객체가 죽은 fd를 들고 있어서 케이블 재연결해도
-#  프로그램 재시작 전까진 계속 실패함, 필요하면 별도로 추가)
-WRITE_FAIL_WARN_INTERVAL = 2.0
+# 카메라 재연결(_reopen_camera)과 동일한 이유로, write가 연속 실패하면 죽은 fd를 들고
+# 있는 ser_esp32/ser_openrb를 닫고 _find_port로 다시 찾아서 재연결 시도한다.
+WRITE_FAIL_WARN_INTERVAL     = 2.0
+SERIAL_RECONNECT_AFTER_FAILS = 20
 _last_esp32_fail_warn   = 0.0
 _last_openrb_fail_warn  = 0.0
+_esp32_fail_count       = 0
+_openrb_fail_count      = 0
+
+def _reconnect_esp32():
+    global ser_esp32
+    try:
+        if ser_esp32 is not None:
+            ser_esp32.close()
+    except Exception:
+        pass
+    port = _find_port(["1a86", "ch343", "ch34"], ESP32_PORT)
+    ser_esp32 = _open_serial(port)
+    return ser_esp32 is not None
+
+def _reconnect_openrb():
+    global ser_openrb
+    try:
+        if ser_openrb is not None:
+            ser_openrb.close()
+    except Exception:
+        pass
+    port = _find_port(["openrb", "robotis", "2ecc"], OPENRB_PORT)
+    ser_openrb = _open_serial(port)
+    return ser_openrb is not None
 
 def _write_esp32(payload: dict):
-    global _last_esp32_fail_warn
+    global _last_esp32_fail_warn, _esp32_fail_count
     if ser_esp32 is None or not ser_esp32.is_open:
         return
     try:
         ser_esp32.write((json.dumps(payload) + "\n").encode())
+        _esp32_fail_count = 0
     except serial.SerialException as e:
+        _esp32_fail_count += 1
         now = time.time()
         if now - _last_esp32_fail_warn >= WRITE_FAIL_WARN_INTERVAL:
             print(f"\n[경고] ESP32 write 실패(연결 확인 필요, 이후 {WRITE_FAIL_WARN_INTERVAL:.0f}초간 반복 로그 생략): {e}")
             _last_esp32_fail_warn = now
+        if _esp32_fail_count % SERIAL_RECONNECT_AFTER_FAILS == 0:
+            print(f"\n[ESP32] 연속 {_esp32_fail_count}회 write 실패 — 재연결 시도")
+            if _reconnect_esp32():
+                print("[ESP32] 재연결 성공")
+                _esp32_fail_count = 0
+            else:
+                print("[ESP32] 재연결 실패 — 계속 재시도")
 
 def _write_openrb(payload: dict):
-    global _last_openrb_fail_warn
+    global _last_openrb_fail_warn, _openrb_fail_count
     if ser_openrb is None or not ser_openrb.is_open:
         return
     try:
         ser_openrb.write((json.dumps(payload) + "\n").encode())
+        _openrb_fail_count = 0
     except serial.SerialException as e:
+        _openrb_fail_count += 1
         now = time.time()
         if now - _last_openrb_fail_warn >= WRITE_FAIL_WARN_INTERVAL:
             print(f"\n[경고] OpenRB write 실패(연결 확인 필요, 이후 {WRITE_FAIL_WARN_INTERVAL:.0f}초간 반복 로그 생략): {e}")
             _last_openrb_fail_warn = now
+        if _openrb_fail_count % SERIAL_RECONNECT_AFTER_FAILS == 0:
+            print(f"\n[OpenRB] 연속 {_openrb_fail_count}회 write 실패 — 재연결 시도")
+            if _reconnect_openrb():
+                print("[OpenRB] 재연결 성공")
+                _openrb_fail_count = 0
+            else:
+                print("[OpenRB] 재연결 실패 — 계속 재시도")
 
 
 # ── 바퀴 제어 ────────────────────────────────────────────
