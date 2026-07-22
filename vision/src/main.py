@@ -383,6 +383,26 @@ threading.Thread(target=_read_openrb_loop, daemon=True).start()
 
 
 
+# ── 시리얼 write 공통 헬퍼 ─────────────────────────────────
+# USB 케이블 순간 접촉불량/전원 문제 등으로 write가 실패하면(SerialException) 그 프레임만
+# 건너뛰고 계속 돌게 한다 — 예전엔 처리 안 돼 있어서 한 번 끊기면 프로그램 전체가 죽었음.
+def _write_esp32(payload: dict):
+    if ser_esp32 is None or not ser_esp32.is_open:
+        return
+    try:
+        ser_esp32.write((json.dumps(payload) + "\n").encode())
+    except serial.SerialException as e:
+        print(f"\n[경고] ESP32 write 실패(연결 확인 필요): {e}")
+
+def _write_openrb(payload: dict):
+    if ser_openrb is None or not ser_openrb.is_open:
+        return
+    try:
+        ser_openrb.write((json.dumps(payload) + "\n").encode())
+    except serial.SerialException as e:
+        print(f"\n[경고] OpenRB write 실패(연결 확인 필요): {e}")
+
+
 # ── 바퀴 제어 ────────────────────────────────────────────
 def control_wheels(target: dict | None, override_l: float | None = None, override_r: float | None = None):
     """
@@ -428,7 +448,7 @@ def control_wheels(target: dict | None, override_l: float | None = None, overrid
             L = max(-0.5, min(0.5, speed * (1.0 + turn)))
             R = max(-0.5, min(0.5, speed * (1.0 - turn)))
 
-    ser_esp32.write((json.dumps({"T": 1, "L": round(L, 2), "R": round(R, 2)}) + "\n").encode())
+    _write_esp32({"T": 1, "L": round(L, 2), "R": round(R, 2)})
 
 
 def _is_at_target(target: dict) -> bool:
@@ -442,57 +462,42 @@ def _is_at_target(target: dict) -> bool:
 
 # ── OpenRB 명령 전송 ─────────────────────────────────────
 def send_grip(target: dict):
-    if ser_openrb is None or not ser_openrb.is_open:
-        return
-    payload = json.dumps({
+    _write_openrb({
         "cmd": "grip",
         "cls": target["cls"],
         "mx":  target.get("mx", 0),
         "my":  target.get("my", 0),
-    }) + "\n"
-    ser_openrb.write(payload.encode())
+    })
 
 def send_start():
     """경기 시작 — 전원 켤 때 시작 크기 규정으로 올려둔 팔을 내림."""
-    if ser_openrb is None or not ser_openrb.is_open:
-        return
-    ser_openrb.write((json.dumps({"cmd": "start"}) + "\n").encode())
+    _write_openrb({"cmd": "start"})
 
 def send_gripper_open():
     """물체 쪽으로 접근하기 직전 — 그리퍼를 열어서 물체가 들어올 공간을 만든다.
     (IDLE 기본값이 닫힘이라, 이걸 안 하면 grip 시점에 손가락이 이미 닫혀있어 못 집음)"""
-    if ser_openrb is None or not ser_openrb.is_open:
-        return
-    ser_openrb.write((json.dumps({"cmd": "gripper_open"}) + "\n").encode())
+    _write_openrb({"cmd": "gripper_open"})
 
 def send_gripper_close():
     """접근을 포기하고 재탐색으로 돌아갈 때 — 열어뒀던 그리퍼를 대기 상태로 되돌린다."""
-    if ser_openrb is None or not ser_openrb.is_open:
-        return
-    ser_openrb.write((json.dumps({"cmd": "gripper_close"}) + "\n").encode())
+    _write_openrb({"cmd": "gripper_close"})
 
 def send_cam_backward():
     """보관함으로 가기 직전 — 카메라를 뒤로 180도 돌려 후방을 보게 한다. 경기당 1회만 호출."""
-    if ser_openrb is None or not ser_openrb.is_open:
-        return
-    ser_openrb.write((json.dumps({"cmd": "cam_backward"}) + "\n").encode())
+    _write_openrb({"cmd": "cam_backward"})
 
 def send_arm_up():
     """보관함으로 가기 직전 — 팔을 규정 크기 위치(올림)로 복귀. cam_backward와 동시에 호출.
     OpenRB가 IDLE 상태일 때만 처리됨(robot.ino) — GRIPPING/LIFTING 중이면 무시되지만
     그 경우 팔은 이미 해당 시퀀스 자체에서 올라가는 중이라 문제 없음."""
-    if ser_openrb is None or not ser_openrb.is_open:
-        return
-    ser_openrb.write((json.dumps({"cmd": "arm_up"}) + "\n").encode())
+    _write_openrb({"cmd": "arm_up"})
 
 _last_idle_t = 0.0
 def send_idle():
     global _last_idle_t
-    if ser_openrb is None or not ser_openrb.is_open:
-        return
     now = time.time()
     if now - _last_idle_t >= 1.0:
-        ser_openrb.write((json.dumps({"cmd": "idle"}) + "\n").encode())
+        _write_openrb({"cmd": "idle"})
         _last_idle_t = now
 
 
@@ -697,8 +702,7 @@ try:
         # ── IMU 주기 요청 (GO_TO_STORAGE 제외) ──────────
         _now_loop = time.time()
         if robot_state != RobotState.GO_TO_STORAGE and _now_loop - _last_imu_req >= 0.15:
-            if ser_esp32 and ser_esp32.is_open:
-                ser_esp32.write((json.dumps({"T": 126}) + "\n").encode())
+            _write_esp32({"T": 126})
             _last_imu_req = _now_loop
 
         # ── 픽업 시간(2분30초) 마감 체크 — SEARCHING/GRIPPING/POST_GRIP_SCAN 중
