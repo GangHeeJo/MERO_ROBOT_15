@@ -31,10 +31,10 @@ bool safetyPoll();
 #define FINGER_CLOSE_RAW  750    // 닫힘 (닫히는 순간 전류 피크 예상)
 
 // 파손 방지 토크 제한 (%)
-#define GRIPPER_TORQUE_LIMIT_PCT 60
+#define GRIPPER_TORQUE_LIMIT_PCT 80
 
 // 속도 (Profile Velocity, 낮을수록 느림)
-#define GRIPPER_SPEED 100
+#define GRIPPER_SPEED 200
 
 // Load 기반 집기 감지 (실측: 물체 잡을 때 ~30%, 빈 손 ~0%)
 // PRESENT_LOAD 단위: 0.1% (300 = 30%)
