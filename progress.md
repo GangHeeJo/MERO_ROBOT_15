@@ -580,12 +580,16 @@ Colab 노트북 실행 전 필요한 것:
 - `robot.ino`에 디버깅용 `arm_up` 명령 추가 — 팔을 시작 크기 규정 위치(올림)로 수동 복귀시키는 용도
 - 팀원(`sssyun3270`)이 GitHub push 권한이 없어서(Collaborator로 등록은 돼있었으나 Write 권한 확인이 안 된 상태로 추정) 로컬 git 저장소 전체를 zip으로 압축해서 전달 → 로컬에 임시 remote로 추가해서 fetch 후 merge하는 방식으로 반영함 (그리퍼 idle 기본값 닫힘 전환, 타겟 미검출 시 탐색 이동 로직 등). 이후 팀원(`류상윤`)은 정상적으로 직접 push 가능했던 것으로 보아 `sssyun3270`만의 권한 문제였을 가능성
 
-> ⚠️ **다음 세션 최우선 확인 사항 — 팔(ID2) 모터가 명령에 응답만 하고 실제로 안 움직이는 문제 (미해결, 세션 중단)**
-> - 증상: `{"cmd":"arm_up"}`, `{"cmd":"start"}` 모두 `{"status":"arm_up_done"}`/`{"status":"started"}` 정상 응답이 오는데 팔이 물리적으로 전혀 안 움직임
-> - `reset_fault`로 그리퍼(ID1) fault(hw_error=83, fatal fault 조합)는 리셋했지만 팔은 계속 무반응
-> - 배선은 문제없다고 확인됨(사용자 보고) — 즉 안전정책(safety.ino)이 조용히 개입해서 명령을 무시하고 있거나, 팔도 별도로 fault 상태에 들어가 있는데 `arm_up`/`start` 핸들러가 `safeSetGoalPosition()` 실패를 제대로 안 알리고 있을 가능성
-> - `robot/test_arm_updown/`(실제 위치 폴링 확인용 독립 스케치) 업로드까지는 했으나 `arduino-cli monitor` 포트 연결 실패(`no such file or directory`)로 로그를 못 본 상태에서 세션 종료됨 — **다음에 반드시 `ls /dev/ttyACM*`로 포트 재확인 후 `arduino-cli monitor`로 실제 위치 로그부터 확인할 것**
-> - 의심 지점: (1) safety.ino가 팔(ID2)에 대해 조용히 fault 처리 중인지 `safetyGetLastFaultId()`/`safetyGetLastHardwareError()` 값 확인, (2) `arm_up`/`start` 핸들러가 `armUp()`/`armDown()` 반환값(false)을 받고도 `sendSafetyAbortStatus()`가 실제로 안 불렸는지 코드 재검토, (3) ID2는 물리 모터 2개가 같은 ID를 공유하는 구조라 한쪽만 fault 걸렸을 가능성
+> ✅ **팔(ID2) 무응답 문제 — 해결됨.** 원인은 그리퍼(ID1)와 별개로 팔(ID2)도 fault 상태였던 것 — `reset_fault` 명령을 (그리퍼뿐 아니라) 다시 한 번 보내고 나니 `arm_up`/`start` 정상 동작함. `safety.ino`가 조용히 개입해서 명령 자체는 응답하지만 실제 모터 동작은 막고 있던 게 맞았음 (의심 지점 1번이 원인이었음).
+
+### 이어서 진행한 작업 (같은 날 계속)
+
+- **팀원(찬울님, `chanul-2`) 병합 2건** — 그리퍼 오탐 방지용 raw 위치 게이트(`GRIPPER_LOAD_CHECK_RAW`) 추가 + LIFTING 투하 순서를 "그리퍼 열기→팔 내림→그리퍼 닫기"에서 "그리퍼 열기→공중에서 먼저 닫기→팔 내림"으로 변경(`robot.ino`/`gripper.ino`). 이후 정밀 정렬 순서를 회전→전후로 재조정, 속도 파라미터 튜닝, `POST_GRIP_SCAN`(집기 직후 제자리 스캔) 상태 추가, 탐색 이동을 "가장 먼 물체 1개" 방식에서 "밀집도 가중 평균 방향"으로 변경, `wheels_test.py`(ESP32 단독 테스트) 신규 추가. 두 번 다 충돌 없이 자동 병합됨
+- **팀원(sssyun3270)의 push 권한 문제**로 로컬 git 저장소 전체를 zip으로 전달받아 임시 remote로 fetch 후 병합 — GitHub Collaborator 등록은 되어있었지만 Write 권한이 실제로 안 걸려있던 것으로 추정 (다른 팀원 류상윤/찬울님은 정상 push 가능했음). 아직 근본 해결(권한 설정 확인) 안 됨
+- **`GO_TO_STORAGE` 진입 트리거 신규 구현** (`vision/src/main.py`) — 2026-07-17에 제거됐던 트리거를 시간 기반(`PICK_PHASE_SECS=150초=2분30초`)으로 재구현. 경기 시작(Enter) 시점부터 항상 `match_start_time` 기록(`--timer` 여부 무관, `--timer`는 이제 화면 표시만 제어), `SEARCHING`의 어느 하위 단계(정렬/접근 등)에 있든 마감시간 지나면 즉시 중단하고 그리퍼 닫은 뒤 `GO_TO_STORAGE`로 전환. 이걸로 `GO_TO_STORAGE`/`DROPPING`이 죽은 코드에서 실제 동작 코드로 복귀함
+- **카메라 회전 서보(ID4) 실전 연동** — `robot/camera.ino` 신규 추가. 전원 켤 때 카메라가 보고 있는 위치를 "정면" 기준으로 저장해두고, `cam_backward`(180도 회전)/`cam_forward`(정면 복귀) 명령 제공. `GO_TO_STORAGE` 진입 시(경기당 1회) `send_cam_backward()` 호출해서 카메라가 로봇 후방을 보게 함
+  - ⚠️ 처음엔 "카메라가 물리적으로 180도 돌면 영상도 위아래로 뒤집힌다"고 잘못 판단해서 `cv2.rotate(frame, cv2.ROTATE_180)` 보정 코드를 넣었었는데, **사용자가 정정** — 카메라 회전축이 지면과 수평(순수 팬/요 회전)이라 위아래는 안 뒤집힘. 뒤를 보는 상태를 그냥 "뒤가 앞인 것처럼" 취급하면 되고, 원래 있던 후방카메라 접근 조향식(`turn` 그대로 쓰고 `L`/`R`만 음수로 후진)이 이미 정확히 맞는 방식이었음. 불필요했던 `cv2.rotate` 보정 코드는 다시 제거함 — 남겨뒀으면 YOLO에 거꾸로 된 이미지를 먹여서 오히려 탐지를 해쳤을 뻔함
+- **카메라 `select() timeout` 랜덤 발생 대응** — 해상도(1920×1200)는 그대로 유지하기로 결정(화질 우선). 대신 `_frame_fail_count` 연속 실패 허용치를 10 → 30(`FRAME_FAIL_LIMIT`)으로 올려서, USB 대역폭 타이밍 노이즈로 인한 산발적 실패가 프로그램을 조기 종료시키지 않게 함. 카운터는 한 번이라도 프레임을 성공적으로 읽으면 즉시 0으로 리셋되는 구조라 실패가 누적되진 않음 — 다만 카메라가 진짜로 완전히 죽는 경우 감지가 (10회 대비) 더 느려지는 트레이드오프는 있음
 
 ---
 
