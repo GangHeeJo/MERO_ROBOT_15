@@ -194,6 +194,11 @@ ESP32_PORT  = _find_port(["1a86", "ch343", "ch34"], "/dev/ttyACM0")   # CH343 �
 OPENRB_PORT = _find_port(["openrb", "robotis", "2ecc"], "/dev/ttyACM1")
 BAUD_RATE   = 115200
 
+# ── 카메라 프레임 실패 허용치 ────────────────────────────
+# select() timeout 등 USB 대역폭 타이밍 노이즈로 가끔 프레임 읽기가 실패하는데,
+# 랜덤하게 튀는 수준이라 너무 낮으면 멀쩡한데도 종료될 수 있어 여유를 둠.
+FRAME_FAIL_LIMIT = 30   # 연속 이 횟수만큼 실패해야 진짜 종료
+
 # ── 바퀴 제어 파라미터 ───────────────────────────────────
 MOVE_SPEED          = 0.25
 SLOW_SPEED          = 0.1
@@ -584,8 +589,8 @@ try:
         ret, frame = cap.read()
         if not ret:
             _frame_fail_count += 1
-            if _frame_fail_count >= 10:
-                print("[오류] 프레임 읽기 연속 10회 실패 — 종료")
+            if _frame_fail_count >= FRAME_FAIL_LIMIT:
+                print(f"[오류] 프레임 읽기 연속 {FRAME_FAIL_LIMIT}회 실패 — 종료")
                 break
             continue
         _frame_fail_count = 0
