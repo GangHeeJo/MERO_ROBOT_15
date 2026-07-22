@@ -292,11 +292,12 @@ void updateStateMachine() {
         sendSafetyAbortStatus("gripper_open_after_lift");
         break;
       }
-      // 그리퍼 다 열리고 물체가 바스켓에 완전히 떨어질 시간을 충분히 준다.
-      // 이 delay가 짧으면 물체가 아직 집게 사이에 걸쳐있는 상태에서 다시
-      // 닫혀버릴 수 있으므로, 팔을 내리기 전 공중에서 미리 닫는 지금 순서에서는
-      // 특히 넉넉하게 잡아야 한다.
-      if (!safeDelay(2000)) {
+      // 그리퍼 다 열리고 물체가 바스켓에 완전히 떨어질 시간을 준다.
+      // 2000ms -> 500ms로 단축(사이클 속도 우선) — 이 delay가 짧으면 물체가
+      // 아직 집게 사이에 걸쳐있는 상태에서 다시 닫혀버릴 위험이 있음.
+      // 팔을 내리기 전 공중에서 미리 닫는 지금 순서라 더 위험한 지점이니
+      // 실물에서 물체가 안 끼고 잘 떨어지는지 반드시 확인 필요.
+      if (!safeDelay(500)) {
         sendSafetyAbortStatus("drop_wait");
         break;
       }

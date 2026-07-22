@@ -64,13 +64,22 @@ void armSetup() {
 }
 
 // ── 팔 내리기 (집기 위치) ────────────────────────────────
+// wait_ms 200 — armUp()과 동일한 이유로 단축(ARM_SPEED 40→160). LIFTING
+// 끝의 armDown() 완료 후 바로 "gripped"를 보내고 Jetson이 그 신호로 UGV를
+// 다시 움직이기 시작하므로, 이 대기가 그리퍼 암 내림↔UGV 재이동 사이 간격이다.
+// 위치 폴링 도착 확인은 ARM_ID 공유 구조상 불가 — 200ms는 매우 공격적인
+// 추정치라 팔이 다 안 내려간 채로 "gripped"가 갈 가능성 높음, 실물 확인 필수.
 bool armDown() {
-  return safeSetGoalPosition(ARM_ID, ARM_DOWN_RAW, 3000);
+  return safeSetGoalPosition(ARM_ID, ARM_DOWN_RAW, 200);
 }
 
 // ── 팔 올리기 (바스켓 투하 위치) ────────────────────────
+// wait_ms 1400 — ARM_SPEED 상향(40→160) 이후 실제 도달 시간이 짧아진 것으로
+// 추정해서 낮춤 (ARM_ID는 물리 모터 2개가 ID 공유라 위치 폴링으로 실도착
+// 확인은 불가 — 패킷 충돌 위험. 값은 추정치, 실물에서 팔이 다 안 올라간
+// 상태로 gripperOpen()이 불리지 않는지 반드시 확인 필요).
 bool armUp() {
-  return safeSetGoalPosition(ARM_ID, ARM_UP_RAW, 3000);
+  return safeSetGoalPosition(ARM_ID, ARM_UP_RAW, 1400);
 }
 
 // ── 바스켓 닫기 ──────────────────────────────────────────
