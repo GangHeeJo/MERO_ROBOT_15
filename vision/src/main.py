@@ -77,10 +77,13 @@ parser.add_argument('--no-wheels', action='store_true',
                     help='바퀴 명령을 ESP32로 보내지 않음 (탐지/그리퍼만 테스트할 때)')
 parser.add_argument('--record', action='store_true',
                     help='테스트 중 프레임을 저해상도 JPEG로 샘플링해 저장 (vision/records/<시각>/) — 백그라운드 스레드+낮은 fps라 부하 거의 없음')
+parser.add_argument('--storage-only', action='store_true',
+                    help='SEARCHING/GRIPPING 건너뛰고 시작하자마자 바로 GO_TO_STORAGE로 진입 (태극기 정렬+접근+dump만 단독 테스트)')
 args       = parser.parse_args()
 TARGET_CLS    = set(args.cls) if args.cls else None
 TEST_MODE     = args.test
 ALIGN_ONLY    = args.align_only
+STORAGE_ONLY  = args.storage_only
 NO_WHEELS     = args.no_wheels
 RECORD        = args.record
 SHAPE_CLASSES = {'d6', 'd8', 'd12', 'd20'}
@@ -541,7 +544,10 @@ mode_str = "mm 모드" if MM_PER_PIXEL else "픽셀 모드 (캘리브 없음)"
 
 # --cls 미지정 시: 카메라/모델 다 뜬 상태에서 경기 당일 타겟 클래스 2개를 직접 입력받음.
 # Enter 누르는 순간이 곧 "경기 시작" 신호 — 이 직후 send_start()로 팔이 내려감.
-if TARGET_CLS is None:
+# --storage-only는 어차피 SEARCHING을 안 타서 클래스 선택 자체가 무의미 — 입력 스킵.
+if STORAGE_ONLY:
+    TARGET_CLS = TARGET_CLS or set()
+elif TARGET_CLS is None:
     valid_classes = SHAPE_CLASSES | FRUIT_CLASSES
     while True:
         raw = input(f"[시작] 타겟 클래스 2개 입력 후 Enter (예: d8 apple) — 도형:{sorted(SHAPE_CLASSES)} 과일:{sorted(FRUIT_CLASSES)}: ").strip()
@@ -631,7 +637,18 @@ _last_print_t  = 0.0
 _last_record_t = 0.0
 frame = None  # 최초 루프 진입 전 초기화
 
-send_start()  # 시작 크기 규정으로 올려둔 팔을 내림 (전진 시작과 함께)
+if STORAGE_ONLY:
+    # SEARCHING/GRIPPING 완전히 건너뛰고 시작하자마자 GO_TO_STORAGE 진입 —
+    # 태극기 정렬+접근+dump 로직만 단독으로 테스트할 때 사용.
+    robot_state        = RobotState.GO_TO_STORAGE
+    storage_phase       = 0
+    flag_aligned         = False
+    storage_enter_time   = time.time()
+    send_cam_backward()
+    send_arm_up()
+    print("[시작] --storage-only: GO_TO_STORAGE로 바로 진입 (카메라 후방 회전 + 팔 올림)")
+else:
+    send_start()  # 시작 크기 규정으로 올려둔 팔을 내림 (전진 시작과 함께)
 match_start_time = time.time()  # PICK_PHASE_SECS 경과 판단 + (--timer면) 화면 표시 기준
 
 # ── 메인 루프 ────────────────────────────────────────────
