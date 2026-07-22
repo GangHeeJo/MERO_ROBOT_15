@@ -386,30 +386,62 @@ threading.Thread(target=_read_openrb_loop, daemon=True).start()
 # ── 시리얼 write 공통 헬퍼 ─────────────────────────────────
 # USB 케이블 순간 접촉불량/전원 문제 등으로 write가 실패하면(SerialException) 그 프레임만
 # 건너뛰고 계속 돌게 한다 — 예전엔 처리 안 돼 있어서 한 번 끊기면 프로그램 전체가 죽었음.
+# control_wheels()가 매 프레임 _write_esp32를 부르므로, 연결이 끊긴 채 계속 돌면 경고가
+# 초당 수십 번 찍혀 터미널이 도배될 수 있어 경고 출력 자체는 WRITE_FAIL_WARN_INTERVAL마다로 제한.
+# (자동 재연결은 안 함 — ser_esp32/ser_openrb 객체가 죽은 fd를 들고 있어서 케이블 재연결해도
+#  프로그램 재시작 전까진 계속 실패함, 필요하면 별도로 추가)
+WRITE_FAIL_WARN_INTERVAL = 2.0
+_last_esp32_fail_warn   = 0.0
+_last_openrb_fail_warn  = 0.0
+
 def _write_esp32(payload: dict):
+    global _last_esp32_fail_warn
     if ser_esp32 is None or not ser_esp32.is_open:
         return
     try:
         ser_esp32.write((json.dumps(payload) + "\n").encode())
     except serial.SerialException as e:
-        print(f"\n[경고] ESP32 write 실패(연결 확인 필요): {e}")
+        now = time.time()
+        if now - _last_esp32_fail_warn >= WRITE_FAIL_WARN_INTERVAL:
+            print(f"\n[경고] ESP32 write 실패(연결 확인 필요, 이후 {WRITE_FAIL_WARN_INTERVAL:.0f}초간 반복 로그 생략): {e}")
+            _last_esp32_fail_warn = now
 
 def _write_openrb(payload: dict):
+    global _last_openrb_fail_warn
     if ser_openrb is None or not ser_openrb.is_open:
         return
     try:
         ser_openrb.write((json.dumps(payload) + "\n").encode())
     except serial.SerialException as e:
-        print(f"\n[경고] OpenRB write 실패(연결 확인 필요): {e}")
+        now = time.time()
+        if now - _last_openrb_fail_warn >= WRITE_FAIL_WARN_INTERVAL:
+            print(f"\n[경고] OpenRB write 실패(연결 확인 필요, 이후 {WRITE_FAIL_WARN_INTERVAL:.0f}초간 반복 로그 생략): {e}")
+            _last_openrb_fail_warn = now
 
 
 # ── 바퀴 제어 ────────────────────────────────────────────
+# 급가속으로 인한 배터리 순간 피크전류 완화 — 목표 속도로 바로 점프하지 않고
+# 초당 MAX_ACCEL_PER_SEC만큼씩만 접근하게 램핑한다 (UGV 배터리 BMS가 부하 급증 시
+# 과전류 보호로 순간 뚝 떨어지는 현상 확인됨 — 실측 후 값 조정 필요).
+MAX_ACCEL_PER_SEC = 1.0
+_last_wheel_l = 0.0
+_last_wheel_r = 0.0
+_last_wheel_t = None
+
+def _ramp_speed(target_v, last_v, dt):
+    max_step = MAX_ACCEL_PER_SEC * dt
+    if target_v > last_v:
+        return min(target_v, last_v + max_step)
+    return max(target_v, last_v - max_step)
+
 def control_wheels(target: dict | None, override_l: float | None = None, override_r: float | None = None):
     """
     override 지정 시 직접 속도 전송 (고정 경로 이동용).
     target 있으면 mm 또는 픽셀 기반 차동 조향.
     target=None이면 정지.
+    최종 L/R은 항상 _ramp_speed()를 거쳐 전송 — 급가속 방지.
     """
+    global _last_wheel_l, _last_wheel_r, _last_wheel_t
     if NO_WHEELS or ser_esp32 is None or not ser_esp32.is_open:
         return
 
@@ -447,6 +479,12 @@ def control_wheels(target: dict | None, override_l: float | None = None, overrid
             speed = SLOW_SPEED if area > AREA_SLOW_THRESHOLD else MOVE_SPEED
             L = max(-0.5, min(0.5, speed * (1.0 + turn)))
             R = max(-0.5, min(0.5, speed * (1.0 - turn)))
+
+    now = time.time()
+    dt = (now - _last_wheel_t) if _last_wheel_t is not None else 999.0  # 첫 호출은 램프 없이 그대로
+    L = _ramp_speed(L, _last_wheel_l, dt)
+    R = _ramp_speed(R, _last_wheel_r, dt)
+    _last_wheel_l, _last_wheel_r, _last_wheel_t = L, R, now
 
     _write_esp32({"T": 1, "L": round(L, 2), "R": round(R, 2)})
 
