@@ -17,7 +17,7 @@
  *   {"cmd":"basket_open"}       ← 임시 디버깅용 — 바스켓을 열고 계속 열린 상태 유지 (자동으로 안 닫힘)
  *   {"cmd":"basket_close"}      ← 임시 디버깅용 — 바스켓을 닫힘 위치로 복귀
  *   {"cmd":"idle"}              ← 대기
- *   {"cmd":"start"}             ← 경기 시작 — 전원 켤 때 시작 크기 규정으로 올려둔 팔을 내림
+ *   {"cmd":"start"}             ← 경기 시작 — 전원 켤 때 시작 크기 규정으로 올려둔 팔을 내림 + 카메라 정면 리셋
  *   {"cmd":"cam_backward"}      ← 보관함 이동 전 카메라를 뒤로 180도 회전 (후방을 봄)
  *   {"cmd":"cam_forward"}       ← 보관함 왕복 끝나고 카메라를 다시 정면으로 회전
  *   {"cmd":"reset_fault"}       ← safety.ino가 fatal fault로 멈춘 뒤 사람이 확인하고 재개할 때
@@ -167,10 +167,16 @@ void parseCommand(const String& json) {
   }
 
   // 경기 시작 — 시작 크기 규정 때문에 올려둔 팔을 정상 동작 위치(내림)로 내린다.
+  // 카메라도 정면으로 리셋 — 이전 테스트/경기에서 cam_backward로 후방을 보고 있던
+  // 상태가 그대로 남아있을 수 있어, 경기 시작 시점에 확실히 정면으로 되돌려둔다.
+  // 카메라 실패는 팔 내리기(경기 규정상 필수)를 막을 이유가 아니라서 abort하지 않고 로그만 남긴다.
   if (strcmp(cmd, "start") == 0 && currentState == IDLE) {
     if (!armDown()) {
       sendSafetyAbortStatus("arm_down_on_start");
       return;
+    }
+    if (!camForward()) {
+      JETSON_SERIAL.println("[OpenRB] 경고: 카메라 정면 복귀 실패 (start는 계속 진행)");
     }
     JETSON_SERIAL.println("{\"status\":\"started\"}");
     return;

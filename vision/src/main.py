@@ -223,7 +223,7 @@ SEARCH_FORWARD_BURST_SECS = 2.0   # 최대 회전 시간 초과 시 현재 방�
 POST_GRIP_SCAN_SECS       = 4.0   # 집기 완료 직후 제자리 360도 스캔 시간 (SEARCH_ROTATE_SPEED 기준, 실측 필요)
 CENTER_MARGIN_PX    = 42      # 픽셀 모드: 가로 중심에서 이 픽셀 이내 (시각화 가이드용, 면적 2배)
 CENTER_MARGIN_Y_PX  = 35      # 픽셀 모드: 세로 중심에서 이 픽셀 이내 (시각화 가이드용, 면적 2배)
-CENTER_OFFSET_Y_PX  = 220     # 세로 중심 오프셋 (양수=아래)
+CENTER_OFFSET_Y_PX  = 170     # 세로 중심 오프셋 (양수=아래)
 CENTER_OFFSET_X_PX  = 0       # 가로 중심 오프셋 (양수=오른쪽)
 ALIGN_THRESHOLD     = 0.25    # 이 이상 turn값이면 전진 없이 제자리 회전 우선
 TURN_ONLY_SPEED     = 0.1     # 제자리 회전 속도

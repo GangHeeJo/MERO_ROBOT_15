@@ -128,7 +128,7 @@ Jetson main.py
                                            "motor_fault"/"motor_recovered"/"motion_aborted"/"fault_reset"}
 ```
 
-`gripper_open`/`gripper_close`는 안전정책이 아니라 집기 메커니즘 자체에 필요 — IDLE 기본값이 "닫힘"이라 미리 열어두지 않으면 집을 공간이 없음. 정밀 정렬(전후→회전) 중엔 그리퍼를 닫은 채로 두고, 좌우(cx) 정렬까지 끝나 최종 직진 접근 직전에만 `gripper_open` 전송(엉뚱한 물체가 정렬 중 벌어진 집게에 끼는 것 방지) — 그래서 정렬 단계에서 타겟을 놓쳐도 그리퍼는 애초에 안 열려있어 `gripper_close`를 보낼 필요가 없음. `start`는 경기 시작 시 규정 크기용으로 올려둔 팔을 내리는 명령(전원 켜지면 팔은 기본적으로 올림 상태로 대기). `arm_up`은 디버깅용 — 팔을 수동으로 시작 위치(올림)로 복귀. `cam_backward`/`cam_forward`는 ID4 카메라 서보 제어 — `GO_TO_STORAGE` 진입 시(경기당 1회) `cam_backward`를 보내 카메라가 후방(보관함 방향)을 보게 함. `basket_open`/`basket_close`는 임시 디버깅용 — `dump`와 달리 자동으로 안 닫히고 열린 채로 유지되어 바스켓 안을 직접 확인하거나 수동으로 비울 때 사용 (`vision/src/basket_test.py`로 단독 테스트 가능).
+`gripper_open`/`gripper_close`는 안전정책이 아니라 집기 메커니즘 자체에 필요 — IDLE 기본값이 "닫힘"이라 미리 열어두지 않으면 집을 공간이 없음. 정밀 정렬(전후→회전) 중엔 그리퍼를 닫은 채로 두고, 좌우(cx) 정렬까지 끝나 최종 직진 접근 직전에만 `gripper_open` 전송(엉뚱한 물체가 정렬 중 벌어진 집게에 끼는 것 방지) — 그래서 정렬 단계에서 타겟을 놓쳐도 그리퍼는 애초에 안 열려있어 `gripper_close`를 보낼 필요가 없음. `start`는 경기 시작 시 규정 크기용으로 올려둔 팔을 내리는 명령(전원 켜지면 팔은 기본적으로 올림 상태로 대기) — 동시에 카메라도 `cam_forward`로 정면 리셋(이전 테스트/경기에서 후방을 보고 있던 상태가 남아있을 수 있어서). 카메라 리셋 실패는 팔 내리기를 막지 않고 로그만 남김. `arm_up`은 디버깅용 — 팔을 수동으로 시작 위치(올림)로 복귀. `cam_backward`/`cam_forward`는 ID4 카메라 서보 제어 — `GO_TO_STORAGE` 진입 시(경기당 1회) `cam_backward`를 보내 카메라가 후방(보관함 방향)을 보게 함. `basket_open`/`basket_close`는 임시 디버깅용 — `dump`와 달리 자동으로 안 닫히고 열린 채로 유지되어 바스켓 안을 직접 확인하거나 수동으로 비울 때 사용 (`vision/src/basket_test.py`로 단독 테스트 가능).
 
 ## 상태 머신
 
