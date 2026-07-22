@@ -169,6 +169,11 @@ safety.ino가 overload/hardware error를 감지하면 어느 상태에서든 즉
 (fatal fault면 사람이 reset_fault 보낼 때까지 명령 거부)
 ```
 
+## 알려진 이슈
+
+> ⚠️ **카메라 "정면" 기준이 고정 캘리브레이션이 아니라 부팅 시점 위치 — 미해결**
+> `camera.ino`의 `camForwardRaw`는 `camSetup()`이 OpenRB 부팅 순간 서보가 있던 위치를 그냥 읽어서 저장하는 값이다 (`ARM_UP_RAW`/`ARM_DOWN_RAW`처럼 실측 하드코딩된 값이 아님). 만약 카메라가 물리적으로 후방(`cam_backward` 상태)을 보고 있을 때 OpenRB가 리셋/재부팅되면, 그 순간의 "후방" 위치가 잘못 "정면"으로 저장돼버리고, 이후 `start` 명령의 `camForward()` 호출도 그 잘못된 기준으로 되돌아갈 뿐 진짜 정면으로는 안 감. `{"cmd":"start"}` 수신 시 `armDown()` 다음에 `camForward()`를 호출하도록 연결은 돼 있음(`robot.ino`) — 코드 흐름 자체는 정상, 문제는 기준값 자체가 부팅 시점에 좌우된다는 것. 근본 해결하려면 `cam_servo_test.py`로 실제 정면 raw 값을 측정해서 `CAM_FORWARD_RAW`처럼 고정 상수로 하드코딩하는 방식으로 바꿔야 함(2026-07-22 논의, 보류).
+
 ## 전원 구성
 
 - 젯슨: 보조배터리 USB-C PD → 배럴잭 (내경 실측 필요)
