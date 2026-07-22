@@ -158,8 +158,10 @@ DROPPING → dumped 수신 또는 DROP_TIMEOUT_SECS(15초) 타임아웃 → SEAR
 
 **OpenRB (robot.ino) — 상태: IDLE / GRIPPING / LIFTING / DUMPING**
 ```
-IDLE(그리퍼 닫힘) → (grip 수신) → GRIPPING → (집기 시도, 성공/실패 무관 항상 진행, 2초 대기) → LIFTING
-    (팔 올림 → 그리퍼 열어 투하 → 2초 대기 → 그리퍼 다시 닫기(대기상태) → 팔 내림) → IDLE (gripped 전송)
+IDLE(그리퍼 닫힘) → (grip 수신) → GRIPPING → (집기 시도, 성공/실패 무관 항상 진행, 200ms 대기) → LIFTING
+    (팔 올림 → 그리퍼 열어 투하 → 500ms 대기 → 팔 내림 → 그리퍼 다시 닫기(대기상태)) → IDLE (gripped 전송)
+    ⚠️ 2026-07-22: 순서가 "열고→닫고→내림"에서 "열고→내림→닫고"로 재변경됨(사용자 요청) —
+    열린 그리퍼를 단 채로 팔이 내려가는 구간이 생겨, 그 경로의 물체를 낚아챌 위험 있음
 IDLE → (dump 수신) → DUMPING → (컨테이너 열고 500ms 후 닫기) → IDLE (dumped 전송)
 IDLE → (gripper_open/gripper_close/start/arm_up/cam_backward/cam_forward/basket_open/basket_close 수신) → 해당 동작만 수행, 상태 변화 없음
 
