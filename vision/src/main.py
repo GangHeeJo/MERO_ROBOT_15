@@ -579,19 +579,29 @@ if FRAME_W is None:
 # 캡처를 별도 스레드로 분리해서 메인 루프는 항상 최신 프레임(또는 잠깐 멈췄으면
 # 마지막 프레임)으로 계속 돌게 하고, control_wheels/send_idle이 카메라 상태와
 # 무관하게 매 루프 계속 불리게 한다.
-_cap_lock          = threading.Lock()
-_cap_latest_frame  = None
-_cap_fail_count    = 0
-CAMERA_RECONNECT_AFTER_FAILS = 20  # 이만큼 연속 실패하면 카메라 껐다 켜서 재연결 시도
+_cap_lock           = threading.Lock()
+_cap_latest_frame   = None
+_cap_fail_count     = 0
+_cap_last_update_t  = time.time()
+CAMERA_RECONNECT_AFTER_FAILS = 20   # cap.read()가 False를 이만큼 연속 반환하면 재연결
+CAMERA_STALL_TIMEOUT_SECS    = 5.0  # cap.read() 자체가 이만큼 응답을 안 주면(진짜 hang) 통째로 새로 띄움
 
-def _camera_capture_loop():
-    global cap, _cap_latest_frame, _cap_fail_count
+def _camera_capture_loop(own_cap):
+    """own_cap 하나만 계속 읽는 캡처 루프. cap.read()가 완전히 hang되면(watchdog이
+    감지) 이 함수는 그 안에서 영원히 멈춘 채로 버려지고, 새 own_cap으로 새
+    스레드가 따로 뜬다 — 그래서 전역 cap을 직접 안 쓰고 인자로 고정해서, 만약
+    이 스레드가 나중에 살아 돌아오더라도 이미 교체된 새 카메라 객체를 건드리지
+    않게 한다(같은 VideoCapture 객체를 두 스레드가 동시에 read()하면 위험함)."""
+    global cap, _cap_latest_frame, _cap_fail_count, _cap_last_update_t
     while True:
-        ret, f = cap.read()
+        ret, f = own_cap.read()
         with _cap_lock:
+            if own_cap is not cap:
+                return  # watchdog이 이미 이 스레드를 버리고 새 캡처로 교체함 — 조용히 종료
             if ret:
-                _cap_latest_frame = f
-                _cap_fail_count   = 0
+                _cap_latest_frame  = f
+                _cap_fail_count    = 0
+                _cap_last_update_t = time.time()
             else:
                 _cap_fail_count += 1
             fail_count = _cap_fail_count
@@ -599,7 +609,7 @@ def _camera_capture_loop():
         if not ret and fail_count > 0 and fail_count % CAMERA_RECONNECT_AFTER_FAILS == 0:
             print(f"\n[카메라] 연속 {fail_count}회 읽기 실패 — 재연결 시도")
             try:
-                cap.release()
+                own_cap.release()
             except Exception:
                 pass
             # release 직후 바로 재오픈하면 OS/드라이버가 장치를 아직 안 놓아줘서
@@ -607,16 +617,41 @@ def _camera_capture_loop():
             time.sleep(1.0)
             new_cap = _init_camera(CAMERA_INDEX_OBJ, "물체캠")
             if new_cap is not None:
-                cap = new_cap
+                own_cap = new_cap
+                with _cap_lock:
+                    cap = new_cap
                 print("[카메라] 재연결 성공")
             else:
-                # 실패해도 cap을 죽은 채로 두지 않음 — 다음 read()가 바로바로
-                # 또 실패해서 카운트가 순식간에 또 임계치에 도달, 텀 없이 재시도가
-                # 반복되는 걸 막기 위해 여기서도 잠깐 쉬고 다음 루프로 넘어간다.
                 print("[카메라] 재연결 실패 — 1초 후 계속 재시도")
                 time.sleep(1.0)
 
-threading.Thread(target=_camera_capture_loop, daemon=True).start()
+def _camera_watchdog_loop():
+    """_camera_capture_loop는 cap.read()가 최소한 리턴은 해야 동작하는데, USB가
+    완전히 맛이 가면 read() 자체가 영원히 안 돌아오는 경우가 있다(실패 카운트
+    로직 자체가 발동할 기회가 없음). 이건 밖에서 "마지막 프레임 받은 지 얼마나
+    지났는지"로 감시하다가, 너무 오래 조용하면 죽은 캡처 스레드는 버리고
+    (daemon이라 프로세스 종료시 알아서 정리됨) 새 카메라 객체+새 캡처 스레드를
+    통째로 새로 띄운다."""
+    global cap, _cap_last_update_t
+    while True:
+        time.sleep(1.0)
+        with _cap_lock:
+            stale = time.time() - _cap_last_update_t
+        if stale >= CAMERA_STALL_TIMEOUT_SECS:
+            print(f"\n[카메라] {stale:.1f}초간 응답 없음(hang 의심) — 캡처 스레드 새로 띄움")
+            new_cap = _init_camera(CAMERA_INDEX_OBJ, "물체캠")
+            with _cap_lock:
+                _cap_last_update_t = time.time()  # 실패해도 재시도 텀 확보(스팸 방지)
+                if new_cap is not None:
+                    cap = new_cap
+            if new_cap is not None:
+                threading.Thread(target=_camera_capture_loop, args=(new_cap,), daemon=True).start()
+                print("[카메라] 새 캡처 스레드 시작")
+            else:
+                print("[카메라] 재오픈 실패 — 계속 재시도")
+
+threading.Thread(target=_camera_capture_loop, args=(cap,), daemon=True).start()
+threading.Thread(target=_camera_watchdog_loop, daemon=True).start()
 
 HEADLESS    = True  # X11 imshow 비활성화 (SSH+WiFi 병목 방지)
 WINDOW_NAME = "MERO_AI_ROBOT"
