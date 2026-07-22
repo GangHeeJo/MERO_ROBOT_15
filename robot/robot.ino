@@ -14,6 +14,8 @@
  *   {"cmd":"dump"}              ← 컨테이너 열어서 쏟기 (도착 지점)
  *   {"cmd":"gripper_open"}      ← 그리퍼 미리 열기 (물체로 접근/전진하기 직전)
  *   {"cmd":"gripper_close"}     ← 그리퍼 대기 상태로 닫기 (접근 중 타겟 놓쳐 취소할 때)
+ *   {"cmd":"basket_open"}       ← 임시 디버깅용 — 바스켓을 열고 계속 열린 상태 유지 (자동으로 안 닫힘)
+ *   {"cmd":"basket_close"}      ← 임시 디버깅용 — 바스켓을 닫힘 위치로 복귀
  *   {"cmd":"idle"}              ← 대기
  *   {"cmd":"start"}             ← 경기 시작 — 전원 켤 때 시작 크기 규정으로 올려둔 팔을 내림
  *   {"cmd":"cam_backward"}      ← 보관함 이동 전 카메라를 뒤로 180도 회전 (후방을 봄)
@@ -26,6 +28,8 @@
  *   {"status":"dumped"}          ← 컨테이너 열기 완료 (Python → SEARCHING 복귀)
  *   {"status":"gripper_opened"}  ← gripper_open 명령 처리 완료
  *   {"status":"gripper_closed"}  ← gripper_close 명령 처리 완료
+ *   {"status":"basket_opened"}   ← basket_open 명령 처리 완료
+ *   {"status":"basket_closed"}   ← basket_close 명령 처리 완료
  *   {"status":"started"}         ← start 명령으로 팔 내리기 완료
  *   {"status":"cam_backward_done"} ← 카메라 후방 회전 완료
  *   {"status":"cam_forward_done"}  ← 카메라 정면 회전 완료
@@ -39,6 +43,7 @@
  *                                          → (실패) → IDLE(그리퍼 다시 닫힘)
  *        → (dump) → DUMPING → IDLE
  *        → (gripper_open/gripper_close) → IDLE (그리퍼만 열고/닫고 상태 변화 없음)
+ *        → (basket_open/basket_close) → IDLE (바스켓만 열고/닫고 상태 변화 없음, 임시 디버깅용)
  *   safety.ino가 overload/hardware error를 감지하면 어느 상태에서든 즉시 IDLE로 복귀한다.
  *   IDLE 상태의 그리퍼 기본값은 "닫힘" — 대기 중 엉뚱한 물체가 벌어진 집게 안으로
  *   들어와 잡히는 걸 방지하기 위함. 실제로 집으러 갈 때만 gripper_open으로 미리 연다.
@@ -198,6 +203,26 @@ void parseCommand(const String& json) {
       return;
     }
     JETSON_SERIAL.println("{\"status\":\"arm_up_done\"}");
+    return;
+  }
+
+  // 임시 디버깅용 — 바스켓을 열고 그대로 유지 (dump와 달리 자동으로 안 닫힘, 수동 확인/비우기용)
+  if (strcmp(cmd, "basket_open") == 0 && currentState == IDLE) {
+    if (!containerOpen()) {
+      sendSafetyAbortStatus("basket_open_request");
+      return;
+    }
+    JETSON_SERIAL.println("{\"status\":\"basket_opened\"}");
+    return;
+  }
+
+  // 임시 디버깅용 — 바스켓을 닫힘 위치로 복귀
+  if (strcmp(cmd, "basket_close") == 0 && currentState == IDLE) {
+    if (!containerClose()) {
+      sendSafetyAbortStatus("basket_close_request");
+      return;
+    }
+    JETSON_SERIAL.println("{\"status\":\"basket_closed\"}");
     return;
   }
 
