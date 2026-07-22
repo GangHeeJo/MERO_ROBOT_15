@@ -128,13 +128,14 @@ Jetson main.py
 
 ## 상태 머신
 
-> 2026-07-22: `GO_TO_STORAGE`/`DROPPING`이 시간 기반 트리거(`PICK_PHASE_SECS`)로 재구현되어 더 이상 죽은 코드가 아님. 경기 시작(Enter) 시점에 `match_start_time`을 기록하고, `SEARCHING`의 어느 하위 단계(정렬/접근 등)에 있든 `PICK_PHASE_SECS`(150초=2분30초) 지나면 즉시 중단하고 `GO_TO_STORAGE`로 강제 전환됨.
+> 2026-07-22: `GO_TO_STORAGE`/`DROPPING`이 시간 기반 트리거(`PICK_PHASE_SECS`)로 재구현되어 더 이상 죽은 코드가 아님. 경기 시작(Enter) 시점에 `match_start_time`을 기록하고, 매 프레임 상태머신 분기 진입 전에 `SEARCHING`/`GRIPPING`/`POST_GRIP_SCAN` 셋 중 어느 상태에 있든 `PICK_PHASE_SECS`(150초=2분30초) 지나면 즉시 중단하고 `GO_TO_STORAGE`로 강제 전환됨 — SEARCHING에서만 체크하면 grip 타임아웃(15초)+스캔(4초)으로 남은 30초를 거의 다 까먹을 수 있어서 세 상태 모두 체크.
 
 **Python (main.py) — 현재 실제 동작:**
 ```
-SEARCHING → PICK_PHASE_SECS(150초) 경과 시 어느 하위 단계든 즉시 중단
-          → gripper_close(열려있었다면) → cam_backward 전송 → GO_TO_STORAGE
-         → 타겟 발견 시 gripper_open 전송, 정밀 정렬(전후→회전) 진행
+(SEARCHING/GRIPPING/POST_GRIP_SCAN 공통) PICK_PHASE_SECS(150초) 경과 시 즉시 중단
+    → gripper_close(열려있었다면) → cam_backward 전송 → GO_TO_STORAGE
+
+SEARCHING → 타겟 발견 시 gripper_open 전송, 정밀 정렬(전후→회전) 진행
          → area(bbox 면적) ≥ AREA_GRIP_THRESHOLD 이고 화면 중앙 작은 박스 안에 들어오면
            정지 → FINAL_APPROACH_SECS(1.7초) 직진 → grip 전송 → GRIPPING
          → 정렬 중 타겟 놓치면 gripper_close 전송 후 재탐색
