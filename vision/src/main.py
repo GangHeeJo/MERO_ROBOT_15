@@ -545,7 +545,11 @@ def send_idle():
 
 # ── 카메라 초기화 ────────────────────────────────────────
 def _init_camera(index, name):
-    cap = cv2.VideoCapture(index)
+    # cv2.VideoCapture(index)처럼 정수만 주면 OpenCV가 백엔드를 자동으로 이것저것
+    # 시도하는데, 이 과정에서 V4L2가 실패하면 엉뚱한 백엔드(obsensor 등)로 넘어가며
+    # "index out of range" 같은 헷갈리는 에러를 냄(실제 확인됨). 장치 경로를
+    # 직접 주고 백엔드를 V4L2로 명시해서 이 문제를 피한다.
+    cap = cv2.VideoCapture(f"/dev/video{index}", cv2.CAP_V4L2)
     if not cap.isOpened():
         print(f"[카메라] {name} ({index}번) 열기 실패")
         return None
