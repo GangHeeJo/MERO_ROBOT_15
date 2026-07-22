@@ -144,9 +144,11 @@ CLUSTER_RADIUS_PX      = 300   # 이 픽셀 반경 안에 있는 다른 물체 �
 OVERLAP_MERGE_RADIUS_PX = 40   # 이 픽셀 이내로 중심이 겹치면 "같은 물체"로 보고 과일 쪽 우선
 
 def select_target(objects: list) -> dict | None:
-    """--cls 필터 + 클래스별 confidence 임계값 통과한 것 중,
-    주변에 다른 물체가 많이 몰려있는(밀집도 높은) 것 우선 선택 → 여러 개 연속으로 집기 쉬운 쪽으로 이동.
-    밀집도가 같으면 area(가까운 정도)가 큰 쪽 우선.
+    """--cls 필터 + 클래스별 confidence 임계값 통과한 것 중 화면 중앙에 가장 가까운(=area가 큰) 것 하나를 고른다.
+    예전엔 주변 밀집도(cluster_score)를 1순위로 썼는데, 그 값이 다른 물체 검출 여부에 따라
+    프레임마다 흔들리기 쉬워서 후보가 여러 개일 때 매 프레임 다른 물체로 선택이 튀는 원인이었음 —
+    area 단독 기준으로 단순화. (정밀 정렬 시작 후에는 이 함수를 다시 안 부르고 last_target_id로
+    같은 물체를 계속 추적하니, 이 함수는 "처음에 뭘 고를지"만 담당한다.)
     과일 큐브는 모양이 d6과 같아서 같은 물체에 shape+fruit 박스가 겹쳐 잡힐 수 있음 —
     이 경우 표면 이미지가 진짜 정체성이므로 과일 쪽을 우선(겹치는 shape 후보는 제거)."""
     if not objects:
@@ -173,13 +175,7 @@ def select_target(objects: list) -> dict | None:
                 break
     filtered = fruit_candidates + shape_candidates
 
-    def cluster_score(o):
-        return sum(
-            1 for other in filtered
-            if other is not o and ((other['cx'] - o['cx']) ** 2 + (other['cy'] - o['cy']) ** 2) ** 0.5 <= CLUSTER_RADIUS_PX
-        )
-
-    return max(filtered, key=lambda o: (cluster_score(o), o['area']))
+    return max(filtered, key=lambda o: o['area'])
 
 
 # ── 시리얼 포트 자동 감지 ────────────────────────────────
@@ -755,7 +751,11 @@ try:
 
             elif precise_align:
                 # 실제 grip 정밀 정렬: 1단계 전진/후진(상하 cy) → 2단계 제자리 회전(좌우 cx)
-                if not target:
+                # select_target()을 매 프레임 다시 부르지 않고 last_target_id로 같은 물체만 계속
+                # 추적한다 — 후보가 여러 개고 점수가 비슷하면 프레임마다 다른 물체로 선택이 튈 수
+                # 있어서, 한 번 정하면 그 물체가 완전히 사라지기(+grace) 전까진 안 바꾼다.
+                locked = next((o for o in detected if o["id"] == last_target_id), None)
+                if not locked:
                     target_miss_count += 1
                     if target_miss_count <= TARGET_MISS_GRACE_FRAMES:
                         # 모션블러 등으로 순간적으로 놓친 것일 수 있음 — 몇 프레임은 정지하고 재등장을 기다린다
@@ -766,6 +766,7 @@ try:
                         precise_align     = False
                         fb_phase          = 0
                         target_miss_count = 0
+                        last_target_id    = -1
                         if gripper_prepped:
                             send_gripper_close()
                             gripper_prepped = False
@@ -776,20 +777,20 @@ try:
                     frame_h = FRAME_H or 480
                     cx_ref  = frame_w / 2 + CENTER_OFFSET_X_PX
                     cy_ref  = frame_h / 2 + CENTER_OFFSET_Y_PX
-                    cx_aligned = abs(target["cx"] - cx_ref) <= CENTER_MARGIN_PX
-                    cy_aligned = abs(target["cy"] - cy_ref) <= CENTER_MARGIN_Y_PX
+                    cx_aligned = abs(locked["cx"] - cx_ref) <= CENTER_MARGIN_PX
+                    cy_aligned = abs(locked["cy"] - cy_ref) <= CENTER_MARGIN_Y_PX
 
                     if fb_phase == 0:
                         if cy_aligned:
                             control_wheels(None)
                             fb_phase = 1
-                            print(f"\n[상태] 상하 정렬 완료 (cy={target['cy']:.0f}) → 좌우 정렬")
+                            print(f"\n[상태] 상하 정렬 완료 (cy={locked['cy']:.0f}) → 좌우 정렬")
                         else:
                             # cy_ref보다 위(작음)=목표가 더 멀리 있음 → 전진, 아래(큼)=너무 가까움 → 후진
-                            fwd = SLOW_SPEED if target["cy"] < cy_ref else -SLOW_SPEED
+                            fwd = SLOW_SPEED if locked["cy"] < cy_ref else -SLOW_SPEED
                             control_wheels(None, override_l=fwd, override_r=fwd)
                             direction = "전진" if fwd > 0 else "후진"
-                            print(f"[상태] {direction} 정렬중... cy={target['cy']:.0f}", end="\r")
+                            print(f"[상태] {direction} 정렬중... cy={locked['cy']:.0f}", end="\r")
 
                     else:
                         if not cy_aligned:
@@ -801,12 +802,12 @@ try:
                             fb_phase                = 0
                             fb_final_forward        = True
                             fb_final_forward_start  = time.time()
-                            fb_final_forward_cls    = target["cls"]
-                            print(f"\n[상태] 좌우 정렬 완료 (cx={target['cx']:.0f}) → 직진 접근 시작")
+                            fb_final_forward_cls    = locked["cls"]
+                            print(f"\n[상태] 좌우 정렬 완료 (cx={locked['cx']:.0f}) → 직진 접근 시작")
                         else:
-                            turn = max(-1.0, min(1.0, (target["cx"] - cx_ref) / (frame_w / 2)))
+                            turn = max(-1.0, min(1.0, (locked["cx"] - cx_ref) / (frame_w / 2)))
                             control_wheels(None, override_l=TURN_ONLY_SPEED * turn, override_r=-TURN_ONLY_SPEED * turn)
-                            print(f"[상태] 회전 정렬중... cx={target['cx']:.0f}", end="\r")
+                            print(f"[상태] 회전 정렬중... cx={locked['cx']:.0f}", end="\r")
 
             elif target:
                 search_rotate_start  = None
@@ -818,8 +819,9 @@ try:
                 # 타겟이 보이면 area/중앙정렬 상관없이 바로 정밀 정렬(전진/후진→회전) 진입 —
                 # 예전 --align-fwd-first와 동일한 방식 (거리 무관하게 즉시 시작)
                 control_wheels(None)
-                precise_align = True
-                fb_phase      = 0
+                precise_align  = True
+                fb_phase       = 0
+                last_target_id = target["id"]  # 이 물체 id로 락 — 이후 select_target() 재호출 없이 이 id만 추적
                 send_gripper_open()
                 gripper_prepped = True
                 print(f"\n[상태] 타겟 발견 (area={target['area']}) → 그리퍼 열기 + 정밀 정렬 시작")
@@ -1020,11 +1022,13 @@ try:
         cv2.line(annotated_frame, (_cx, _cy - 8), (_cx, _cy + 8), _box_color, 1)
         cv2.line(annotated_frame, (_cx - 8, _cy), (_cx + 8, _cy), _box_color, 1)
 
-        # 타겟 노란 테두리
-        if target and boxes is not None:
+        # 타겟 노란 테두리 — 정밀 정렬 중엔 실제로 추적 중인 last_target_id를 표시
+        # (그 순간 select_target()이 고르는 것과 다를 수 있어서 혼동 방지)
+        _highlight_id = last_target_id if (precise_align or fb_final_forward) else (target["id"] if target else None)
+        if _highlight_id is not None and boxes is not None:
             ids = boxes.id
             for i, box in enumerate(boxes):
-                if (int(ids[i]) if ids is not None else -1) == target["id"]:
+                if (int(ids[i]) if ids is not None else -1) == _highlight_id:
                     x1, y1, x2, y2 = box.xyxy[0].tolist()
                     cv2.rectangle(annotated_frame,
                                   (int(x1) - 4, int(y1) - 4),
