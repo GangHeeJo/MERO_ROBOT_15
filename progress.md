@@ -113,6 +113,14 @@ sudo chmod 666 /dev/ttyACM1   # OpenRB (그리퍼)
 ls /dev/ttyACM*
 ```
 
+### STEP 5.5. 클럭 고정 (매번 필요, 안 하면 추론 느려짐)
+
+```bash
+sudo jetson_clocks
+```
+
+> **2026-07-22 실측**: 안 하면 YOLO 추론 34ms/frame(~22fps), 하면 20ms/frame(~36.5fps) — 재부팅하면 초기화되므로 매번 켤 때마다 다시 실행해야 함. `nvpmodel -q`로 MAXN_SUPER인지 확인하는 것만으론 부족하고 `jetson_clocks`까지 별도로 필요함 (nvpmodel은 허용 최대 클럭만 정하고, 실제 클럭은 동적 스케일링으로 부하 낮을 때 자동으로 내려감).
+
 ### STEP 6. 메인 코드 실행
 
 ```bash

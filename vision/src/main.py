@@ -14,7 +14,8 @@ flag를 집으러 가지 않고, GO_TO_STORAGE에서만 같은 탐지 결과 중
 경기 시작(Enter) 후 PICK_PHASE_SECS(150s=2분30초) 동안 SEARCHING/GRIPPING/
 POST_GRIP_SCAN을 반복하다가, 그 시간이 지나면 셋 중 어느 상태에 있든(grip
 응답 대기 중이든 집기후 스캔 중이든) 매 프레임 즉시 GO_TO_STORAGE로 전환됨
-(남은 30초 동안 회전하며 flag 탐색 → 발견하면 접근 → dump). 이 체크는
+(남은 30초 동안 회전하며 flag 탐색 → 발견하면 접근 → dump). 전환 시점에
+cam_backward(카메라 후방)와 arm_up(팔 규정 크기 위치 복귀)을 동시에 전송함. 이 체크는
 상태머신 분기 진입 전에 한 번만 수행 — GRIPPING/POST_GRIP_SCAN에서도
 안 걸리면 최악의 경우(grip 타임아웃 15초+스캔 4초) 30초 중 19초를
 까먹을 수 있어서 반드시 세 상태 모두에서 체크해야 함.
@@ -476,6 +477,14 @@ def send_cam_backward():
         return
     ser_openrb.write((json.dumps({"cmd": "cam_backward"}) + "\n").encode())
 
+def send_arm_up():
+    """보관함으로 가기 직전 — 팔을 규정 크기 위치(올림)로 복귀. cam_backward와 동시에 호출.
+    OpenRB가 IDLE 상태일 때만 처리됨(robot.ino) — GRIPPING/LIFTING 중이면 무시되지만
+    그 경우 팔은 이미 해당 시퀀스 자체에서 올라가는 중이라 문제 없음."""
+    if ser_openrb is None or not ser_openrb.is_open:
+        return
+    ser_openrb.write((json.dumps({"cmd": "arm_up"}) + "\n").encode())
+
 _last_idle_t = 0.0
 def send_idle():
     global _last_idle_t
@@ -697,6 +706,7 @@ try:
             storage_phase        = 0
             storage_enter_time   = time.time()
             send_cam_backward()   # 경기당 1회 — 이후 다시 정면으로 돌릴 일 없음
+            send_arm_up()         # 카메라 회전과 동시에 팔도 규정 크기 위치로 복귀
             print(f"\n[상태] 픽업 시간 종료({PICK_PHASE_SECS:.0f}s) → GO_TO_STORAGE 전환")
 
         # ── 상태 머신 ──────────────────────────────────
