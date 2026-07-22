@@ -52,6 +52,7 @@ OpenRB 응답:
 
 import argparse
 import cv2
+import fcntl
 import glob
 import os
 import json
@@ -558,13 +559,54 @@ def _init_camera(index, name):
         print(f"[카메라] {name} ({index}번) 준비: {w}×{h}")
     return cap
 
+USBDEVFS_RESET = 21780  # _IO('U', 20) — linux/usbdevice_fs.h
+
+def _usb_reset_for_video(video_index):
+    """/dev/videoN이 실제 USB 카메라에 물려있는 채로 응답이 끊긴(좀비) 경우,
+    커널 목록엔 남아있어서 재오픈만으로는 안 풀리는 경우가 있다(확인됨:
+    can't open camera by index / index out of range 하면서 이름 검색은
+    여전히 그 장치를 찾아냄). USBDEVFS_RESET ioctl로 그 USB 장치만
+    소프트 리셋 — 케이블 뽑았다 꽂는 것과 비슷한 효과. sudo 권한 필요할 수
+    있음(권한 없으면 실패 로그만 남기고 계속 진행, 프로그램 안 죽음)."""
+    try:
+        real_path = os.path.realpath(f"/sys/class/video4linux/video{video_index}/device")
+        d = real_path
+        for _ in range(6):
+            busnum_path = os.path.join(d, "busnum")
+            devnum_path = os.path.join(d, "devnum")
+            if os.path.exists(busnum_path) and os.path.exists(devnum_path):
+                with open(busnum_path) as f:
+                    busnum = int(f.read().strip())
+                with open(devnum_path) as f:
+                    devnum = int(f.read().strip())
+                usb_path = f"/dev/bus/usb/{busnum:03d}/{devnum:03d}"
+                fd = os.open(usb_path, os.O_WRONLY)
+                try:
+                    fcntl.ioctl(fd, USBDEVFS_RESET, 0)
+                finally:
+                    os.close(fd)
+                print(f"[카메라] USB 리셋 성공 ({usb_path})")
+                return True
+            d = os.path.dirname(d)
+        print("[카메라] USB 장치 경로를 못 찾음 — 리셋 실패")
+        return False
+    except Exception as e:
+        print(f"[카메라] USB 리셋 실패({e}) — sudo 권한 필요할 수 있음")
+        return False
+
 def _reopen_camera():
     """재연결용 — 시작할 때 한 번 찾은 고정 번호(CAMERA_INDEX_OBJ) 대신, 시도할
     때마다 이름으로 다시 검색해서 실제 번호를 찾는다. USB 카메라가 실제로
     빠졌다 다시 잡히면 /dev/videoN 번호가 바뀌는 경우가 있어(재연결 시도가
     계속 옛날 번호로만 열려다 실패하는 문제 확인됨), 매번 새로 찾아야 함."""
     index = _find_camera_index(["arducam"], CAMERA_INDEX_OBJ)
-    return _init_camera(index, "물체캠")
+    new_cap = _init_camera(index, "물체캠")
+    if new_cap is None:
+        # 재오픈 자체가 실패 — 좀비 USB 상태일 수 있으니 리셋 시도 후 한 번 더
+        if _usb_reset_for_video(index):
+            time.sleep(1.0)
+            new_cap = _init_camera(index, "물체캠")
+    return new_cap
 
 cap = _init_camera(CAMERA_INDEX_OBJ, "물체캠")  # 물체+태극기 겸용 (전면)
 
