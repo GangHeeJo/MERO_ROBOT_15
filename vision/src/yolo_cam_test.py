@@ -1,8 +1,10 @@
 """
-flag_test.py — 전면 카메라로 best.pt(통합 모델)의 flag 탐지 품질 확인용 테스트 스크립트
+yolo_cam_test.py — 카메라 + YOLO(best.engine) 탐지만 테스트 (로봇/시리얼 전혀 안 건드림)
 ─────────────────────────────────────────────
-실행: python vision/src/flag_test.py
-브라우저에서 http://<젯슨IP>:8081 접속하면 탐지 박스 실시간으로 볼 수 있음
+목적: TensorRT 엔진 전환 후 탐지 품질/FPS 확인용. main.py와 달리 ESP32/OpenRB에
+      아예 연결하지 않아서 바퀴·그리퍼·팔이 절대 움직이지 않음.
+실행: python vision/src/yolo_cam_test.py
+브라우저에서 http://<젯슨IP>:8083 접속하면 전체 클래스 탐지 박스 확인 가능
 """
 
 import cv2
@@ -14,14 +16,13 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from ultralytics import YOLO
 
-BASE_DIR        = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FLAG_MODEL_PATH = os.path.join(BASE_DIR, "model", "best.pt")
-model = YOLO(FLAG_MODEL_PATH)
-FLAG_CLASS_IDS = {i for i, n in model.names.items() if n == "flag"}
+BASE_DIR   = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MODEL_PATH = os.path.join(BASE_DIR, "model", "best.engine")
+model = YOLO(MODEL_PATH)
+print(f"[모델] {MODEL_PATH} 로드 완료 — 클래스: {sorted(model.names.values())}")
 
 
 def _find_camera_index(keywords, fallback):
-    """장치 이름 키워드로 카메라 인덱스 자동 탐지 (main.py와 동일한 방식)."""
     matches = []
     for path in glob.glob("/sys/class/video4linux/video*/name"):
         try:
@@ -40,7 +41,7 @@ def _find_camera_index(keywords, fallback):
     return fallback
 
 
-CAM_INDEX = _find_camera_index(["arducam"], 0)  # 전면 물체캠 재사용
+CAM_INDEX = _find_camera_index(["arducam"], 0)
 
 cap = cv2.VideoCapture(CAM_INDEX)
 if not cap.isOpened():
@@ -77,7 +78,7 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 threading.Thread(
-    target=lambda: ThreadingHTTPServer(('0.0.0.0', 8081), _Handler).serve_forever(),
+    target=lambda: ThreadingHTTPServer(('0.0.0.0', 8083), _Handler).serve_forever(),
     daemon=True
 ).start()
 
@@ -93,8 +94,10 @@ def _local_ip():
         s.close()
 
 
-print(f"[스트림] http://{_local_ip()}:8081 에서 확인 (Ctrl+C로 종료)")
+print(f"[스트림] http://{_local_ip()}:8083 에서 확인 (Ctrl+C로 종료)")
 
+fps_counter   = 0
+fps_timer     = time.time()
 _last_print_t = 0.0
 try:
     while True:
@@ -102,20 +105,20 @@ try:
         if not ret:
             continue
 
-        results = model(frame, conf=0.5, verbose=False)
-        boxes = results[0].boxes
-        if boxes is not None and len(boxes) > 0:
-            flag_idx = [i for i, c in enumerate(boxes.cls.tolist()) if int(c) in FLAG_CLASS_IDS]
-            results[0].boxes = boxes[flag_idx]
+        results = model(frame, conf=0.25, verbose=False, device="cuda")
         boxes = results[0].boxes
 
         if boxes is not None and len(boxes) > 0 and time.time() - _last_print_t >= 0.5:
-            for b in boxes:
-                conf = float(b.conf[0])
-                x1, y1, x2, y2 = b.xyxy[0].tolist()
-                area = (x2 - x1) * (y2 - y1)
-                print(f"[탐지] flag conf={conf:.2f} area={area:.0f}")
+            names = [model.names[int(c)] for c in boxes.cls.tolist()]
+            print(f"[탐지] {names}")
             _last_print_t = time.time()
+
+        fps_counter += 1
+        elapsed = time.time() - fps_timer
+        if elapsed >= 1.0:
+            print(f"[FPS] {fps_counter / elapsed:.1f}")
+            fps_counter = 0
+            fps_timer = time.time()
 
         annotated = results[0].plot()
         with _lock:

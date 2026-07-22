@@ -911,7 +911,7 @@ python vision/src/main.py --cls d8 --timer
 | 🔴 높음 | 태극기(flag.pt) 학습 | 태극기 사진 20~30장 촬영 → Roboflow Smart Polygon 라벨링 → Colab 학습 → `vision/model/flag.pt` |
 | 🔴 높음 | 과일큐브 촬영 | 흰색 큐브에 과일 이미지 부착 후 ArduCAM으로 촬영 (실제 과일 X) — apple/banana 교체 + orange/pineapple 신규 |
 | 🔴 높음 | 과일 클래스 라벨링 + 재학습 | **Roboflow Smart Polygon (SAM 기반) 권장** → `train.ipynb` (Colab) → `best.pt` 교체 |
-| 🔴 높음 | TensorRT 변환 | Jetson에서: `python vision/src/trt_export.py` → `best.engine` 생성 (FPS 향상, `select() timeout` 완화 기대) |
+| ✅ 완료 | TensorRT 변환 | 2026-07-22 완료 (523.7s, FP16). `main.py` `MODEL_PATH`도 `best.engine`으로 전환함. 실전 FPS 향상 폭은 다음 테스트에서 확인 필요 |
 
 ### 테스트
 

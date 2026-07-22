@@ -32,11 +32,11 @@ MERO_AI_ROBOT/
 │   │   ├── calibration.py         # 카메라 캘리브레이션 (픽셀→mm, 헤드리스 --capture/--calc 지원, 1회 실행)
 │   │   ├── capture.py             # 스페이스바로 사진 저장하는 데이터셋 수집 스크립트
 │   │   ├── record.py              # 클래스별 영상 녹화(--sec) 또는 --shutter(Enter로 한 장씩) 데이터 수집
-│   │   ├── flag_test.py           # best.pt로 flag 탐지 품질만 필터링해 확인 — 실행 후 브라우저 :8081로 스트림 확인
+│   │   ├── yolo_cam_test.py       # 카메라+YOLO(best.engine) 탐지 테스트, 전체 클래스 — 시리얼 연결 없어 로봇 전혀 안 움직임, 브라우저 :8083 스트림
 │   │   ├── encoder_test.py        # 바퀴 엔코더 ENCODER_TICKS_PER_M 실측용
 │   │   ├── imu_test.py            # IMU 값 확인용
 │   │   ├── wheels_test.py         # ESP32 바퀴 단독 구동 테스트 (w/a/s/d, f <초> 직진, r <초> 회전, L R 속도 직접)
-│   │   ├── camera_test.py         # 카메라만 단독 가동 — 연결/해상도/FPS 확인, 브라우저 :8082 스트림
+│   │   ├── camera_test.py         # 카메라만 단독 가동, YOLO 없음 — 연결/해상도/FPS 확인, 브라우저 :8082 스트림
 │   │   ├── cam_servo_test.py      # OpenRB 카메라 서보(ID4)만 단독 테스트 — b(후방)/f(정면)/t(왕복), 재업로드 불필요
 │   │   ├── basket_test.py         # OpenRB 바스켓(ID3)만 단독 테스트 — o(열기, 유지)/c(닫기)
 │   │   ├── launcher.py            # 물리 버튼 3개 + OLED로 카메라·젯슨 없이 클래스 선택/실행하는 독립 런처
@@ -46,7 +46,7 @@ MERO_AI_ROBOT/
 │   │   └── train.ipynb            # Colab 학습 노트북
 │   ├── model/
 │   │   ├── best.pt                # 학습된 가중치 — 도형(d6/d8/d12/d20)+과일(apple/banana/orange/pineapple)+flag 통합 9클래스
-│   │   ├── flag.pt                # flag 단독 모델 (flag_test.py 전용, best.pt 통합 이후 사용 여부 재확인 필요)
+│   │   ├── flag.pt                # flag 단독 모델 (best.pt 통합 이후 사용 여부 재확인 필요, flag_test.py 삭제됨)
 │   │   ├── best.engine            # TensorRT 변환 파일 (Jetson 변환 후 생성)
 │   │   └── calibration.json       # 캘리브레이션 결과 (calibration.py 실행 후 생성)
 │   └── DATASET/
@@ -88,8 +88,14 @@ python vision/src/main.py --cls d12 --test          # 도달 시 grip 1회 전�
 python vision/src/main.py --cls d12 --align-only    # 정렬 테스트: 회전(좌우)→전후(상하)→2초 직진→grip, 1회성
 python vision/src/main.py --cls d12 --no-wheels     # 바퀴 명령 억제 (탐지/그리퍼만 확인)
 
-# 카메라 연결 확인 / flag 탐지 품질 확인 — 실행 후 브라우저에서 http://<젯슨IP>:8081 접속
-python vision/src/flag_test.py
+# 카메라만 확인 (YOLO 없음) — 브라우저 http://<젯슨IP>:8082
+python vision/src/camera_test.py
+
+# 카메라+YOLO 탐지 품질/FPS 확인, 로봇 안 움직임 — 브라우저 http://<젯슨IP>:8083
+python vision/src/yolo_cam_test.py
+
+# 카메라 서보(ID4) 단독 회전 테스트 — b(후방)/f(정면)/t(왕복)
+python vision/src/cam_servo_test.py
 
 # 데이터 수집
 python vision/src/capture.py --cls apple            # 스페이스바로 사진 저장
