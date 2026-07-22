@@ -16,7 +16,7 @@ pick-and-place 로봇 대회. 카메라로 물체 분류·트래킹 → 집게�
   - ID 2: 팔 관절 — 물리 모터 2개가 같은 ID 공유 (한쪽은 Dynamixel Wizard에서 미리 DRIVE_MODE=Reverse로 구워둠)
   - ID 3: 컨테이너 힌지 — 물리 모터 2개, 동일한 ID 공유 구조
   - ID 4: 카메라 회전 서보 — `robot/camera.ino`로 `robot.ino` 본체에 통합 완료. 전원 켤 때 카메라가 보던 위치를 "정면"으로 저장해두고, `cam_backward`(180도 회전)/`cam_forward`(정면 복귀) 명령으로 제어
-- 카메라: ArduCAM 2.3MP AR0234 글로벌 셔터 USB 3.0 — 전면 1대만 사용 (2026-07-22부터 통합 모델로 단일 카메라 구조로 리팩토링, 후면 태극기 전용 카메라는 폐기). `GO_TO_STORAGE` 진입 시 ID4 서보로 카메라 자체를 180도 돌려서 같은 카메라로 후방(보관함 방향)을 봄 — 카메라 회전축이 지면과 수평(팬 회전)이라 영상 상하 반전은 없음. USB 대역폭 타이밍 노이즈로 `select() timeout` 경고가 간헐적으로 뜨는데(1920×1200@50fps 고해상도 유지 중), `FRAME_FAIL_LIMIT`(`main.py`, 연속 100회)까지는 자동 복구 시도 — 그 이상 멈추면 `cap.read()` 자체가 블로킹된 것으로 보고 USB 재연결 필요
+- 카메라: ArduCAM 2.3MP AR0234 글로벌 셔터 USB 3.0 — 전면 1대만 사용 (2026-07-22부터 통합 모델로 단일 카메라 구조로 리팩토링, 후면 태극기 전용 카메라는 폐기). `GO_TO_STORAGE` 진입 시 ID4 서보로 카메라 자체를 180도 돌려서 같은 카메라로 후방(보관함 방향)을 봄 — 카메라 회전축이 지면과 수평(팬 회전)이라 영상 상하 반전은 없음. USB 대역폭 타이밍 노이즈로 `select() timeout` 경고가 간헐적으로 뜨는데(1920×1200@50fps 고해상도 유지 중), 캡처는 별도 스레드가 담당하고 3단계로 자동 복구를 시도함(2026-07-23): ① `read()` 실패 20회 누적 시 release+재오픈 ② 재오픈 자체가 실패(좀비 USB, "index out of range"류)하면 `USBDEVFS_RESET` ioctl로 소프트 리셋 후 재시도 ③ `read()` 호출 자체가 완전히 안 돌아오는 hang이면(마지막 프레임 수신 후 일정 시간 경과) 워치독이 죽은 캡처 스레드는 버려두고 카메라+캡처 스레드를 통째로 새로 띄움. `USBDEVFS_RESET`은 `/dev/bus/usb/버스/디바이스` 노드에 쓰기 권한이 있어야 동작하는데 기본은 root 전용이라, udev 규칙(`/etc/udev/rules.d/99-arducam-usbreset.rules`, ArduCAM vendor:product `04b4:4950`에 `MODE="0666"`)을 추가해서 sudo 없이도 되게 해둠 — 새 Jetson/재설치 시 이 udev 규칙을 다시 등록해야 함(`lsusb`로 실제 vendor:product 확인 후 규칙 파일 작성 → `udevadm control --reload-rules && udevadm trigger`).
 
 **대회 태스크**
 - shape-based: d6, d8, d12, d20
@@ -87,6 +87,7 @@ python vision/src/main.py --cls d12 --timer        # 화면에 3분 카운트다
 python vision/src/main.py --cls d12 --test          # 도달 시 grip 1회 전송 후 즉시 종료
 python vision/src/main.py --cls d12 --align-only    # 정렬 테스트: 회전(좌우)→전후(상하)→2초 직진→grip, 1회성
 python vision/src/main.py --cls d12 --no-wheels     # 바퀴 명령 억제 (탐지/그리퍼만 확인)
+python vision/src/main.py --storage-only            # SEARCHING/GRIPPING 건너뛰고 바로 GO_TO_STORAGE 진입 (태극기 정렬+접근 단독 테스트, --cls 입력 스킵)
 
 # 카메라만 확인 (YOLO 없음) — 브라우저 http://<젯슨IP>:8082
 python vision/src/camera_test.py
@@ -134,31 +135,37 @@ Jetson main.py
                                            "motor_fault"/"motor_recovered"/"motion_aborted"/"fault_reset"}
 ```
 
-`gripper_open`/`gripper_close`는 안전정책이 아니라 집기 메커니즘 자체에 필요 — IDLE 기본값이 "닫힘"이라 미리 열어두지 않으면 집을 공간이 없음. 정밀 정렬(전후→회전) 중엔 그리퍼를 닫은 채로 두고, 좌우(cx) 정렬까지 끝나 최종 직진 접근 직전에만 `gripper_open` 전송(엉뚱한 물체가 정렬 중 벌어진 집게에 끼는 것 방지) — 그래서 정렬 단계에서 타겟을 놓쳐도 그리퍼는 애초에 안 열려있어 `gripper_close`를 보낼 필요가 없음. `start`는 경기 시작 시 규정 크기용으로 올려둔 팔을 내리는 명령(전원 켜지면 팔은 기본적으로 올림 상태로 대기) — 동시에 카메라도 `cam_forward`로 정면 리셋(이전 테스트/경기에서 후방을 보고 있던 상태가 남아있을 수 있어서). 카메라 리셋 실패는 팔 내리기를 막지 않고 로그만 남김. `arm_up`은 디버깅용 — 팔을 수동으로 시작 위치(올림)로 복귀. `cam_backward`/`cam_forward`는 ID4 카메라 서보 제어 — `GO_TO_STORAGE` 진입 시(경기당 1회) `cam_backward`를 보내 카메라가 후방(보관함 방향)을 보게 함. `basket_open`/`basket_close`는 임시 디버깅용 — `dump`와 달리 자동으로 안 닫히고 열린 채로 유지되어 바스켓 안을 직접 확인하거나 수동으로 비울 때 사용 (`vision/src/basket_test.py`로 단독 테스트 가능).
+`gripper_open`/`gripper_close`는 안전정책이 아니라 집기 메커니즘 자체에 필요 — IDLE 기본값이 "닫힘"이라 미리 열어두지 않으면 집을 공간이 없음. 정밀 정렬(전후진+회전 동시 보정) 중엔 그리퍼를 닫은 채로 두고, cx/cy 둘 다 정렬까지 끝나 최종 직진 접근 직전에만 `gripper_open` 전송(엉뚱한 물체가 정렬 중 벌어진 집게에 끼는 것 방지) — 그래서 정렬 단계에서 타겟을 놓쳐도 그리퍼는 애초에 안 열려있어 `gripper_close`를 보낼 필요가 없음. `start`는 경기 시작 시 규정 크기용으로 올려둔 팔을 내리는 명령(전원 켜지면 팔은 기본적으로 올림 상태로 대기) — 동시에 카메라도 `cam_forward`로 정면 리셋(이전 테스트/경기에서 후방을 보고 있던 상태가 남아있을 수 있어서). 카메라 리셋 실패는 팔 내리기를 막지 않고 로그만 남김. `arm_up`은 디버깅용 — 팔을 수동으로 시작 위치(올림)로 복귀. `cam_backward`/`cam_forward`는 ID4 카메라 서보 제어 — `GO_TO_STORAGE` 진입 시(경기당 1회) `cam_backward`를 보내 카메라가 후방(보관함 방향)을 보게 함. `basket_open`/`basket_close`는 임시 디버깅용 — `dump`와 달리 자동으로 안 닫히고 열린 채로 유지되어 바스켓 안을 직접 확인하거나 수동으로 비울 때 사용 (`vision/src/basket_test.py`로 단독 테스트 가능).
 
 ## 상태 머신
 
-> 2026-07-22: `GO_TO_STORAGE`/`DROPPING`이 시간 기반 트리거(`PICK_PHASE_SECS`)로 재구현되어 더 이상 죽은 코드가 아님. 경기 시작(Enter) 시점에 `match_start_time`을 기록하고, 매 프레임 상태머신 분기 진입 전에 `SEARCHING`/`GRIPPING`/`POST_GRIP_SCAN` 셋 중 어느 상태에 있든 `PICK_PHASE_SECS`(150초=2분30초) 지나면 즉시 중단하고 `GO_TO_STORAGE`로 강제 전환됨 — SEARCHING에서만 체크하면 grip 타임아웃(15초)+스캔(4초)으로 남은 30초를 거의 다 까먹을 수 있어서 세 상태 모두 체크.
+> 2026-07-23: `DROPPING` 상태는 완전히 삭제됨 — 모빌리티 자체가 스토리지 안까지 들어가는 것으로 경기 종료 취급(`dump` 명령 없음). 또한 정밀 정렬(SEARCHING)과 태극기 접근(GO_TO_STORAGE)이 둘 다 "전후진 먼저 맞추고 회전은 나중" 순차 방식에서, **cx/cy 오프셋 크기에 비례한 회전+전후진 보정을 매 프레임 동시에 섞어서 조향**하는 방식으로 바뀜(`fb_phase`/`flag_aligned` 같은 순차 단계 변수는 제거됨) — 오프셋이 클수록 회전 속도도 비례해서 빨라짐.
+>
+> 경기 시작(Enter) 시점에 `match_start_time`을 기록하고, 매 프레임 상태머신 분기 진입 전에 `SEARCHING`/`GRIPPING`/`POST_GRIP_SCAN` 셋 중 어느 상태에 있든 `PICK_PHASE_SECS`(150초=2분30초) 지나면 즉시 중단하고 `GO_TO_STORAGE`로 강제 전환됨 — SEARCHING에서만 체크하면 grip 타임아웃(15초)+스캔(4초)으로 남은 30초를 거의 다 까먹을 수 있어서 세 상태 모두 체크.
 
 **Python (main.py) — 현재 실제 동작:**
 ```
 (SEARCHING/GRIPPING/POST_GRIP_SCAN 공통) PICK_PHASE_SECS(150초) 경과 시 즉시 중단
     → gripper_close(열려있었다면) → cam_backward 전송 → GO_TO_STORAGE
 
-SEARCHING → 타겟 발견 시 정밀 정렬(전후→회전) 진행 (그리퍼는 닫힌 채 유지)
-         → 좌우(cx) 정렬까지 끝나면 gripper_open 전송 → FINAL_APPROACH_SECS(1.7초) 직진 → grip 전송 → GRIPPING
+SEARCHING → 타겟 발견 시 정밀 정렬(전후진+회전 동시 보정, cx/cy 오프셋에 비례한 속도) 진행 (그리퍼는 닫힌 채 유지)
+         → cx/cy 둘 다 정렬되면 gripper_open 전송 → FINAL_APPROACH_SECS(1.7초) 직진 → grip 전송 → GRIPPING
          → 정렬 중(그리퍼 열기 전) 타겟 놓치면 그대로 재탐색 복귀 (그리퍼 안 열었으니 닫을 것도 없음)
 GRIPPING → (gripped/grip_failed/timeout 무엇이든) → POST_GRIP_SCAN
 POST_GRIP_SCAN → 이동 없이 제자리 회전(POST_GRIP_SCAN_SECS=4초)하며 주변 재탐색
               → 타겟 발견하거나 시간 다 차면 → SEARCHING (이후 정밀 정렬/탐색은 기존 로직 그대로)
 GO_TO_STORAGE → phase 0: 제자리 회전하며 flag 탐색 (같은 카메라/프레임에서 cls=='flag'만 필터, 별도 추론 없음)
-              → phase 1: flag 보이면 후진 접근(카메라가 후방을 보는 상태라 "뒤가 앞"처럼 취급, 조향 부호 반전)
-                → FLAG_AREA_THRESHOLD 도달 시 정지 → dump 전송 → DROPPING
+              → phase 1: flag 보이면 좌우 보정(회전)+접근(직진)을 동시에 섞어서 조향
+                (카메라가 후방을 보는 상태라 "뒤가 앞"처럼 취급하지만, 조향 부호 자체는 정면
+                카메라일 때와 동일 — 로봇 전체가 회전하는 거라 카메라가 어느 쪽을 보든 안 바뀜.
+                뒤집으면 반대 방향으로 도는 버그였음, 2026-07-23 수정)
+                → area가 FLAG_AREA_STOP_THRESHOLD(20만 px², ⚠️ 실측 필요) 넘으면
+                  FLAG_FINAL_FORWARD_SECS(0.5초)만 고정으로 더 직진 후 완전 정지
+                  → 이후 아무 것도 안 함(경기 종료 취급, dump 없음)
                 → flag 놓치면 phase 0으로 복귀
               → STORAGE_TIMEOUT_SECS(60초) 넘으면 SEARCHING으로 강제 복귀
-DROPPING → dumped 수신 또는 DROP_TIMEOUT_SECS(15초) 타임아웃 → SEARCHING 복귀
 ```
-타겟 없을 때 탐색 이동은 "가장 먼 물체 1개" 대신 **밀집도 가중 중심**(주변 물체가 몰려있는 방향)으로 조향 (`CLUSTER_RADIUS_PX` 재사용). `MAX_ROTATE_SECS`(1.0초) 넘게 회전해도 물체가 2개 안 모이면 `SEARCH_FORWARD_BURST_SECS`(2.0초) 직진 후 회전 재개. (`--test` 플래그: grip 전송 후 결과 기다리지 않고 바로 프로그램 종료)
+타겟 없을 때 탐색 이동은 "가장 먼 물체 1개" 대신 **밀집도 가중 중심**(주변 물체가 몰려있는 방향)으로 조향 (`CLUSTER_RADIUS_PX` 재사용). 감지된 물체가 `MIN_DETECTED_FOR_EXPLORE`(2개) 미만이면 밀집도 비교가 불가능하므로 전진 없이 `SEARCH_ROTATE_SPEED`로 제자리 회전만 계속함 — 안 보이는 방향으로 무작정 전진하면 벽에 부딪힐 수 있어서. (`--test` 플래그: grip 전송 후 결과 기다리지 않고 바로 프로그램 종료)
 
 `select_target()`은 밀집도가 아니라 **area(화면 중앙에 가까운 정도) 단독 기준**으로 후보 하나를 고른다 — 원래 밀집도(cluster_score)를 1순위로 썼었는데, 그 값이 다른 물체 검출 여부에 따라 프레임마다 흔들리기 쉬워서 타겟 후보가 여러 개일 때 정밀 정렬 도중 다른 물체로 선택이 튀는 문제가 있어 단순화함(2026-07-22). 정밀 정렬(`precise_align`) 진입 시 그 물체의 track id를 `last_target_id`에 락 걸고, 이후로는 `select_target()`을 다시 안 부르고 그 id만 `detected`에서 찾아 추적 — 놓치면 `TARGET_MISS_GRACE_FRAMES`(3프레임)까지는 정지 대기 후 재등장 기다리고, 그래도 안 잡히면 재탐색으로 복귀.
 
