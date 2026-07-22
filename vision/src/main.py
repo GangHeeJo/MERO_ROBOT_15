@@ -602,12 +602,19 @@ def _camera_capture_loop():
                 cap.release()
             except Exception:
                 pass
+            # release 직후 바로 재오픈하면 OS/드라이버가 장치를 아직 안 놓아줘서
+            # "device busy"로 실패하는 경우가 있어 잠깐 텀을 둔다.
+            time.sleep(1.0)
             new_cap = _init_camera(CAMERA_INDEX_OBJ, "물체캠")
             if new_cap is not None:
                 cap = new_cap
                 print("[카메라] 재연결 성공")
             else:
-                print("[카메라] 재연결 실패 — 계속 재시도")
+                # 실패해도 cap을 죽은 채로 두지 않음 — 다음 read()가 바로바로
+                # 또 실패해서 카운트가 순식간에 또 임계치에 도달, 텀 없이 재시도가
+                # 반복되는 걸 막기 위해 여기서도 잠깐 쉬고 다음 루프로 넘어간다.
+                print("[카메라] 재연결 실패 — 1초 후 계속 재시도")
+                time.sleep(1.0)
 
 threading.Thread(target=_camera_capture_loop, daemon=True).start()
 
