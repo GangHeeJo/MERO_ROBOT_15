@@ -149,7 +149,9 @@ GO_TO_STORAGE → phase 0: 제자리 회전하며 flag 탐색 (같은 카메라/
               → STORAGE_TIMEOUT_SECS(60초) 넘으면 SEARCHING으로 강제 복귀
 DROPPING → dumped 수신 또는 DROP_TIMEOUT_SECS(15초) 타임아웃 → SEARCHING 복귀
 ```
-타겟 없을 때 탐색 이동은 "가장 먼 물체 1개" 대신 **밀집도 가중 중심**(주변 물체가 몰려있는 방향)으로 조향 (`main.py` `select_target()`과 동일한 클러스터 반경 재사용). `MAX_ROTATE_SECS`(1.0초) 넘게 회전해도 물체가 2개 안 모이면 `SEARCH_FORWARD_BURST_SECS`(2.0초) 직진 후 회전 재개. (`--test` 플래그: grip 전송 후 결과 기다리지 않고 바로 프로그램 종료)
+타겟 없을 때 탐색 이동은 "가장 먼 물체 1개" 대신 **밀집도 가중 중심**(주변 물체가 몰려있는 방향)으로 조향 (`CLUSTER_RADIUS_PX` 재사용). `MAX_ROTATE_SECS`(1.0초) 넘게 회전해도 물체가 2개 안 모이면 `SEARCH_FORWARD_BURST_SECS`(2.0초) 직진 후 회전 재개. (`--test` 플래그: grip 전송 후 결과 기다리지 않고 바로 프로그램 종료)
+
+`select_target()`은 밀집도가 아니라 **area(화면 중앙에 가까운 정도) 단독 기준**으로 후보 하나를 고른다 — 원래 밀집도(cluster_score)를 1순위로 썼었는데, 그 값이 다른 물체 검출 여부에 따라 프레임마다 흔들리기 쉬워서 타겟 후보가 여러 개일 때 정밀 정렬 도중 다른 물체로 선택이 튀는 문제가 있어 단순화함(2026-07-22). 정밀 정렬(`precise_align`) 진입 시 그 물체의 track id를 `last_target_id`에 락 걸고, 이후로는 `select_target()`을 다시 안 부르고 그 id만 `detected`에서 찾아 추적 — 놓치면 `TARGET_MISS_GRACE_FRAMES`(3프레임)까지는 정지 대기 후 재등장 기다리고, 그래도 안 잡히면 재탐색으로 복귀.
 
 **OpenRB (robot.ino) — 상태: IDLE / GRIPPING / LIFTING / DUMPING**
 ```

@@ -157,6 +157,9 @@ def select_target(objects: list) -> dict | None:
     for o in objects:
         if o['cls'] == 'flag':
             continue  # flag는 GO_TO_STORAGE 전용 — SEARCHING/GRIPPING 중엔 집을 대상으로 절대 선택 안 함
+        if o['id'] == -1:
+            continue  # 트래커가 아직 id를 못 붙인 물체 — last_target_id의 "락 없음" 값(-1)과 겹쳐서
+                       # 나중에 정밀 정렬 중 엉뚱한 (역시 id=-1인) 물체와 혼동될 수 있어 애초에 제외
         if TARGET_CLS and o['cls'] not in TARGET_CLS:
             continue
         threshold = CONF_THRESHOLD_FRUIT if o['cls'] in FRUIT_CLASSES else CONF_THRESHOLD_SHAPE
@@ -819,9 +822,10 @@ try:
                 # 타겟이 보이면 area/중앙정렬 상관없이 바로 정밀 정렬(전진/후진→회전) 진입 —
                 # 예전 --align-fwd-first와 동일한 방식 (거리 무관하게 즉시 시작)
                 control_wheels(None)
-                precise_align  = True
-                fb_phase       = 0
-                last_target_id = target["id"]  # 이 물체 id로 락 — 이후 select_target() 재호출 없이 이 id만 추적
+                precise_align     = True
+                fb_phase          = 0
+                target_miss_count = 0  # 이전 정렬 시도가 grace 소진 없이 중간에 끊겼을 수 있어 새로 시작할 때 항상 리셋
+                last_target_id    = target["id"]  # 이 물체 id로 락 — 이후 select_target() 재호출 없이 이 id만 추적
                 send_gripper_open()
                 gripper_prepped = True
                 print(f"\n[상태] 타겟 발견 (area={target['area']}) → 그리퍼 열기 + 정밀 정렬 시작")
