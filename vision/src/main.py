@@ -558,6 +558,14 @@ def _init_camera(index, name):
         print(f"[카메라] {name} ({index}번) 준비: {w}×{h}")
     return cap
 
+def _reopen_camera():
+    """재연결용 — 시작할 때 한 번 찾은 고정 번호(CAMERA_INDEX_OBJ) 대신, 시도할
+    때마다 이름으로 다시 검색해서 실제 번호를 찾는다. USB 카메라가 실제로
+    빠졌다 다시 잡히면 /dev/videoN 번호가 바뀌는 경우가 있어(재연결 시도가
+    계속 옛날 번호로만 열려다 실패하는 문제 확인됨), 매번 새로 찾아야 함."""
+    index = _find_camera_index(["arducam"], CAMERA_INDEX_OBJ)
+    return _init_camera(index, "물체캠")
+
 cap = _init_camera(CAMERA_INDEX_OBJ, "물체캠")  # 물체+태극기 겸용 (전면)
 
 if cap is None:
@@ -615,7 +623,7 @@ def _camera_capture_loop(own_cap):
             # release 직후 바로 재오픈하면 OS/드라이버가 장치를 아직 안 놓아줘서
             # "device busy"로 실패하는 경우가 있어 잠깐 텀을 둔다.
             time.sleep(1.0)
-            new_cap = _init_camera(CAMERA_INDEX_OBJ, "물체캠")
+            new_cap = _reopen_camera()
             if new_cap is not None:
                 own_cap = new_cap
                 with _cap_lock:
@@ -639,7 +647,7 @@ def _camera_watchdog_loop():
             stale = time.time() - _cap_last_update_t
         if stale >= CAMERA_STALL_TIMEOUT_SECS:
             print(f"\n[카메라] {stale:.1f}초간 응답 없음(hang 의심) — 캡처 스레드 새로 띄움")
-            new_cap = _init_camera(CAMERA_INDEX_OBJ, "물체캠")
+            new_cap = _reopen_camera()
             with _cap_lock:
                 _cap_last_update_t = time.time()  # 실패해도 재시도 텀 확보(스팸 방지)
                 if new_cap is not None:
