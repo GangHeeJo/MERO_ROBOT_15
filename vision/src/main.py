@@ -14,7 +14,8 @@ flag를 집으러 가지 않고, GO_TO_STORAGE에서만 같은 탐지 결과 중
 경기 시작(Enter) 후 PICK_PHASE_SECS(150s=2분30초) 동안 SEARCHING/GRIPPING/
 POST_GRIP_SCAN을 반복하다가, 그 시간이 지나면 셋 중 어느 상태에 있든(grip
 응답 대기 중이든 집기후 스캔 중이든) 매 프레임 즉시 GO_TO_STORAGE로 전환됨
-(남은 30초 동안 회전하며 flag 탐색 → 발견하면 접근 → dump). 전환 시점에
+(남은 30초 동안 회전하며 flag 탐색 → 발견하면 정렬 후 멈추지 않고 스토리지 안까지 직진 진입).
+전환 시점에
 cam_backward(카메라 후방)와 arm_up(팔 규정 크기 위치 복귀)을 동시에 전송함. 이 체크는
 상태머신 분기 진입 전에 한 번만 수행 — GRIPPING/POST_GRIP_SCAN에서도
 안 걸리면 최악의 경우(grip 타임아웃 15초+스캔 4초) 30초 중 19초를
@@ -28,17 +29,17 @@ cam_backward(카메라 후방)와 arm_up(팔 규정 크기 위치 복귀)을 동
   GRIPPING       — grip 전송 후 gripped 신호 대기 (집기+팔올림+투하+팔내림 완료)
                    → gripped 수신 시 POST_GRIP_SCAN
   POST_GRIP_SCAN — 집기 직후 제자리 스캔, 타겟 있으면/시간 다 차면 SEARCHING
-  GO_TO_STORAGE  — 제자리 회전하며 flag 탐색 → 발견 시 후진 접근 → dump 전송
-  DROPPING       — dump 전송 후 dumped 신호 대기 (컨테이너 열어 쏟기 완료)
+  GO_TO_STORAGE  — 제자리 회전하며 flag 탐색 → 발견 시 좌우(cx)만 정렬(방향만 맞춤,
+                   상하/거리 정렬 없음) → 정렬 끝나면 멈추지 않고 그 상태로 계속 직진 —
+                   모빌리티 자체가 스토리지 안까지 진입 (dump 명령 없음, 여기서 경기 종료 취급)
 
 시리얼:
   /dev/ttyACM0 → ESP32  (UGV02 바퀴)   {"T":1, "L":speed, "R":speed}
-  /dev/ttyACM1 → OpenRB (팔·그리퍼)    {"cmd":"grip"/"dump"/"idle"/"gripper_open"/"gripper_close"}
+  /dev/ttyACM1 → OpenRB (팔·그리퍼)    {"cmd":"grip"/"idle"/"gripper_open"/"gripper_close"}
 
 OpenRB 응답:
   {"status":"gripped"}        — 집기+컨테이너 투하+그리퍼 재닫힘 완료 → SEARCHING 복귀
   {"status":"grip_failed"}    — 집기 실패 → SEARCHING 복귀
-  {"status":"dumped"}         — 컨테이너 열기 완료 → SEARCHING 복귀
   {"status":"gripper_opened"} — 접근 전 그리퍼 미리 열기 완료
   {"status":"gripper_closed"} — 접근 취소 후 그리퍼 대기 상태로 닫힘 완료
 
@@ -257,7 +258,6 @@ SEARCH_ROTATE_SPEED = 0.1     # 타겟 없을 때 제자리 회전 속도
 
 # 타임아웃
 GRIP_TIMEOUT_SECS    = 15.0   # grip 전송 후 gripped 신호 최대 대기
-DROP_TIMEOUT_SECS    = 15.0   # drop 전송 후 done 신호 최대 대기
 STORAGE_TIMEOUT_SECS = 60.0   # GO_TO_STORAGE 전체 최대 시간 (태극기 탐색 포함)
 
 # 경기 타이머 / 픽업↔보관 전환
@@ -268,7 +268,6 @@ SHOW_TIMER            = args.timer  # 화면에 카운트다운 표시 여부 (�
 # ── 태극기 네비게이션 파라미터 ──────────────────────────
 FLAG_CONF_THRESHOLD      = 0.5
 FLAG_CENTER_MARGIN_PX    = 100    # 가로 정렬 허용 범위 (px)
-FLAG_AREA_THRESHOLD      = 150000 # 도달 판단 면적 (px²)  ⚠️ 임의값 — 실측 필요
 FLAG_AREA_SLOW_THRESHOLD = 30000  # 감속 시작 면적 (px²)  ⚠️ 임의값 — 실측 필요
 FLAG_SEARCH_SPEED        = 0.15   # 탐색 회전 속도
 FLAG_ALIGN_SPEED         = 0.15   # 좌우 정렬(제자리 회전) 속도
@@ -280,12 +279,10 @@ class RobotState(Enum):
     SEARCHING      = "SEARCHING"
     GRIPPING       = "GRIPPING"
     POST_GRIP_SCAN = "POST_GRIP_SCAN"
-    GO_TO_STORAGE  = "GO_TO_STORAGE"
-    DROPPING       = "DROPPING"
+    GO_TO_STORAGE  = "GO_TO_STORAGE"  # 정렬 끝나면 멈추지 않고 그대로 스토리지 안까지 직진 (모빌리티 자체가 진입)
 
 robot_state          = RobotState.SEARCHING
 grip_sent_at         = 0.0
-drop_sent_at         = 0.0
 _frame_fail_count    = 0
 storage_phase        = 0   # 0=탐색회전, 1=후진접근
 storage_phase_start  = 0.0
@@ -350,11 +347,10 @@ threading.Thread(target=_read_esp32_loop, daemon=True).start()
 
 # ── OpenRB 수신 스레드 (팔 완료 신호) ───────────────────
 openrb_gripped     = False
-openrb_dumped      = False
 openrb_grip_failed = False
 
 def _read_openrb_loop():
-    global openrb_gripped, openrb_dumped, openrb_grip_failed
+    global openrb_gripped, openrb_grip_failed
     while True:
         if ser_openrb is None or not ser_openrb.is_open:
             time.sleep(0.5); continue
@@ -370,9 +366,6 @@ def _read_openrb_loop():
                 if data.get("status") == "gripped":
                     openrb_gripped = True
                     print("\n[OpenRB] 집기+투하 완료")
-                elif data.get("status") == "dumped":
-                    openrb_dumped = True
-                    print("\n[OpenRB] 컨테이너 쏟기 완료")
                 elif data.get("status") == "grip_failed":
                     openrb_grip_failed = True
                     print("\n[OpenRB] 집기 실패 (전류 미달)")
@@ -458,11 +451,6 @@ def send_grip(target: dict):
         "my":  target.get("my", 0),
     }) + "\n"
     ser_openrb.write(payload.encode())
-
-def send_dump():
-    if ser_openrb is None or not ser_openrb.is_open:
-        return
-    ser_openrb.write((json.dumps({"cmd": "dump"}) + "\n").encode())
 
 def send_start():
     """경기 시작 — 전원 켤 때 시작 크기 규정으로 올려둔 팔을 내림."""
@@ -760,7 +748,6 @@ try:
                     last_target_id      = -1
                     gripped_cls         = align_final_forward_cls
                     openrb_gripped      = False
-                    openrb_dumped       = False
                     openrb_grip_failed  = False
                     send_grip({"cls": align_final_forward_cls})
                     print(f"\n[테스트] grip 전송 ({align_final_forward_cls})")
@@ -818,7 +805,6 @@ try:
                     last_target_id     = -1
                     gripped_cls        = fb_final_forward_cls
                     openrb_gripped     = False
-                    openrb_dumped      = False
                     openrb_grip_failed = False
                     send_grip({"cls": fb_final_forward_cls})
                     gripper_prepped = False  # 이제부터는 OpenRB가 집기~재닫힘까지 직접 관리
@@ -954,7 +940,6 @@ try:
             elapsed = time.time() - grip_sent_at
             if openrb_gripped:
                 openrb_gripped       = False
-                openrb_dumped        = False
                 openrb_grip_failed   = False
                 gripped_cls          = None
                 confirm_count        = 0
@@ -965,7 +950,6 @@ try:
             elif openrb_grip_failed:
                 openrb_grip_failed   = False
                 openrb_gripped       = False
-                openrb_dumped        = False
                 confirm_count        = 0
                 last_target_id       = -1
                 robot_state          = RobotState.POST_GRIP_SCAN
@@ -1032,8 +1016,8 @@ try:
                 elif storage_phase == 1:
                     # 보이는 모든 태극기의 중심(cx 평균)을 화면 중앙 세로선에 맞추는
                     # 좌우 정렬만 수행 (상하 정렬 없음 — 거리는 area로만 판단).
-                    # 한 번 정렬되면(flag_aligned) 더 이상 방향 안 고치고 그 상태로 직진만
-                    # 하다가 area 임계 도달 시 정지+dump.
+                    # 정렬되면(flag_aligned) 더 이상 방향 안 고치고 그 상태로 계속 직진 —
+                    # 멈추지 않고 모빌리티 자체가 스토리지 안까지 그대로 진입한다 (dump 없음).
                     if not flag_candidates:
                         # 태극기 전부 놓침 → 탐색으로 복귀
                         control_wheels(None)
@@ -1045,46 +1029,21 @@ try:
                         avg_cx   = sum(o["cx"] for o in flag_candidates) / len(flag_candidates)
                         avg_area = sum(o["area"] for o in flag_candidates) / len(flag_candidates)
 
-                        if avg_area >= FLAG_AREA_THRESHOLD:
-                            # 도달
-                            control_wheels(None)
-                            openrb_dumped = False
-                            send_dump()
-                            drop_sent_at  = time.time()
-                            robot_state   = RobotState.DROPPING
-                            print(f"\n[상태] 태극기 도달 → dump 전송")
-                        elif not flag_aligned:
+                        if not flag_aligned:
                             # 좌우 정렬 — 카메라는 뒤(=진행방향)를 보는 중, 제자리 회전으로 방향만 맞춤
                             offset = avg_cx - fw2 / 2
                             if abs(offset) <= FLAG_CENTER_MARGIN_PX:
                                 flag_aligned = True
-                                print(f"\n[상태] 태극기 방향 정렬 완료 (cx={avg_cx:.0f}) → 직진 접근")
+                                print(f"\n[상태] 태극기 방향 정렬 완료 (cx={avg_cx:.0f}) → 직진 진입")
                             else:
                                 turn = max(-1.0, min(1.0, offset / (fw2 / 2)))
                                 control_wheels(None, override_l=-FLAG_ALIGN_SPEED * turn, override_r=FLAG_ALIGN_SPEED * turn)
                                 print(f"[상태] 태극기 방향 정렬중... cx={avg_cx:.0f} (n={len(flag_candidates)})", end="\r")
                         else:
-                            # 정렬 끝 — 더 이상 방향 안 고치고 그 상태로 직진(후진 접근)만 함
+                            # 정렬 끝 — 멈추지 않고 그 상태로 계속 직진, 가까워질수록만 감속
                             speed = FLAG_APPROACH_SLOW if avg_area > FLAG_AREA_SLOW_THRESHOLD else FLAG_APPROACH_SPEED
                             control_wheels(None, override_l=-speed, override_r=-speed)
-                            print(f"[상태] 태극기 직진 접근중... area={avg_area:.0f} (n={len(flag_candidates)})", end="\r")
-
-        elif robot_state == RobotState.DROPPING:
-            control_wheels(None)
-            elapsed = time.time() - drop_sent_at
-            if openrb_dumped:
-                openrb_dumped  = False
-                confirm_count  = 0
-                last_target_id = -1
-                robot_state = RobotState.SEARCHING
-                print(f"[상태] DROPPING → SEARCHING ({elapsed:.1f}s)")
-            elif elapsed > DROP_TIMEOUT_SECS:
-                print(f"\n[경고] dump 타임아웃 → SEARCHING 복귀")
-                confirm_count  = 0
-                last_target_id = -1
-                robot_state    = RobotState.SEARCHING
-            else:
-                print(f"[상태] 컨테이너 쏟는중... ({elapsed:.1f}s)", end="\r")
+                            print(f"[상태] 스토리지 진입중... area={avg_area:.0f} (n={len(flag_candidates)})", end="\r")
 
         # ── 시각화 ──────────────────────────────────────
         if results is not None:
@@ -1130,7 +1089,6 @@ try:
             RobotState.SEARCHING:     (0, 255, 0),
             RobotState.GRIPPING:      (0, 165, 255),
             RobotState.GO_TO_STORAGE: (255, 165, 0),
-            RobotState.DROPPING:      (0, 165, 255),
         }
         overlay = annotated_frame.copy()
         cv2.rectangle(overlay, (0, h - 80), (w, h), (0, 0, 0), -1)
