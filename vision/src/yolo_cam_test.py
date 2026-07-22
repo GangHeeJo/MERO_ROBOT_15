@@ -140,8 +140,9 @@ try:
         _model_sum  += _t3 - _t2
 
         if boxes is not None and len(boxes) > 0 and time.time() - _last_print_t >= 0.5:
+            areas = [round(float((b[2] - b[0]) * (b[3] - b[1]))) for b in boxes.xyxy.tolist()]
             names = [model.names[int(c)] for c in boxes.cls.tolist()]
-            print(f"[탐지] {names}")
+            print(f"[탐지] {list(zip(names, areas))}")
             _last_print_t = time.time()
 
         fps_counter += 1
@@ -158,6 +159,11 @@ try:
             watching = _client_count > 0
         if watching:
             annotated = results[0].plot()
+            if boxes is not None and len(boxes) > 0:
+                for x1, y1, x2, y2 in boxes.xyxy.tolist():
+                    area = round((x2 - x1) * (y2 - y1))
+                    cv2.putText(annotated, f"area={area}", (int(x1), int(y2) + 22),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
             with _lock:
                 _stream_frame = annotated
 
