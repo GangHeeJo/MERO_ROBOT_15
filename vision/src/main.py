@@ -51,6 +51,7 @@ import cv2
 import glob
 import os
 import json
+import queue
 import socket
 import time
 import threading
@@ -71,11 +72,14 @@ parser.add_argument('--align-only', action='store_true',
                     help='정렬 순서 비교용(참고): 기본 순서(전진/후진→회전)와 반대로 회전→전진/후진 먼저 시도')
 parser.add_argument('--no-wheels', action='store_true',
                     help='바퀴 명령을 ESP32로 보내지 않음 (탐지/그리퍼만 테스트할 때)')
+parser.add_argument('--record', action='store_true',
+                    help='테스트 중 프레임을 저해상도 JPEG로 샘플링해 저장 (vision/records/<시각>/) — 백그라운드 스레드+낮은 fps라 부하 거의 없음')
 args       = parser.parse_args()
 TARGET_CLS    = set(args.cls) if args.cls else None
 TEST_MODE     = args.test
 ALIGN_ONLY    = args.align_only
 NO_WHEELS     = args.no_wheels
+RECORD        = args.record
 SHAPE_CLASSES = {'d6', 'd8', 'd12', 'd20'}
 FRUIT_CLASSES = {'apple', 'banana', 'orange', 'pineapple'}
 
@@ -562,6 +566,31 @@ threading.Thread(
     daemon=True
 ).start()
 
+# ── 프레임 기록 (--record, 선택) ──────────────────────────
+# 매 프레임 영상으로 인코딩(cv2.VideoWriter)하면 CPU 부하가 커서, 대신
+# RECORD_INTERVAL_SECS 간격으로 프레임만 샘플링해 JPEG로 저장한다.
+# 인코딩+디스크 쓰기는 백그라운드 스레드가 맡고, 큐가 밀리면(디스크가
+# 못 따라오면) 새 프레임은 그냥 버려서 메인 루프가 절대 안 막히게 한다.
+RECORD_INTERVAL_SECS = 0.2   # 저장 주기 (5fps) — 리뷰용으로 충분, 부하 최소화
+_record_dir   = None
+_record_queue = None
+_record_idx   = 0
+
+def _record_worker(q):
+    while True:
+        path, frame = q.get()
+        try:
+            cv2.imwrite(path, frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        except Exception as e:
+            print(f"[녹화] 저장 실패: {e}")
+
+if RECORD:
+    _record_dir = os.path.join(BASE_DIR, "records", time.strftime("%Y%m%d_%H%M%S"))
+    os.makedirs(_record_dir, exist_ok=True)
+    _record_queue = queue.Queue(maxsize=30)
+    threading.Thread(target=_record_worker, args=(_record_queue,), daemon=True).start()
+    print(f"[녹화] 활성화 — {_record_dir} (5fps 샘플링, 부하 최소화)")
+
 def _local_ip():
     """현재 연결된 네트워크 기준 실제 IP 확인 (핫스팟이 바뀌어도 자동으로 맞는 IP 표시)."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -580,7 +609,8 @@ print(f"[스트림] http://{_local_ip()}:8080 에서 카메라 확인 가능 (�
 fps_counter = 0
 fps_display = 0.0
 fps_timer   = time.time()
-_last_print_t = 0.0
+_last_print_t  = 0.0
+_last_record_t = 0.0
 frame = None  # 최초 루프 진입 전 초기화
 
 send_start()  # 시작 크기 규정으로 올려둔 팔을 내림 (전진 시작과 함께)
@@ -1098,6 +1128,17 @@ try:
 
         with _stream_lock:
             _stream_frame = annotated_frame.copy()
+
+        if RECORD and time.time() - _last_record_t >= RECORD_INTERVAL_SECS:
+            _last_record_t = time.time()
+            _record_idx += 1
+            try:
+                _record_queue.put_nowait((
+                    os.path.join(_record_dir, f"frame_{_record_idx:06d}.jpg"),
+                    annotated_frame,
+                ))
+            except queue.Full:
+                pass  # 디스크가 못 따라오면 그냥 이번 프레임은 버림 (메인 루프 안 막음)
 
         if not HEADLESS:
             cv2.imshow(WINDOW_NAME, annotated_frame)

@@ -4,6 +4,9 @@ vision/model/best.engine
 # 데이터셋 이미지 (용량 큼)
 vision/DATASET/
 
+# --record로 저장되는 테스트 프레임 (로컬 전용, 용량 큼)
+vision/records/
+
 # Python
 __pycache__/
 *.pyc

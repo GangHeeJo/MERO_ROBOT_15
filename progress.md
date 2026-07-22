@@ -911,7 +911,7 @@ python vision/src/main.py --cls d8 --timer
 | 🔴 높음 | 태극기(flag.pt) 학습 | 태극기 사진 20~30장 촬영 → Roboflow Smart Polygon 라벨링 → Colab 학습 → `vision/model/flag.pt` |
 | 🔴 높음 | 과일큐브 촬영 | 흰색 큐브에 과일 이미지 부착 후 ArduCAM으로 촬영 (실제 과일 X) — apple/banana 교체 + orange/pineapple 신규 |
 | 🔴 높음 | 과일 클래스 라벨링 + 재학습 | **Roboflow Smart Polygon (SAM 기반) 권장** → `train.ipynb` (Colab) → `best.pt` 교체 |
-| 🟡 중간 | TensorRT 변환 | Jetson에서: `python vision/src/trt_export.py` → `best.engine` 생성 (FPS 향상) |
+| 🔴 높음 | TensorRT 변환 | Jetson에서: `python vision/src/trt_export.py` → `best.engine` 생성 (FPS 향상, `select() timeout` 완화 기대) |
 
 ### 테스트
 
@@ -919,6 +919,7 @@ python vision/src/main.py --cls d8 --timer
 |----------|------|-----------|
 | 🔴 높음 | end-to-end 통합 테스트 | 탐지 → 이동 → grip → 팔 올리기 → 바스켓 투하 → SEARCHING 반복 → GO_TO_STORAGE → dump 전체 사이클 |
 | 🟡 중간 | 클래스 오인식 대응 | d8↔d12 flickering 발생 시 N-frame majority voting 구현 검토 |
+| ✅ 완료 | 테스트 중 프레임 기록 | `main.py --record` 추가 — 5fps로 JPEG 샘플링, 백그라운드 스레드에서 저장(부하 최소화), `vision/records/<시각>/`에 저장 |
 
 ---
 
