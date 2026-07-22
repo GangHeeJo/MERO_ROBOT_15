@@ -64,24 +64,22 @@ void armSetup() {
 }
 
 // ── 팔 내리기 (집기 위치) ────────────────────────────────
-// wait_ms 400 — ARM_SPEED 160→80(절반)로 낮추면서 도달시간도 비례해서
-// 늘어날 것으로 추정해 200→400으로 2배 늘림 (실측 아님, 추정치). LIFTING
-// 끝의 armDown() 완료 후 바로 "gripped"를 보내고 Jetson이 그 신호로 UGV를
-// 다시 움직이기 시작하므로, 이 대기가 그리퍼 암 내림↔UGV 재이동 사이 간격이다.
-// 위치 폴링 도착 확인은 ARM_ID 공유 구조상 불가 — 팔이 다 안 내려간 채로
-// "gripped"가 가지 않는지 실물 확인 필수.
+// wait_ms 200 — 사이클 속도 우선으로 단축(2026-07-23, 실측 아닌 요청 반영).
+// LIFTING 끝의 armDown() 완료 후 바로 "gripped"를 보내고 Jetson이 그 신호로
+// UGV를 다시 움직이기 시작하므로, 이 대기가 그리퍼 암 내림↔UGV 재이동 사이
+// 간격이다. 위치 폴링 도착 확인은 ARM_ID 공유 구조상 불가 — 팔이 다 안
+// 내려간 채로 "gripped"가 가지 않는지 실물 확인 필수.
 bool armDown() {
-  return safeSetGoalPosition(ARM_ID, ARM_DOWN_RAW, 400);
+  return safeSetGoalPosition(ARM_ID, ARM_DOWN_RAW, 200);
 }
 
 // ── 팔 올리기 (바스켓 투하 위치) ────────────────────────
-// wait_ms 2800 — ARM_SPEED 160→80(절반)로 낮추면서 armDown()과 동일한
-// 이유로 1400→2800으로 2배 늘림 (실측 아님, 추정치). ARM_ID는 물리 모터
-// 2개가 ID 공유라 위치 폴링으로 실도착 확인은 불가 — 패킷 충돌 위험.
-// 실물에서 팔이 다 안 올라간 상태로 gripperOpen()이 불리지 않는지 반드시
-// 확인 필요.
+// wait_ms 1500 — 사이클 속도 우선으로 단축(2026-07-23, 실측 아닌 요청 반영).
+// ARM_ID는 물리 모터 2개가 ID 공유라 위치 폴링으로 실도착 확인은 불가 —
+// 패킷 충돌 위험. 실물에서 팔이 다 안 올라간 상태로 gripperOpen()이 불리지
+// 않는지 반드시 확인 필요.
 bool armUp() {
-  return safeSetGoalPosition(ARM_ID, ARM_UP_RAW, 2800);
+  return safeSetGoalPosition(ARM_ID, ARM_UP_RAW, 1500);
 }
 
 // ── 바스켓 닫기 ──────────────────────────────────────────

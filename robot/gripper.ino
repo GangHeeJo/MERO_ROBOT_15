@@ -72,7 +72,7 @@ void gripperSetup() {
 
 // ── 그리퍼 열기 ──────────────────────────────────────────
 bool gripperOpen() {
-  bool ok = safeSetGoalPosition(GRIPPER_ID, FINGER_OPEN_RAW, 600);
+  bool ok = safeSetGoalPosition(GRIPPER_ID, FINGER_OPEN_RAW, 300);
   if (ok) {
     Serial.println("[그리퍼] 열림");
   }
@@ -83,7 +83,7 @@ bool gripperOpen() {
 // gripperClose()와 달리 물체를 잡으려는 게 아니라 그냥 손가락을 오므려두는 용도.
 // IDLE 진입/복귀 시 엉뚱한 물체가 벌어진 집게 안으로 들어와 잡히는 걸 막기 위해 사용.
 bool gripperCloseIdle() {
-  bool ok = safeSetGoalPosition(GRIPPER_ID, FINGER_CLOSE_RAW, 600);
+  bool ok = safeSetGoalPosition(GRIPPER_ID, FINGER_CLOSE_RAW, 300);
   if (ok) {
     Serial.println("[그리퍼] 닫힘 (대기 상태)");
   }
