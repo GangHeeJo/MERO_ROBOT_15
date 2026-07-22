@@ -6,6 +6,9 @@ yolo_cam_test.py — 카메라 + YOLO 탐지만 테스트 (로봇/시리얼 전�
 실행: python vision/src/yolo_cam_test.py          # best.engine (TensorRT, 기본값)
       python vision/src/yolo_cam_test.py --pt     # best.pt (PyTorch) — 속도 A/B 비교용
 브라우저에서 http://<젯슨IP>:8083 접속하면 전체 클래스 탐지 박스 확인 가능
+
+최적화: plot()(박스+라벨 그리기)은 브라우저로 실제로 보고 있을 때만 수행.
+아무도 안 보고 있으면 순수 추론 FPS만 측정됨 — 시각화 오버헤드 분리 확인용.
 """
 
 import argparse
@@ -59,15 +62,19 @@ cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1200)
 cap.set(cv2.CAP_PROP_FPS, 50)
 
-_stream_frame = None
-_lock = threading.Lock()
+_stream_frame  = None
+_lock          = threading.Lock()
+_client_count  = 0  # 브라우저가 실제로 보고 있을 때만 plot()/인코딩 수행 (안 볼 때는 오버헤드 0)
 
 
 class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):
+        global _client_count
         self.send_response(200)
         self.send_header('Content-type', 'multipart/x-mixed-replace; boundary=frame')
         self.end_headers()
+        with _lock:
+            _client_count += 1
         try:
             while True:
                 with _lock:
@@ -79,6 +86,9 @@ class _Handler(BaseHTTPRequestHandler):
                 self.wfile.write(b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + jpg.tobytes() + b'\r\n')
         except Exception:
             pass
+        finally:
+            with _lock:
+                _client_count -= 1
 
     def log_message(self, *_):
         pass
@@ -127,9 +137,12 @@ try:
             fps_counter = 0
             fps_timer = time.time()
 
-        annotated = results[0].plot()
         with _lock:
-            _stream_frame = annotated
+            watching = _client_count > 0
+        if watching:
+            annotated = results[0].plot()
+            with _lock:
+                _stream_frame = annotated
 
 except KeyboardInterrupt:
     pass
