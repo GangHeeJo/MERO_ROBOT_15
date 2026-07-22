@@ -231,9 +231,9 @@ AREA_GRIP_THRESHOLD = 30000   # 이 면적 이상이면 정지 후 직진 접근
 AREA_SLOW_THRESHOLD = 20000   # 이 면적 이상이면 감속 시작
 AREA_ROTATE_THRESHOLD = 15000 # 이 이하일 때만 제자리 회전 정렬
 MIN_DETECTED_FOR_EXPLORE = 2      # 탐색 이동 조건: 클래스 무관 총 탐지 개수가 이 이상이어야 시도
-                                   # (이 미만, 즉 0~1개면 회전 탐색 프로세스로 방향을 잡는다)
-MAX_ROTATE_SECS           = 1.0   # 제자리 회전 탐색 최대 지속 시간 — 넘으면 강제로 현재 방향 직진 (실측 필요)
-SEARCH_FORWARD_BURST_SECS = 2.0   # 최대 회전 시간 초과 시 현재 방향으로 직진하는 시간 (실측 필요)
+                                   # (이 미만, 즉 0~1개면 제자리 회전만 계속함 — 전진 안 함,
+                                   #  안 보이는 방향으로 무작정 전진하면 벽에 부딪힐 수 있어서)
+                                   # SEARCH_ROTATE_SPEED 기준 3초≈180도 (실측)
 POST_GRIP_SCAN_SECS       = 4.0   # 집기 완료 직후 제자리 360도 스캔 시간 (SEARCH_ROTATE_SPEED 기준, 실측 필요)
 CENTER_MARGIN_PX    = 42      # 픽셀 모드: 가로 중심에서 이 픽셀 이내 (시각화 가이드용, 면적 2배)
 CENTER_MARGIN_Y_PX  = 35      # 픽셀 모드: 세로 중심에서 이 픽셀 이내 (시각화 가이드용, 면적 2배)
@@ -265,9 +265,10 @@ SHOW_TIMER            = args.timer  # 화면에 카운트다운 표시 여부 (�
 # ── 태극기 네비게이션 파라미터 ──────────────────────────
 FLAG_CONF_THRESHOLD      = 0.5
 FLAG_CENTER_MARGIN_PX    = 100    # 가로 정렬 허용 범위 (px)
-FLAG_AREA_THRESHOLD      = 80000  # 도달 판단 면적 (px²)  ⚠️ 임의값 — 실측 필요
+FLAG_AREA_THRESHOLD      = 150000 # 도달 판단 면적 (px²)  ⚠️ 임의값 — 실측 필요
 FLAG_AREA_SLOW_THRESHOLD = 30000  # 감속 시작 면적 (px²)  ⚠️ 임의값 — 실측 필요
 FLAG_SEARCH_SPEED        = 0.15   # 탐색 회전 속도
+FLAG_ALIGN_SPEED         = 0.15   # 좌우 정렬(제자리 회전) 속도
 FLAG_APPROACH_SPEED      = 0.2    # 후진 접근 속도
 FLAG_APPROACH_SLOW       = 0.1    # 감속 후진 속도
 
@@ -285,6 +286,7 @@ drop_sent_at         = 0.0
 _frame_fail_count    = 0
 storage_phase        = 0   # 0=탐색회전, 1=후진접근
 storage_phase_start  = 0.0
+flag_aligned         = False  # phase 1 진입 후 좌우(cx) 정렬 완료 여부 — 한 번 맞으면 재확인 없이 직진만 함
 storage_enter_time   = 0.0
 confirm_count        = 0
 last_target_id       = -1
@@ -301,9 +303,7 @@ fb_final_forward_cls   = None
 precise_align = False  # True면 area 임계 도달 후 정밀 정렬(전진/후진→회전) 진행 중
 gripper_prepped = False  # True면 이번 접근을 위해 그리퍼를 미리 열어둔 상태 (grip 전송 또는 취소 시 False로 복귀)
 target_miss_count = 0  # precise_align 중 연속으로 타겟을 못 잡은 프레임 수 (TARGET_MISS_GRACE_FRAMES까지는 정지 대기)
-search_rotate_start        = None   # 제자리 회전 탐색이 연속으로 시작된 시각 (None=회전 중 아님)
-search_forward_burst       = False  # True면 회전 최대 시간 초과로 현재 방향 강제 직진 중
-search_forward_burst_start = 0.0
+search_rotate_start        = None   # 제자리 회전 탐색이 연속으로 시작된 시각 (None=회전 중 아님, 로그 표시용)
 
 # IMU
 imu_yaw       = None
@@ -713,6 +713,7 @@ try:
             fb_final_forward     = False
             robot_state          = RobotState.GO_TO_STORAGE
             storage_phase        = 0
+            flag_aligned         = False
             storage_enter_time   = time.time()
             send_cam_backward()   # 경기당 1회 — 이후 다시 정면으로 돌릴 일 없음
             send_arm_up()         # 카메라 회전과 동시에 팔도 규정 크기 위치로 복귀
@@ -875,8 +876,7 @@ try:
                             print(f"[상태] 회전 정렬중... cx={locked['cx']:.0f}", end="\r")
 
             elif target:
-                search_rotate_start  = None
-                search_forward_burst = False
+                search_rotate_start = None
                 if time.time() - _last_print_t >= 0.5:
                     print(f"[타겟] {target['cls']} | area={target['area']}")
                     _last_print_t = time.time()
@@ -901,7 +901,8 @@ try:
                 # 물체가 가장 많이 몰려있는 방향(밀집도 가중 중심)으로 이동하며 탐색한다.
                 # 고립된 물체 하나 쪽으로 잘못 쏠리지 않도록, 각 물체의 조향 기여도를
                 # "주변 CLUSTER_RADIUS_PX 이내 이웃 개수+1"로 가중해서 평균낸다.
-                # 1개 이하면(=밀집도 비교 불가) 회전 탐색 프로세스로 방향을 잡는다.
+                # 1개 이하면(=밀집도 비교 불가) 제자리 회전만 계속한다 — 안 보이는 방향으로
+                # 무작정 전진하면 벽에 부딪힐 수 있어서 전진은 절대 안 함. 뭔가 보일 때까지 회전.
                 explorable = [o for o in detected if o['cls'] != 'flag']
                 can_explore = len(explorable) >= MIN_DETECTED_FOR_EXPLORE
 
@@ -918,30 +919,16 @@ try:
                     dense_area  = sum(o["area"] * w for o, w in zip(explorable, weights)) / weight_sum
 
                     control_wheels({"cx": dense_cx, "area": dense_area})
-                    search_rotate_start  = None
-                    search_forward_burst = False
+                    search_rotate_start = None
                     if time.time() - _last_print_t >= 0.5:
                         print(f"[탐색] 물체 {len(explorable)}개 감지, 밀집 방향(cx={dense_cx:.0f}) 으로 이동")
                         _last_print_t = time.time()
 
-                elif search_forward_burst:
-                    # 회전 최대 시간 초과 — 멈춘 방향으로 잠깐 직진 후 회전 재개
-                    control_wheels(None, override_l=FINAL_APPROACH_SPEED, override_r=FINAL_APPROACH_SPEED)
-                    print(f"[탐색] 회전 시간 초과 → 현재 방향 직진중...", end="\r")
-                    if time.time() - search_forward_burst_start >= SEARCH_FORWARD_BURST_SECS:
-                        search_forward_burst = False
-                        search_rotate_start   = time.time()
-
                 else:
                     if search_rotate_start is None:
                         search_rotate_start = time.time()
-
-                    if time.time() - search_rotate_start >= MAX_ROTATE_SECS:
-                        search_forward_burst       = True
-                        search_forward_burst_start = time.time()
-                        print(f"\n[탐색] 제자리 회전 {MAX_ROTATE_SECS:.0f}초 초과 → 현재 방향으로 직진 전환")
-                    else:
-                        control_wheels(None, override_l=-SEARCH_ROTATE_SPEED, override_r=SEARCH_ROTATE_SPEED)
+                    control_wheels(None, override_l=-SEARCH_ROTATE_SPEED, override_r=SEARCH_ROTATE_SPEED)
+                    print(f"[탐색] 제자리 회전중... ({time.time() - search_rotate_start:.1f}s)", end="\r")
 
                 send_idle()
 
@@ -1011,44 +998,59 @@ try:
 
             else:
                 flag_candidates = [o for o in detected if o['cls'] == 'flag' and o['conf'] >= FLAG_CONF_THRESHOLD]
-                flag_detected = max(flag_candidates, key=lambda o: o['conf']) if flag_candidates else None
 
                 fw2 = FRAME_W or 640
 
                 if storage_phase == 0:
                     # 태극기 탐색 — 제자리 회전
-                    if flag_detected:
+                    if flag_candidates:
                         storage_phase       = 1
                         storage_phase_start = now
-                        print(f"\n[상태] 태극기 발견 → 전진 접근 시작")
+                        flag_aligned        = False
+                        print(f"\n[상태] 태극기 발견 → 방향 정렬 시작")
                     else:
                         control_wheels(None, override_l=FLAG_SEARCH_SPEED, override_r=-FLAG_SEARCH_SPEED)
                         print(f"[상태] 태극기 탐색 회전중... ({total_elapsed:.1f}s)", end="\r")
 
                 elif storage_phase == 1:
-                    # 태극기 전진 접근 (전면 카메라라 정방향으로 다가감)
-                    if not flag_detected:
-                        # 태극기 놓침 → 탐색으로 복귀
+                    # 보이는 모든 태극기의 중심(cx 평균)을 화면 중앙 세로선에 맞추는
+                    # 좌우 정렬만 수행 (상하 정렬 없음 — 거리는 area로만 판단).
+                    # 한 번 정렬되면(flag_aligned) 더 이상 방향 안 고치고 그 상태로 직진만
+                    # 하다가 area 임계 도달 시 정지+dump.
+                    if not flag_candidates:
+                        # 태극기 전부 놓침 → 탐색으로 복귀
                         control_wheels(None)
                         storage_phase       = 0
                         storage_phase_start = now
+                        flag_aligned        = False
                         print(f"\n[상태] 태극기 놓침 → 탐색 복귀")
-                    elif flag_detected["area"] >= FLAG_AREA_THRESHOLD:
-                        # 도달
-                        control_wheels(None)
-                        openrb_dumped = False
-                        send_dump()
-                        drop_sent_at  = time.time()
-                        robot_state   = RobotState.DROPPING
-                        print(f"\n[상태] 태극기 도달 → dump 전송")
                     else:
-                        # 카메라는 뒤(=진행방향)를 보는 중, 로봇은 후진으로 다가감 — 뒤가 앞인 것처럼 취급
-                        turn  = (flag_detected["cx"] - fw2 / 2) / (fw2 / 2)
-                        speed = FLAG_APPROACH_SLOW if flag_detected["area"] > FLAG_AREA_SLOW_THRESHOLD else FLAG_APPROACH_SPEED
-                        L = -(speed + turn * 0.3)
-                        R = -(speed - turn * 0.3)
-                        control_wheels(None, override_l=L, override_r=R)
-                        print(f"[상태] 후진 접근중... area={flag_detected['area']:.0f}", end="\r")
+                        avg_cx   = sum(o["cx"] for o in flag_candidates) / len(flag_candidates)
+                        avg_area = sum(o["area"] for o in flag_candidates) / len(flag_candidates)
+
+                        if avg_area >= FLAG_AREA_THRESHOLD:
+                            # 도달
+                            control_wheels(None)
+                            openrb_dumped = False
+                            send_dump()
+                            drop_sent_at  = time.time()
+                            robot_state   = RobotState.DROPPING
+                            print(f"\n[상태] 태극기 도달 → dump 전송")
+                        elif not flag_aligned:
+                            # 좌우 정렬 — 카메라는 뒤(=진행방향)를 보는 중, 제자리 회전으로 방향만 맞춤
+                            offset = avg_cx - fw2 / 2
+                            if abs(offset) <= FLAG_CENTER_MARGIN_PX:
+                                flag_aligned = True
+                                print(f"\n[상태] 태극기 방향 정렬 완료 (cx={avg_cx:.0f}) → 직진 접근")
+                            else:
+                                turn = max(-1.0, min(1.0, offset / (fw2 / 2)))
+                                control_wheels(None, override_l=-FLAG_ALIGN_SPEED * turn, override_r=FLAG_ALIGN_SPEED * turn)
+                                print(f"[상태] 태극기 방향 정렬중... cx={avg_cx:.0f} (n={len(flag_candidates)})", end="\r")
+                        else:
+                            # 정렬 끝 — 더 이상 방향 안 고치고 그 상태로 직진(후진 접근)만 함
+                            speed = FLAG_APPROACH_SLOW if avg_area > FLAG_AREA_SLOW_THRESHOLD else FLAG_APPROACH_SPEED
+                            control_wheels(None, override_l=-speed, override_r=-speed)
+                            print(f"[상태] 태극기 직진 접근중... area={avg_area:.0f} (n={len(flag_candidates)})", end="\r")
 
         elif robot_state == RobotState.DROPPING:
             control_wheels(None)
