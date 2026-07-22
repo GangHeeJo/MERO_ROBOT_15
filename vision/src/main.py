@@ -11,17 +11,21 @@ MERO_AI_ROBOT 메인 실행 파일
 select_target()이 flag 클래스는 항상 제외하므로 SEARCHING/GRIPPING 중엔 절대
 flag를 집으러 가지 않고, GO_TO_STORAGE에서만 같은 탐지 결과 중 flag를 걸러 씀.
 
-경기 시작(Enter) 후 PICK_PHASE_SECS(150s=2분30초) 동안 SEARCHING/GRIPPING을
-반복하다가, 그 시간이 지나면 어느 하위 단계에 있든 즉시 GO_TO_STORAGE로
-전환됨 (남은 30초 동안 회전하며 flag 탐색 → 발견하면 접근 → dump).
+경기 시작(Enter) 후 PICK_PHASE_SECS(150s=2분30초) 동안 SEARCHING/GRIPPING/
+POST_GRIP_SCAN을 반복하다가, 그 시간이 지나면 셋 중 어느 상태에 있든(grip
+응답 대기 중이든 집기후 스캔 중이든) 매 프레임 즉시 GO_TO_STORAGE로 전환됨
+(남은 30초 동안 회전하며 flag 탐색 → 발견하면 접근 → dump). 이 체크는
+상태머신 분기 진입 전에 한 번만 수행 — GRIPPING/POST_GRIP_SCAN에서도
+안 걸리면 최악의 경우(grip 타임아웃 15초+스캔 4초) 30초 중 19초를
+까먹을 수 있어서 반드시 세 상태 모두에서 체크해야 함.
 
 상태 머신:
   SEARCHING      — flag 제외 물체 탐지, 보이면 거리 상관없이 바로 정밀 정렬
                    (전진/후진→회전) 진입 → 정렬 끝나면 직진 접근 후 grip 전송
-                   → PICK_PHASE_SECS 경과 시 GO_TO_STORAGE로 강제 전환
   GRIPPING       — grip 전송 후 gripped 신호 대기 (집기+팔올림+투하+팔내림 완료)
-                   → gripped 수신 시 SEARCHING 복귀 (반복 수집)
-  GO_TO_STORAGE  — 제자리 회전하며 flag 탐색 → 발견 시 전진 접근 → dump 전송
+                   → gripped 수신 시 POST_GRIP_SCAN
+  POST_GRIP_SCAN — 집기 직후 제자리 스캔, 타겟 있으면/시간 다 차면 SEARCHING
+  GO_TO_STORAGE  — 제자리 회전하며 flag 탐색 → 발견 시 후진 접근 → dump 전송
   DROPPING       — dump 전송 후 dumped 신호 대기 (컨테이너 열어 쏟기 완료)
 
 시리얼:
@@ -643,26 +647,30 @@ try:
                 ser_esp32.write((json.dumps({"T": 126}) + "\n").encode())
             _last_imu_req = _now_loop
 
+        # ── 픽업 시간(2분30초) 마감 체크 — SEARCHING/GRIPPING/POST_GRIP_SCAN 중
+        # 어느 상태에 있든(grip 응답 대기 중이든 집기후 스캔 중이든) 즉시 중단하고
+        # 보관함 이동으로 전환. GRIPPING/POST_GRIP_SCAN에서도 걸리게 해야 최악의 경우
+        # (grip 타임아웃 15초 + 스캔 4초)에도 남은 30초를 거의 다 까먹지 않는다.
+        if (robot_state in (RobotState.SEARCHING, RobotState.GRIPPING, RobotState.POST_GRIP_SCAN)
+                and time.time() - match_start_time >= PICK_PHASE_SECS):
+            control_wheels(None)
+            if gripper_prepped:
+                send_gripper_close()
+                gripper_prepped = False
+            precise_align        = False
+            fb_phase             = 0
+            align_phase          = 0
+            align_final_forward  = False
+            fb_final_forward     = False
+            robot_state          = RobotState.GO_TO_STORAGE
+            storage_phase        = 0
+            storage_enter_time   = time.time()
+            send_cam_backward()   # 경기당 1회 — 이후 다시 정면으로 돌릴 일 없음
+            print(f"\n[상태] 픽업 시간 종료({PICK_PHASE_SECS:.0f}s) → GO_TO_STORAGE 전환")
+
         # ── 상태 머신 ──────────────────────────────────
         if robot_state == RobotState.SEARCHING:
-            if time.time() - match_start_time >= PICK_PHASE_SECS:
-                # 픽업 시간(2분30초) 종료 — 어느 하위 단계에 있든 즉시 중단하고 보관함 이동으로 전환
-                control_wheels(None)
-                if gripper_prepped:
-                    send_gripper_close()
-                    gripper_prepped = False
-                precise_align        = False
-                fb_phase             = 0
-                align_phase          = 0
-                align_final_forward  = False
-                fb_final_forward     = False
-                robot_state          = RobotState.GO_TO_STORAGE
-                storage_phase        = 0
-                storage_enter_time   = time.time()
-                send_cam_backward()   # 경기당 1회 — 이후 다시 정면으로 돌릴 일 없음
-                print(f"\n[상태] 픽업 시간 종료({PICK_PHASE_SECS:.0f}s) → GO_TO_STORAGE 전환")
-
-            elif align_final_forward:
+            if align_final_forward:
                 # cy 정렬 완료 후 1초 직진 → grip 전송 → GRIPPING (완료되면 다시 SEARCHING으로 반복)
                 control_wheels(None, override_l=FINAL_APPROACH_SPEED - FORWARD_TRIM / 2, override_r=FINAL_APPROACH_SPEED + FORWARD_TRIM / 2)
                 elapsed_af = time.time() - align_final_forward_start
