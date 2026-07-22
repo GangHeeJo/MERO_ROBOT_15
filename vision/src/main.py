@@ -11,13 +11,17 @@ MERO_AI_ROBOT 메인 실행 파일
 select_target()이 flag 클래스는 항상 제외하므로 SEARCHING/GRIPPING 중엔 절대
 flag를 집으러 가지 않고, GO_TO_STORAGE에서만 같은 탐지 결과 중 flag를 걸러 씀.
 
+경기 시작(Enter) 후 PICK_PHASE_SECS(150s=2분30초) 동안 SEARCHING/GRIPPING을
+반복하다가, 그 시간이 지나면 어느 하위 단계에 있든 즉시 GO_TO_STORAGE로
+전환됨 (남은 30초 동안 회전하며 flag 탐색 → 발견하면 접근 → dump).
+
 상태 머신:
   SEARCHING      — flag 제외 물체 탐지, 보이면 거리 상관없이 바로 정밀 정렬
                    (전진/후진→회전) 진입 → 정렬 끝나면 직진 접근 후 grip 전송
+                   → PICK_PHASE_SECS 경과 시 GO_TO_STORAGE로 강제 전환
   GRIPPING       — grip 전송 후 gripped 신호 대기 (집기+팔올림+투하+팔내림 완료)
                    → gripped 수신 시 SEARCHING 복귀 (반복 수집)
-                   → 모든 타겟 수집 완료 시 GO_TO_STORAGE
-  GO_TO_STORAGE  — flag 탐지해서 전진 접근 → dump 전송
+  GO_TO_STORAGE  — 제자리 회전하며 flag 탐색 → 발견 시 전진 접근 → dump 전송
   DROPPING       — dump 전송 후 dumped 신호 대기 (컨테이너 열어 쏟기 완료)
 
 시리얼:
@@ -229,9 +233,10 @@ GRIP_TIMEOUT_SECS    = 15.0   # grip 전송 후 gripped 신호 최대 대기
 DROP_TIMEOUT_SECS    = 15.0   # drop 전송 후 done 신호 최대 대기
 STORAGE_TIMEOUT_SECS = 60.0   # GO_TO_STORAGE 전체 최대 시간 (태극기 탐색 포함)
 
-# 경기 타이머
+# 경기 타이머 / 픽업↔보관 전환
 MATCH_DURATION_SECS = 180.0
-match_start_time    = time.time() if args.timer else None
+PICK_PHASE_SECS      = 150.0  # 이 시간(2분30초) 지나면 SEARCHING/GRIPPING 중이든 상관없이 GO_TO_STORAGE로 전환
+SHOW_TIMER            = args.timer  # 화면에 카운트다운 표시 여부 (전환 로직 자체는 --timer 없어도 항상 동작)
 
 # ── 태극기 네비게이션 파라미터 ──────────────────────────
 FLAG_CONF_THRESHOLD      = 0.5
@@ -554,6 +559,7 @@ _last_print_t = 0.0
 frame = None  # 최초 루프 진입 전 초기화
 
 send_start()  # 시작 크기 규정으로 올려둔 팔을 내림 (전진 시작과 함께)
+match_start_time = time.time()  # PICK_PHASE_SECS 경과 판단 + (--timer면) 화면 표시 기준
 
 # ── 메인 루프 ────────────────────────────────────────────
 try:
@@ -619,7 +625,23 @@ try:
 
         # ── 상태 머신 ──────────────────────────────────
         if robot_state == RobotState.SEARCHING:
-            if align_final_forward:
+            if time.time() - match_start_time >= PICK_PHASE_SECS:
+                # 픽업 시간(2분30초) 종료 — 어느 하위 단계에 있든 즉시 중단하고 보관함 이동으로 전환
+                control_wheels(None)
+                if gripper_prepped:
+                    send_gripper_close()
+                    gripper_prepped = False
+                precise_align        = False
+                fb_phase             = 0
+                align_phase          = 0
+                align_final_forward  = False
+                fb_final_forward     = False
+                robot_state          = RobotState.GO_TO_STORAGE
+                storage_phase        = 0
+                storage_enter_time   = time.time()
+                print(f"\n[상태] 픽업 시간 종료({PICK_PHASE_SECS:.0f}s) → GO_TO_STORAGE 전환")
+
+            elif align_final_forward:
                 # cy 정렬 완료 후 1초 직진 → grip 전송 → GRIPPING (완료되면 다시 SEARCHING으로 반복)
                 control_wheels(None, override_l=FINAL_APPROACH_SPEED - FORWARD_TRIM / 2, override_r=FINAL_APPROACH_SPEED + FORWARD_TRIM / 2)
                 elapsed_af = time.time() - align_final_forward_start
@@ -973,7 +995,7 @@ try:
                         (w - 150, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, bc, 2)
 
         # 경기 타이머
-        if match_start_time is not None:
+        if SHOW_TIMER:
             remaining = max(0.0, MATCH_DURATION_SECS - (time.time() - match_start_time))
             mins = int(remaining // 60)
             secs = int(remaining % 60)
