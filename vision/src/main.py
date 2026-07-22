@@ -488,6 +488,10 @@ def control_wheels(target: dict | None, override_l: float | None = None, overrid
 
     _write_esp32({"T": 1, "L": round(L, 2), "R": round(R, 2)})
 
+    elapsed_str = f"{now - match_start_time:.2f}" if 'match_start_time' in globals() else ""
+    bat_str     = f"{battery_v:.2f}" if battery_v is not None else ""
+    _wheel_log_f.write(f"{now:.3f},{elapsed_str},{robot_state.value},{L:.2f},{R:.2f},{bat_str}\n")
+
 
 def _is_at_target(target: dict) -> bool:
     """도달(=정밀 정렬 진입) 여부 판단. mm 모드 → 거리, 픽셀 모드 → area 임계 도달.
@@ -645,6 +649,18 @@ if RECORD:
     _record_queue = queue.Queue(maxsize=30)
     threading.Thread(target=_record_worker, args=(_record_queue,), daemon=True).start()
     print(f"[녹화] 활성화 — {_record_dir} (5fps 샘플링, 부하 최소화)")
+
+# ── 바퀴 명령/전압 로그 (배터리 전압 급강하 원인 진단용, 항상 켜짐) ──
+# control_wheels()가 실제로 ESP32에 보내는 L/R과 그 순간의 battery_v를
+# 매 호출마다 CSV로 남긴다. 언제/어떤 명령 직후에 전압이 뚝 떨어지는지
+# 나중에 타임스탬프로 맞춰볼 수 있게 하기 위함 — line-buffered라 중간에
+# 죽어도 그 직전까지는 파일에 남아있음.
+_wheel_log_dir  = os.path.join(BASE_DIR, "logs")
+os.makedirs(_wheel_log_dir, exist_ok=True)
+_wheel_log_path = os.path.join(_wheel_log_dir, time.strftime("%Y%m%d_%H%M%S") + "_wheel.csv")
+_wheel_log_f    = open(_wheel_log_path, "w", buffering=1, encoding="utf-8")
+_wheel_log_f.write("timestamp,elapsed,state,L,R,battery_v\n")
+print(f"[로그] 바퀴/전압 기록 → {_wheel_log_path}")
 
 def _local_ip():
     """현재 연결된 네트워크 기준 실제 IP 확인 (핫스팟이 바뀌어도 자동으로 맞는 IP 표시)."""

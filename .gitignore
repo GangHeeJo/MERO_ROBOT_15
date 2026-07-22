@@ -7,6 +7,9 @@ vision/DATASET/
 # --record로 저장되는 테스트 프레임 (로컬 전용, 용량 큼)
 vision/records/
 
+# 바퀴 명령/전압 CSV 로그 (로컬 전용)
+vision/logs/
+
 # Python
 __pycache__/
 *.pyc
