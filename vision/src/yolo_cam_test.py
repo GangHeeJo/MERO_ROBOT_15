@@ -118,15 +118,26 @@ print(f"[스트림] http://{_local_ip()}:8083 에서 확인 (Ctrl+C로 종료)")
 fps_counter   = 0
 fps_timer     = time.time()
 _last_print_t = 0.0
+_read_sum   = 0.0
+_resize_sum = 0.0
+_model_sum  = 0.0
 try:
     while True:
+        _t0 = time.time()
         ret, frame = cap.read()
+        _t1 = time.time()
         if not ret:
             continue
 
         infer_frame = cv2.resize(frame, (640, 640)) if args.resize else frame
+        _t2 = time.time()
         results = model(infer_frame, conf=0.25, verbose=False, device="cuda")
+        _t3 = time.time()
         boxes = results[0].boxes
+
+        _read_sum   += _t1 - _t0
+        _resize_sum += _t2 - _t1
+        _model_sum  += _t3 - _t2
 
         if boxes is not None and len(boxes) > 0 and time.time() - _last_print_t >= 0.5:
             names = [model.names[int(c)] for c in boxes.cls.tolist()]
@@ -136,9 +147,12 @@ try:
         fps_counter += 1
         elapsed = time.time() - fps_timer
         if elapsed >= 1.0:
-            print(f"[FPS] {fps_counter / elapsed:.1f}")
+            print(f"[FPS] {fps_counter / elapsed:.1f}  "
+                  f"(read={_read_sum*1000/fps_counter:.1f}ms resize={_resize_sum*1000/fps_counter:.1f}ms "
+                  f"model={_model_sum*1000/fps_counter:.1f}ms)")
             fps_counter = 0
-            fps_timer = time.time()
+            fps_timer   = time.time()
+            _read_sum = _resize_sum = _model_sum = 0.0
 
         with _lock:
             watching = _client_count > 0
