@@ -145,7 +145,7 @@ Jetson main.py
 
 > 2026-07-23: `DROPPING` 상태는 완전히 삭제됨 — 모빌리티 자체가 스토리지 안까지 들어가는 것으로 경기 종료 취급(`dump` 명령 없음). 또한 정밀 정렬(SEARCHING)과 태극기 접근(GO_TO_STORAGE)이 둘 다 "전후진 먼저 맞추고 회전은 나중" 순차 방식에서, **cx/cy 오프셋 크기에 비례한 회전+전후진 보정을 매 프레임 동시에 섞어서 조향**하는 방식으로 바뀜(`fb_phase`/`flag_aligned` 같은 순차 단계 변수는 제거됨) — 오프셋이 클수록 회전 속도도 비례해서 빨라짐.
 >
-> 경기 시작(Enter) 시점에 `match_start_time`을 기록하고, 매 프레임 상태머신 분기 진입 전에 `SEARCHING`/`GRIPPING`/`POST_GRIP_SCAN` 셋 중 어느 상태에 있든 `PICK_PHASE_SECS`(150초=2분30초) 지나면 즉시 중단하고 `GO_TO_STORAGE`로 강제 전환됨 — SEARCHING에서만 체크하면 grip 타임아웃(15초)+스캔(4초)으로 남은 30초를 거의 다 까먹을 수 있어서 세 상태 모두 체크.
+> 경기 시작(Enter) 시점에 `match_start_time`을 기록하고, 매 프레임 상태머신 분기 진입 전에 `SEARCHING`/`GRIPPING`/`POST_GRIP_SCAN` 셋 중 어느 상태에 있든 남은 경기 시간이 `STORAGE_ENTRY_REMAINING_SECS`(기본 30초) 이하가 되면 즉시 중단하고 `GO_TO_STORAGE`로 강제 전환됨 — SEARCHING에서만 체크하면 grip 타임아웃(15초)+스캔(4초)으로 남은 30초를 거의 다 까먹을 수 있어서 세 상태 모두 체크. (2026-07-23: 이전엔 `PICK_PHASE_SECS`라는 경과 시간 상수로만 표현돼 있었는데, `MATCH_DURATION_SECS`가 바뀌어도 "남은 30초"라는 의도가 자동으로 유지되도록 남은 시간 기준 상수로 바꿈 — `PICK_PHASE_SECS`는 이 값에서 자동 계산되는 파생값으로만 남음)
 >
 > 2026-07-23: 정밀 정렬 완료 후 바로 접근하지 않고 제자리 정지 상태로 ALIGN_CONFIRM_SECS(0.5초)간
 > 정렬 유지 + 타겟 클래스 일치를 재확인하는 `align_confirm` 단계가 추가됨(아래 SEARCHING 흐름 참고).
@@ -155,7 +155,7 @@ Jetson main.py
 
 **Python (main.py) — 현재 실제 동작:**
 ```
-(SEARCHING/GRIPPING/POST_GRIP_SCAN 공통) PICK_PHASE_SECS(150초) 경과 시 즉시 중단
+(SEARCHING/GRIPPING/POST_GRIP_SCAN 공통) 남은 경기 시간이 STORAGE_ENTRY_REMAINING_SECS(30초) 이하가 되면 즉시 중단
     → gripper_close(열려있었다면) → cam_backward 전송 → GO_TO_STORAGE
 
 SEARCHING → 타겟 발견 시 정밀 정렬(전후진+회전 동시 보정, cx/cy 오프셋에 비례한 속도) 진행 (그리퍼는 닫힌 채 유지)

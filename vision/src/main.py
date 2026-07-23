@@ -14,12 +14,12 @@ flag를 집으러 가지 않고, GO_TO_STORAGE에서만 같은 탐지 결과 중
 경기 시작 시 "남은 경기 시간"을 MM:SS로 입력받음(처음 시작이면 그냥 Enter = 3:00) —
 match_start_time을 그만큼 과거로 당겨서 실제 경기 시계와 동기화. 카메라 hang 등으로
 경기 도중 main.py를 재시작해야 할 때, 그 시점의 실제 남은 시간을 입력하면 됨
-(안 하면 PICK_PHASE_SECS 카운트다운이 재시작 시점부터 새로 시작돼서 실제 경기 종료
-전에 GO_TO_STORAGE 전환을 영영 못 하는 문제가 있었음). 이 입력 직후 PICK_PHASE_SECS
-(150s=2분30초) 동안 SEARCHING/GRIPPING/
-POST_GRIP_SCAN을 반복하다가, 그 시간이 지나면 셋 중 어느 상태에 있든(grip
-응답 대기 중이든 집기후 스캔 중이든) 매 프레임 즉시 GO_TO_STORAGE로 전환됨
-(남은 30초 동안 회전하며 flag 탐색 → 발견하면 정렬 후 멈추지 않고 스토리지 안까지 직진 진입).
+(안 하면 카운트다운이 재시작 시점부터 새로 시작돼서 실제 경기 종료 전에 GO_TO_STORAGE
+전환을 영영 못 하는 문제가 있었음). 남은 경기 시간이 STORAGE_ENTRY_REMAINING_SECS
+(기본 30초) 이하가 되면 SEARCHING/GRIPPING/POST_GRIP_SCAN을 반복하던 중이었더라도
+셋 중 어느 상태에 있든(grip 응답 대기 중이든 집기후 스캔 중이든) 매 프레임 즉시
+GO_TO_STORAGE로 전환됨(남은 30초 동안 회전하며 flag 탐색 → 발견하면 정렬 후 멈추지
+않고 스토리지 안까지 직진 진입).
 전환 시점에
 cam_backward(카메라 후방)와 arm_up(팔 규정 크기 위치 복귀)을 동시에 전송함. 이 체크는
 상태머신 분기 진입 전에 한 번만 수행 — GRIPPING/POST_GRIP_SCAN에서도
@@ -290,7 +290,11 @@ STORAGE_TIMEOUT_SECS = 60.0   # GO_TO_STORAGE 전체 최대 시간 (태극기 �
 
 # 경기 타이머 / 픽업↔보관 전환
 MATCH_DURATION_SECS = 180.0
-PICK_PHASE_SECS      = 150.0  # 이 시간(2분30초) 지나면 SEARCHING/GRIPPING 중이든 상관없이 GO_TO_STORAGE로 전환
+STORAGE_ENTRY_REMAINING_SECS = 30.0  # 남은 경기 시간이 이만큼 되면(기본 30초) SEARCHING/GRIPPING 중이든
+                                      # 상관없이 GO_TO_STORAGE로 전환 — MATCH_DURATION_SECS이 바뀌어도
+                                      # "남은 30초"라는 의미가 자동으로 유지되도록 경과 시간이 아니라
+                                      # 남은 시간 기준으로 정의
+PICK_PHASE_SECS = MATCH_DURATION_SECS - STORAGE_ENTRY_REMAINING_SECS  # 위 값에서 자동 계산된 경과 시간 기준값(로그 표시용)
 SHOW_TIMER            = args.timer  # 화면에 카운트다운 표시 여부 (전환 로직 자체는 --timer 없어도 항상 동작)
 
 # ── 태극기 네비게이션 파라미터 ──────────────────────────
@@ -1009,12 +1013,14 @@ try:
             _write_esp32({"T": 126})
             _last_imu_req = _now_loop
 
-        # ── 픽업 시간(2분30초) 마감 체크 — SEARCHING/GRIPPING/POST_GRIP_SCAN 중
-        # 어느 상태에 있든(grip 응답 대기 중이든 집기후 스캔 중이든) 즉시 중단하고
-        # 보관함 이동으로 전환. GRIPPING/POST_GRIP_SCAN에서도 걸리게 해야 최악의 경우
-        # (grip 타임아웃 15초 + 스캔 4초)에도 남은 30초를 거의 다 까먹지 않는다.
+        # ── 픽업 시간 마감 체크 — 남은 경기 시간이 STORAGE_ENTRY_REMAINING_SECS(기본 30초)
+        # 이하로 떨어지면 SEARCHING/GRIPPING/POST_GRIP_SCAN 중 어느 상태에 있든(grip 응답
+        # 대기 중이든 집기후 스캔 중이든) 즉시 중단하고 보관함 이동으로 전환한다.
+        # GRIPPING/POST_GRIP_SCAN에서도 걸리게 해야 최악의 경우(grip 타임아웃 15초 +
+        # 스캔 4초)에도 남은 30초를 거의 다 까먹지 않는다.
+        _remaining_match_secs = MATCH_DURATION_SECS - (time.time() - match_start_time)
         if (robot_state in (RobotState.SEARCHING, RobotState.GRIPPING, RobotState.POST_GRIP_SCAN)
-                and time.time() - match_start_time >= PICK_PHASE_SECS):
+                and _remaining_match_secs <= STORAGE_ENTRY_REMAINING_SECS):
             control_wheels(None)
             if gripper_prepped:
                 send_gripper_close()
@@ -1031,7 +1037,7 @@ try:
             storage_enter_time   = time.time()
             send_cam_backward()   # 경기당 1회 — 이후 다시 정면으로 돌릴 일 없음
             send_arm_up()         # 카메라 회전과 동시에 팔도 규정 크기 위치로 복귀
-            print(f"\n[상태] 픽업 시간 종료({PICK_PHASE_SECS:.0f}s) → GO_TO_STORAGE 전환")
+            print(f"\n[상태] 픽업 시간 종료(남은 {_remaining_match_secs:.0f}s) → GO_TO_STORAGE 전환")
 
         # ── 상태 머신 ──────────────────────────────────
         if robot_state == RobotState.SEARCHING:
