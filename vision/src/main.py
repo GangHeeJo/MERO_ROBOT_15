@@ -1498,6 +1498,10 @@ try:
                 cv2.putText(annotated_frame, f"BAT: {battery_v:.2f}V",
                             (w - 150, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, bc, 2)
 
+            # 적외선 물체 통과 카운트 (관측용)
+            cv2.putText(annotated_frame, f"IR: {ir_object_count}",
+                        (w - 150, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
             # 경기 타이머
             if SHOW_TIMER:
                 remaining = max(0.0, MATCH_DURATION_SECS - (time.time() - match_start_time))
