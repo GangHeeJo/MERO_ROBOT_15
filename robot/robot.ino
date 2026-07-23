@@ -356,7 +356,6 @@ void setup() {
   gripperSetup();
   armSetup();
   camSetup();
-  irSetup();
   JETSON_SERIAL.println("[OpenRB] 준비 완료. grip/dump 명령 대기 중...");
 }
 
@@ -366,9 +365,6 @@ void loop() {
     sendSafetyAbortStatus("background_poll");
     return;
   }
-
-  // 그리퍼/팔 상태 머신과 완전히 독립적으로 매 프레임 감시 (ir_counter.ino)
-  irPoll();
 
   if (JETSON_SERIAL.available()) {
     String line = JETSON_SERIAL.readStringUntil('\n');

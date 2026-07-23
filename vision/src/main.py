@@ -49,9 +49,6 @@ OpenRB 응답:
   {"status":"grip_failed"}    — 집기 실패 → SEARCHING 복귀
   {"status":"gripper_opened"} — 접근 전 그리퍼 미리 열기 완료
   {"status":"gripper_closed"} — 접근 취소 후 그리퍼 대기 상태로 닫힘 완료
-  {"status":"ir_count","count":N} — KY-032 적외선 센서로 물체 통과 감지 시마다 push (ir_counter.ino).
-                                     현재는 관측/로그용으로만 씀 — 상태 전환에 반영 안 함
-                                     (main 브랜치에서 오탐 문제로 IR_COUNT_TRIGGERS_STORAGE=False였음).
 
 그리퍼 안전 정책:
   IDLE 기본값은 "닫힘" (엉뚱한 물체가 벌어진 집게로 들어와 잡히는 것 방지).
@@ -382,12 +379,11 @@ threading.Thread(target=_read_esp32_loop, daemon=True).start()
 # ── OpenRB 수신 스레드 (팔 완료 신호) ───────────────────
 openrb_gripped     = False
 openrb_grip_failed = False
-ir_object_count     = 0  # KY-032 적외선 센서로 센 물체 통과 개수 — ir_counter.ino가 push로 갱신 (현재 관측용)
 grip_success_count  = 0  # "gripped" 수신 횟수 = 실제로 집어서 팔 올렸다 내린 횟수 (robot.ino가 이제 실패 시엔
                           # LIFTING 자체를 안 타므로, gripped는 항상 진짜 성공한 픽만 카운트함)
 
 def _read_openrb_loop():
-    global openrb_gripped, openrb_grip_failed, ir_object_count, grip_success_count
+    global openrb_gripped, openrb_grip_failed, grip_success_count
     while True:
         if ser_openrb is None or not ser_openrb.is_open:
             time.sleep(0.5); continue
@@ -411,9 +407,6 @@ def _read_openrb_loop():
                     print("\n[OpenRB] 그리퍼 미리 열기 완료")
                 elif data.get("status") == "gripper_closed":
                     print("\n[OpenRB] 그리퍼 대기 상태로 닫힘")
-                elif data.get("status") == "ir_count":
-                    ir_object_count = data.get("count", ir_object_count)
-                    print(f"\n[IR] 물체 통과 감지 — 누적 {ir_object_count}개")
         except Exception:
             pass
         time.sleep(0.01)
@@ -1553,13 +1546,9 @@ try:
                 cv2.putText(annotated_frame, f"BAT: {battery_v:.2f}V",
                             (w - 150, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, bc, 2)
 
-            # 적외선 물체 통과 카운트 (관측용)
-            cv2.putText(annotated_frame, f"IR: {ir_object_count}",
-                        (w - 150, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-
             # 실제 집기 성공 횟수
             cv2.putText(annotated_frame, f"PICKED: {grip_success_count}",
-                        (w - 150, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                        (w - 150, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
             # 경기 타이머
             if SHOW_TIMER:
