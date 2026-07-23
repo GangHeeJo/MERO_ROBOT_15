@@ -58,11 +58,13 @@ MERO_AI_ROBOT/
 │   ├── gripper.ino                # ID1 XL430 그리퍼 (랙-피니언)
 │   ├── arm.ino                    # ID2 팔 + ID3 컨테이너 (각각 물리모터 2개, 같은 ID 공유)
 │   ├── camera.ino                 # ID4 카메라 회전 서보 — cam_backward/cam_forward
+│   ├── ir_counter.ino             # KY-032 적외선 센서로 물체 통과 개수 카운트 (그리퍼/팔과 독립, ir_count push)
 │   ├── safety.ino                 # Dynamixel overload/hardware error 감시 + 자동 복구
 │   ├── test_sequence/             # 카메라·바퀴 없이 그리퍼→팔→컨테이너 1회 자동 테스트 (독립 스케치)
 │   ├── test_arm_updown/           # 팔(ID2) 단독 상하 이동 테스트 — 고정 delay 대신 실제 도달 위치 폴링
 │   ├── test_container/            # 컨테이너(ID3) 단독 개폐 테스트
-│   └── test_camera_servo/         # 카메라 회전 서보(ID4) 단독 180도 왕복 테스트
+│   ├── test_camera_servo/         # 카메라 회전 서보(ID4) 단독 180도 왕복 테스트
+│   └── test_ir_counter/           # KY-032 단독 테스트 — ir_counter.ino와 동일 로직, 통합 전 검증용
 ├── ros2/                          # ROS2 패키지 (레퍼런스 보관용, 미사용)
 ├── rulebook.md                    # 대회 공식 룰북
 ├── progress.md                    # 전체 팀 인수인계 문서
@@ -135,9 +137,11 @@ Jetson main.py
   └─← /dev/ttyACM1 ← OpenRB-150          {"status":"gripped"/"grip_failed"/"dumped"/
                                            "gripper_opened"/"gripper_closed"/"started"/"arm_up_done"/"arm_to_done"/
                                            "cam_backward_done"/"cam_forward_done"/
-                                           "basket_opened"/"basket_closed"/
+                                           "basket_opened"/"basket_closed"/"ir_count"/
                                            "motor_fault"/"motor_recovered"/"motion_aborted"/"fault_reset"}
 ```
+
+`ir_count`(2026-07-23 추가)는 특정 `cmd`에 대한 응답이 아니라 KY-032 적외선 센서(`ir_counter.ino`, D2 핀)가 물체 통과를 감지할 때마다 알아서 보내는 push 메시지 — `{"status":"ir_count","count":N}` 형태. 그리퍼/팔 상태 머신과 완전히 독립적으로 매 loop마다 폴링되고, Python(`main.py`)은 이 값을 받아서 화면에 `IR COUNT: N`으로 표시만 할 뿐 로봇 동작에는 아무 영향을 안 준다. `ir_counter.ino`의 `IR_SENSOR_PIN`(2)/`IR_ACTIVE_LOW`(true)/`IR_DEBOUNCE_MS`(50)/`IR_RECOUNT_COOLDOWN_MS`(2000, ⚠️ 실측 필요 — 물체가 지나가는 실제 속도에 맞춰 조정)는 `robot/test_ir_counter/`로 먼저 단독 검증한 값.
 
 `gripper_open`/`gripper_close`는 안전정책이 아니라 집기 메커니즘 자체에 필요 — IDLE 기본값이 "닫힘"이라 미리 열어두지 않으면 집을 공간이 없음. 정밀 정렬(전후진+회전 동시 보정) 중엔 그리퍼를 닫은 채로 두고, cx/cy 둘 다 정렬까지 끝나 최종 직진 접근 직전에만 `gripper_open` 전송(엉뚱한 물체가 정렬 중 벌어진 집게에 끼는 것 방지) — 그래서 정렬 단계에서 타겟을 놓쳐도 그리퍼는 애초에 안 열려있어 `gripper_close`를 보낼 필요가 없음. `start`는 경기 시작 시 규정 크기용으로 올려둔 팔을 내리는 명령(전원 켜지면 팔은 기본적으로 올림 상태로 대기) — 동시에 카메라도 `cam_forward`로 정면 리셋(이전 테스트/경기에서 후방을 보고 있던 상태가 남아있을 수 있어서). 카메라 리셋 실패는 팔 내리기를 막지 않고 로그만 남김. `arm_up`은 디버깅용 — 팔을 수동으로 시작 위치(올림)로 복귀. `arm_to`는 디버깅/실측용 — `{"raw":N}`으로 팔(ID2)을 임의의 raw 위치(0~4095)로 이동, 각도를 재업로드 없이 여러 번 시험할 때 사용 (`vision/src/arm_angle_test.py`로 단독 테스트 가능). `cam_backward`/`cam_forward`는 ID4 카메라 서보 제어 — `GO_TO_STORAGE` 진입 시(경기당 1회) `cam_backward`를 보내 카메라가 후방(보관함 방향)을 보게 함. `basket_open`/`basket_close`는 임시 디버깅용 — `dump`와 달리 자동으로 안 닫히고 열린 채로 유지되어 바스켓 안을 직접 확인하거나 수동으로 비울 때 사용 (`vision/src/basket_test.py`로 단독 테스트 가능).
 
@@ -171,7 +175,12 @@ SEARCHING → 타겟 발견 시 정밀 정렬(전후진+회전 동시 보정, cx
 GRIPPING → (gripped/grip_failed/timeout 무엇이든) → POST_GRIP_SCAN
 POST_GRIP_SCAN → 먼저 POST_GRIP_BACKUP_SECS(1초) 후진 → 이후 제자리 회전(POST_GRIP_SCAN_SECS=4초)하며 주변 재탐색
               → (후진 중이든 회전 중이든) 타겟 발견하거나 전체 시간 다 차면 → SEARCHING (이후 정밀 정렬/탐색은 기존 로직 그대로)
-GO_TO_STORAGE → phase 0: 제자리 회전하며 flag 탐색 (같은 카메라/프레임에서 cls=='flag'만 필터, 별도 추론 없음)
+GO_TO_STORAGE → phase 0: 기본은 제자리 회전하며 flag 탐색 (같은 카메라/프레임에서 cls=='flag'만 필터,
+                별도 추론 없음) — flag 아닌 물체가 STORAGE_EXPLORE_MIN_DETECTED(4개) 이상 보이면
+                SEARCHING과 동일한 밀집도 가중 조향으로 그쪽을 향해 이동(STORAGE_EXPLORE_SPEED).
+                ⚠️ 이때도 카메라가 이미 후방을 보는 상태라 phase 1과 마찬가지로 물리적으로는
+                "후진"이어야 하는데, SEARCHING 코드를 그대로 가져오면서 속도 부호를 안 뒤집어
+                실제로는 전진하던 버그가 있었음(2026-07-23 수정, phase 1과 동일한 이유)
               → phase 1: flag 보이면 좌우 보정(회전)+접근(직진)을 동시에 섞어서 조향
                 (카메라가 후방을 보는 상태라 "뒤가 앞"처럼 취급하지만, 조향 부호 자체는 정면
                 카메라일 때와 동일 — 로봇 전체가 회전하는 거라 카메라가 어느 쪽을 보든 안 바뀜.

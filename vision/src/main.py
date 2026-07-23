@@ -54,6 +54,8 @@ OpenRB 응답:
   {"status":"grip_failed"}    — 집기 실패 → SEARCHING 복귀
   {"status":"gripper_opened"} — 접근 전 그리퍼 미리 열기 완료
   {"status":"gripper_closed"} — 접근 취소 후 그리퍼 대기 상태로 닫힘 완료
+  {"status":"ir_count","count":N} — KY-032 적외선 센서로 물체 통과 감지 시마다 push
+                                     (로봇 상태머신과 무관, 화면에 IR COUNT로 표시만 함)
 
 그리퍼 안전 정책:
   IDLE 기본값은 "닫힘" (엉뚱한 물체가 벌어진 집게로 들어와 잡히는 것 방지).
@@ -312,7 +314,7 @@ FLAG_APPROACH_SLOW       = 0.1    # 감속 후진 속도
 # 필드 배치상 물체 격자 중앙 쪽이 구석보다 보관함 방향 시야가 덜 가려서, 회전만 하는
 # 것보다 태극기 발견 확률이 올라감. SEARCHING(MIN_DETECTED_FOR_EXPLORE=3)보다 임계값을
 # 높게 잡아서(확실히 많이 보일 때만) 신중하게 이동.
-STORAGE_EXPLORE_MIN_DETECTED = 6
+STORAGE_EXPLORE_MIN_DETECTED = 4
 STORAGE_EXPLORE_SPEED        = 0.35   # SEARCHING의 MOVE_SPEED(0.25)보다 높게
 
 # ── 상태 머신 ────────────────────────────────────────────
@@ -392,9 +394,10 @@ threading.Thread(target=_read_esp32_loop, daemon=True).start()
 # ── OpenRB 수신 스레드 (팔 완료 신호) ───────────────────
 openrb_gripped     = False
 openrb_grip_failed = False
+ir_object_count     = 0  # KY-032 적외선 센서로 센 물체 통과 개수 — ir_counter.ino가 push로 갱신
 
 def _read_openrb_loop():
-    global openrb_gripped, openrb_grip_failed
+    global openrb_gripped, openrb_grip_failed, ir_object_count
     while True:
         if ser_openrb is None or not ser_openrb.is_open:
             time.sleep(0.5); continue
@@ -413,6 +416,9 @@ def _read_openrb_loop():
                 elif data.get("status") == "grip_failed":
                     openrb_grip_failed = True
                     print("\n[OpenRB] 집기 실패 (전류 미달)")
+                elif data.get("status") == "ir_count":
+                    ir_object_count = data.get("count", ir_object_count)
+                    print(f"\n[IR카운터] 물체 통과 누적: {ir_object_count}")
                 elif data.get("status") == "gripper_opened":
                     print("\n[OpenRB] 그리퍼 미리 열기 완료")
                 elif data.get("status") == "gripper_closed":
@@ -1365,7 +1371,11 @@ try:
 
                 if storage_phase == 0:
                     # 태극기 탐색 — 기본은 제자리 회전, 물체가 많이(밀집) 보이면 그쪽으로
-                    # 이동(SEARCHING 밀집 이동과 동일 로직, 임계값/속도만 다름)
+                    # 이동(SEARCHING 밀집 이동과 동일 로직, 임계값/속도만 다름).
+                    # ⚠️ GO_TO_STORAGE는 카메라가 이미 후방을 보고 있는 상태라(cam_backward),
+                    # 카메라가 보는 밀집 방향으로 실제 진입하려면 로봇 몸체 기준으로는 "후진"이어야
+                    # 한다 — phase 1의 태극기 접근(override_l/r=-speed...)과 동일한 이유. SEARCHING
+                    # 코드를 그대로 가져오면서 속도 부호를 안 뒤집은 채였던 것을 바로잡음.
                     if flag_candidates:
                         storage_phase       = 1
                         storage_phase_start = now
@@ -1382,10 +1392,10 @@ try:
                             weight_sum_s = sum(weights_s)
                             dense_cx_s   = sum(o["cx"] * w for o, w in zip(explorable_s, weights_s)) / weight_sum_s
                             turn_s = max(-1.0, min(1.0, (dense_cx_s - fw2 / 2) / (fw2 / 2)))
-                            L_s = max(-0.5, min(0.5, STORAGE_EXPLORE_SPEED * (1.0 + turn_s)))
-                            R_s = max(-0.5, min(0.5, STORAGE_EXPLORE_SPEED * (1.0 - turn_s)))
+                            L_s = max(-0.5, min(0.5, -STORAGE_EXPLORE_SPEED * (1.0 + turn_s)))
+                            R_s = max(-0.5, min(0.5, -STORAGE_EXPLORE_SPEED * (1.0 - turn_s)))
                             control_wheels(None, override_l=L_s, override_r=R_s)
-                            print(f"[상태] 태극기 탐색중 물체 밀집({len(explorable_s)}개) 쪽으로 이동... cx={dense_cx_s:.0f}", end="\r")
+                            print(f"[상태] 태극기 탐색중 물체 밀집({len(explorable_s)}개) 쪽으로 후진... cx={dense_cx_s:.0f}", end="\r")
                         else:
                             control_wheels(None, override_l=FLAG_SEARCH_SPEED, override_r=-FLAG_SEARCH_SPEED)
                             print(f"[상태] 태극기 탐색 회전중... ({total_elapsed:.1f}s)", end="\r")
@@ -1501,6 +1511,10 @@ try:
             bc = (0, 255, 0) if battery_v >= 11.5 else (0, 165, 255) if battery_v >= 10.0 else (0, 0, 255)
             cv2.putText(annotated_frame, f"BAT: {battery_v:.2f}V",
                         (w - 150, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, bc, 2)
+
+        # IR 카운터 (KY-032로 센 물체 통과 개수)
+        cv2.putText(annotated_frame, f"IR COUNT: {ir_object_count}",
+                    (w - 220, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
         # 경기 타이머
         if SHOW_TIMER:

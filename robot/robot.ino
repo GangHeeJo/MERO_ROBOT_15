@@ -37,6 +37,8 @@
  *   {"status":"motor_recovered"} ← overload 자동복구 성공, 현재 동작은 중단하고 IDLE 복귀
  *   {"status":"motion_aborted"}  ← 위 두 경우 외 safety 개입으로 동작 중단
  *   {"status":"fault_reset"}     ← reset_fault 처리 완료
+ *   {"status":"ir_count","count":N} ← KY-032 적외선 센서로 물체 통과 감지 시마다 push
+ *                                     (특정 cmd 응답이 아니라 언제든 올 수 있음, ir_counter.ino)
  *
  * 상태 머신:
  *   IDLE(그리퍼 닫힘) → (grip) → GRIPPING → (성공) → LIFTING → IDLE(그리퍼 다시 닫힘)
@@ -49,10 +51,12 @@
  *   들어와 잡히는 걸 방지하기 위함. 실제로 집으러 갈 때만 gripper_open으로 미리 연다.
  *
  * 파일 구성:
- *   main.ino    — 시리얼 수신, 상태 머신 (이 파일)
- *   gripper.ino — 그리퍼 XL430 × 1 (ID 1, 랙-피니언)
- *   arm.ino     — 팔 XL430 × 2 (ID 2) + 컨테이너 XL430 × 2 (ID 3)
- *   safety.ino  — Dynamixel overload/hardware error 감시 및 자동 복구
+ *   robot.ino     — 시리얼 수신, 상태 머신 (이 파일)
+ *   gripper.ino   — 그리퍼 XL430 × 1 (ID 1, 랙-피니언)
+ *   arm.ino       — 팔 XL430 × 2 (ID 2) + 컨테이너 XL430 × 2 (ID 3)
+ *   camera.ino    — 카메라 회전 서보 XL430 × 1 (ID 4)
+ *   ir_counter.ino — KY-032 적외선 센서로 물체 통과 개수 카운트 (그리퍼/팔과 독립)
+ *   safety.ino    — Dynamixel overload/hardware error 감시 및 자동 복구
  *
  * 필요 라이브러리: ArduinoJson, Dynamixel2Arduino
  */
@@ -365,6 +369,7 @@ void setup() {
   gripperSetup();
   armSetup();
   camSetup();
+  irSetup();
   JETSON_SERIAL.println("[OpenRB] 준비 완료. grip/dump 명령 대기 중...");
 }
 
@@ -374,6 +379,9 @@ void loop() {
     sendSafetyAbortStatus("background_poll");
     return;
   }
+
+  // 그리퍼/팔 상태 머신과 완전히 독립적으로 매 프레임 감시 (ir_counter.ino)
+  irPoll();
 
   if (JETSON_SERIAL.available()) {
     String line = JETSON_SERIAL.readStringUntil('\n');
