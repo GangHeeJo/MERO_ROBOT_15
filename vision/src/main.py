@@ -109,6 +109,15 @@ BASE_DIR   = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL_PATH = os.path.join(BASE_DIR, "model", "best.engine")  # 2026-07-22 TensorRT 변환 완료, 전환
 # 변환 전(PyTorch) 원본: MODEL_PATH = os.path.join(BASE_DIR, "model", "best.pt")
 model = YOLO(MODEL_PATH)
+
+# 일부 데이터셋 export에서 클래스 이름 앞에 "1_", "2_" 같은 순번 접두어가 붙어 나올 때가
+# 있음(라벨링 순서 표기 등) — 아래 클래스 매칭(SHAPE_CLASSES/FRUIT_CLASSES/'flag')이 전부
+# 접두어 없는 이름 기준이라, 재학습 없이 여기서 이름만 정리해서 맞춘다.
+model.names = {
+    i: (n.split('_', 1)[1] if '_' in n and n.split('_', 1)[0].isdigit() else n)
+    for i, n in model.names.items()
+}
+
 FLAG_CLASS_AVAILABLE = 'flag' in model.names.values()
 if not FLAG_CLASS_AVAILABLE:
     print("[모델] best.pt에 flag 클래스 없음 — GO_TO_STORAGE 태극기 감지 비활성화")
