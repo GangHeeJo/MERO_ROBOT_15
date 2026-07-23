@@ -149,7 +149,7 @@ Jetson main.py
 
 > 2026-07-23: `DROPPING` 상태는 완전히 삭제됨 — 모빌리티 자체가 스토리지 안까지 들어가는 것으로 경기 종료 취급(`dump` 명령 없음). 또한 정밀 정렬(SEARCHING)과 태극기 접근(GO_TO_STORAGE)이 둘 다 "전후진 먼저 맞추고 회전은 나중" 순차 방식에서, **cx/cy 오프셋 크기에 비례한 회전+전후진 보정을 매 프레임 동시에 섞어서 조향**하는 방식으로 바뀜(`fb_phase`/`flag_aligned` 같은 순차 단계 변수는 제거됨) — 오프셋이 클수록 회전 속도도 비례해서 빨라짐.
 >
-> 경기 시작(Enter) 시점에 `match_start_time`을 기록하고, 매 프레임 상태머신 분기 진입 전에 `SEARCHING`/`GRIPPING`/`POST_GRIP_SCAN` 셋 중 어느 상태에 있든 남은 경기 시간이 `STORAGE_ENTRY_REMAINING_SECS`(기본 30초) 이하가 되면 즉시 중단하고 `GO_TO_STORAGE`로 강제 전환됨 — SEARCHING에서만 체크하면 grip 타임아웃(15초)+스캔(4초)으로 남은 30초를 거의 다 까먹을 수 있어서 세 상태 모두 체크. (2026-07-23: 이전엔 `PICK_PHASE_SECS`라는 경과 시간 상수로만 표현돼 있었는데, `MATCH_DURATION_SECS`가 바뀌어도 "남은 30초"라는 의도가 자동으로 유지되도록 남은 시간 기준 상수로 바꿈 — `PICK_PHASE_SECS`는 이 값에서 자동 계산되는 파생값으로만 남음)
+> 경기 시작(Enter) 시점에 `match_start_time`을 기록하고, 매 프레임 상태머신 분기 진입 전에 `SEARCHING`/`GRIPPING`/`POST_GRIP_SCAN` 셋 중 어느 상태에 있든 남은 경기 시간이 `STORAGE_ENTRY_REMAINING_SECS`(기본 30초) 이하가 되거나 KY-032 적외선 센서로 센 물체 통과 개수가 `IR_COUNT_STORAGE_THRESHOLD`(기본 7개) 이상이 되면(둘 중 하나만 만족해도) 즉시 중단하고 `GO_TO_STORAGE`로 강제 전환됨 — SEARCHING에서만 체크하면 grip 타임아웃(15초)+스캔(4초)으로 남은 시간을 거의 다 까먹을 수 있어서 세 상태 모두 체크. (2026-07-23: 이전엔 `PICK_PHASE_SECS`라는 경과 시간 상수로만 표현돼 있었는데, `MATCH_DURATION_SECS`가 바뀌어도 "남은 30초"라는 의도가 자동으로 유지되도록 남은 시간 기준 상수로 바꿈 — `PICK_PHASE_SECS`는 이 값에서 자동 계산되는 파생값으로만 남음. 같은 날 IR 카운트 기반 조기 전환도 추가됨)
 >
 > 2026-07-23: 정밀 정렬 완료 후 바로 접근하지 않고 제자리 정지 상태로 ALIGN_CONFIRM_SECS(0.5초)간
 > 정렬 유지 + 타겟 클래스 일치를 재확인하는 `align_confirm` 단계가 추가됨(아래 SEARCHING 흐름 참고).
@@ -159,7 +159,8 @@ Jetson main.py
 
 **Python (main.py) — 현재 실제 동작:**
 ```
-(SEARCHING/GRIPPING/POST_GRIP_SCAN 공통) 남은 경기 시간이 STORAGE_ENTRY_REMAINING_SECS(30초) 이하가 되면 즉시 중단
+(SEARCHING/GRIPPING/POST_GRIP_SCAN 공통) 남은 경기 시간이 STORAGE_ENTRY_REMAINING_SECS(30초) 이하가 되거나
+    IR 카운트가 IR_COUNT_STORAGE_THRESHOLD(7개) 이상이면(둘 중 하나만 만족해도) 즉시 중단
     → gripper_close(열려있었다면) → cam_backward 전송 → GO_TO_STORAGE
 
 SEARCHING → 타겟 발견 시 정밀 정렬(전후진+회전 동시 보정, cx/cy 오프셋에 비례한 속도) 진행 (그리퍼는 닫힌 채 유지)
@@ -176,7 +177,7 @@ GRIPPING → (gripped/grip_failed/timeout 무엇이든) → POST_GRIP_SCAN
 POST_GRIP_SCAN → 먼저 POST_GRIP_BACKUP_SECS(1초) 후진 → 이후 제자리 회전(POST_GRIP_SCAN_SECS=4초)하며 주변 재탐색
               → (후진 중이든 회전 중이든) 타겟 발견하거나 전체 시간 다 차면 → SEARCHING (이후 정밀 정렬/탐색은 기존 로직 그대로)
 GO_TO_STORAGE → phase 0: 기본은 제자리 회전하며 flag 탐색 (같은 카메라/프레임에서 cls=='flag'만 필터,
-                별도 추론 없음) — flag 아닌 물체가 STORAGE_EXPLORE_MIN_DETECTED(4개) 이상 보이면
+                별도 추론 없음) — flag 아닌 물체가 STORAGE_EXPLORE_MIN_DETECTED(2개) 이상 보이면
                 SEARCHING과 동일한 밀집도 가중 조향으로 그쪽을 향해 이동(STORAGE_EXPLORE_SPEED).
                 ⚠️ 이때도 카메라가 이미 후방을 보는 상태라 phase 1과 마찬가지로 물리적으로는
                 "후진"이어야 하는데, SEARCHING 코드를 그대로 가져오면서 속도 부호를 안 뒤집어
@@ -188,7 +189,12 @@ GO_TO_STORAGE → phase 0: 기본은 제자리 회전하며 flag 탐색 (같은 
                 → area가 FLAG_AREA_STOP_THRESHOLD(20만 px², ⚠️ 실측 필요) 넘으면
                   FLAG_FINAL_FORWARD_SECS(0.5초)만 고정으로 더 직진 후 완전 정지
                   → 이후 아무 것도 안 함(경기 종료 취급, dump 없음)
-                → flag 놓치면 phase 0으로 복귀
+                → flag 놓치면 곧장 phase 0으로 안 돌아가고 phase 2로 (2026-07-23 추가)
+              → phase 2: flag를 막 놓친 직후 — 마지막으로 보였던 방향(flag_last_cx)을 향해
+                회전+후진(FLAG_REORIENT_APPROACH_SPEED, phase 1과 동일한 부호 규칙)을 동시에
+                섞어서 재정렬 시도
+                → 재발견하면 phase 1(접근)로 복귀
+                → FLAG_REORIENT_TIMEOUT_SECS(3초) 안에 못 찾으면 phase 0(일반 탐색)으로 복귀
               → STORAGE_TIMEOUT_SECS(60초) 넘으면 SEARCHING으로 강제 복귀
 ```
 타겟 없을 때 탐색 이동은 "가장 먼 물체 1개" 대신 **밀집도 가중 중심**(주변 물체가 몰려있는 방향)으로 조향 (`CLUSTER_RADIUS_PX` 재사용). 감지된 물체가 `MIN_DETECTED_FOR_EXPLORE`(2개) 미만이면 밀집도 비교가 불가능하므로 전진 없이 `SEARCH_ROTATE_SPEED`로 제자리 회전만 계속함 — 안 보이는 방향으로 무작정 전진하면 벽에 부딪힐 수 있어서. (`--test` 플래그: grip 전송 후 결과 기다리지 않고 바로 프로그램 종료)

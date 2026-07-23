@@ -16,10 +16,12 @@ match_start_time을 그만큼 과거로 당겨서 실제 경기 시계와 동기
 경기 도중 main.py를 재시작해야 할 때, 그 시점의 실제 남은 시간을 입력하면 됨
 (안 하면 카운트다운이 재시작 시점부터 새로 시작돼서 실제 경기 종료 전에 GO_TO_STORAGE
 전환을 영영 못 하는 문제가 있었음). 남은 경기 시간이 STORAGE_ENTRY_REMAINING_SECS
-(기본 30초) 이하가 되면 SEARCHING/GRIPPING/POST_GRIP_SCAN을 반복하던 중이었더라도
-셋 중 어느 상태에 있든(grip 응답 대기 중이든 집기후 스캔 중이든) 매 프레임 즉시
-GO_TO_STORAGE로 전환됨(남은 30초 동안 회전하며 flag 탐색 → 발견하면 정렬 후 멈추지
-않고 스토리지 안까지 직진 진입).
+(기본 30초) 이하가 되거나, KY-032 적외선 센서로 센 물체 통과 개수가
+IR_COUNT_STORAGE_THRESHOLD(기본 7개) 이상이 되면 — 둘 중 하나만 만족해도 —
+SEARCHING/GRIPPING/POST_GRIP_SCAN을 반복하던 중이었더라도 셋 중 어느 상태에 있든
+(grip 응답 대기 중이든 집기후 스캔 중이든) 매 프레임 즉시 GO_TO_STORAGE로 전환됨
+(남은 시간 동안 회전하며 flag 탐색 → 발견하면 정렬 후 멈추지 않고 스토리지 안까지
+직진 진입).
 전환 시점에
 cam_backward(카메라 후방)와 arm_up(팔 규정 크기 위치 복귀)을 동시에 전송함. 이 체크는
 상태머신 분기 진입 전에 한 번만 수행 — GRIPPING/POST_GRIP_SCAN에서도
@@ -43,7 +45,11 @@ cam_backward(카메라 후방)와 arm_up(팔 규정 크기 위치 복귀)을 동
                    타겟 있으면/시간 다 차면 SEARCHING
   GO_TO_STORAGE  — 제자리 회전하며 flag 탐색 → 발견 시 좌우(cx)만 정렬(방향만 맞춤,
                    상하/거리 정렬 없음) → 정렬 끝나면 멈추지 않고 그 상태로 계속 직진 —
-                   모빌리티 자체가 스토리지 안까지 진입 (dump 명령 없음, 여기서 경기 종료 취급)
+                   모빌리티 자체가 스토리지 안까지 진입 (dump 명령 없음, 여기서 경기 종료 취급).
+                   접근 중 flag를 놓치면 곧장 탐색으로 되돌아가지 않고, 일단 정지한 뒤
+                   FLAG_REORIENT_TIMEOUT_SECS(3초) 동안 마지막으로 보였던 방향으로 회전+후진을
+                   동시에 섞어(FLAG_REORIENT_APPROACH_SPEED) 재정렬을 먼저 시도(재발견하면
+                   접근 재개) → 그래도 못 찾으면 일반 탐색 복귀
 
 시리얼:
   /dev/ttyACM0 → ESP32  (UGV02 바퀴)   {"T":1, "L":speed, "R":speed}
@@ -299,6 +305,11 @@ STORAGE_ENTRY_REMAINING_SECS = 30.0  # 남은 경기 시간이 이만큼 되면(
 PICK_PHASE_SECS = MATCH_DURATION_SECS - STORAGE_ENTRY_REMAINING_SECS  # 위 값에서 자동 계산된 경과 시간 기준값(로그 표시용)
 SHOW_TIMER            = args.timer  # 화면에 카운트다운 표시 여부 (전환 로직 자체는 --timer 없어도 항상 동작)
 
+# KY-032 적외선 센서(ir_counter.ino)로 센 물체 통과 개수가 이 값 이상이면, 남은 경기
+# 시간과 무관하게 즉시 GO_TO_STORAGE로 전환한다 (STORAGE_ENTRY_REMAINING_SECS 트리거와
+# 동일한 정리 로직을 그대로 재사용 — 둘 중 하나만 만족해도 전환됨).
+IR_COUNT_STORAGE_THRESHOLD = 7
+
 # ── 태극기 네비게이션 파라미터 ──────────────────────────
 FLAG_CONF_THRESHOLD       = 0.5
 FLAG_CENTER_MARGIN_PX     = 100    # 가로 정렬 허용 범위 (px)
@@ -309,12 +320,17 @@ FLAG_SEARCH_SPEED        = 0.07   # 탐색 회전 속도
 FLAG_ALIGN_SPEED         = 0.25   # 좌우 정렬(제자리 회전) 속도
 FLAG_APPROACH_SPEED      = 0.4    # 후진 접근 속도
 FLAG_APPROACH_SLOW       = 0.1    # 감속 후진 속도
+FLAG_REORIENT_TIMEOUT_SECS = 3.0  # 태극기 놓친 뒤 마지막 방향으로 재정렬 시도하는 최대 시간
+                                   # (이 시간 안에 재발견 못 하면 일반 탐색(phase 0)으로 전환, ⚠️ 실측 필요)
+FLAG_REORIENT_APPROACH_SPEED = 0.15  # 재정렬(phase 2) 중 회전과 함께 섞는 후진 속도 — 시야를
+                                      # 다시 확보하기 전까지는 접근 속도(FLAG_APPROACH_SPEED)보다
+                                      # 느리게(⚠️ 실측 필요, 너무 빠르면 재발견 전에 충돌 위험)
 
 # 태극기 탐색 중 물체가 많이 보이면(밀집 방향, SEARCHING과 동일 로직) 그쪽으로 이동 —
 # 필드 배치상 물체 격자 중앙 쪽이 구석보다 보관함 방향 시야가 덜 가려서, 회전만 하는
 # 것보다 태극기 발견 확률이 올라감. SEARCHING(MIN_DETECTED_FOR_EXPLORE=3)보다 임계값을
 # 높게 잡아서(확실히 많이 보일 때만) 신중하게 이동.
-STORAGE_EXPLORE_MIN_DETECTED = 4
+STORAGE_EXPLORE_MIN_DETECTED = 2
 STORAGE_EXPLORE_SPEED        = 0.35   # SEARCHING의 MOVE_SPEED(0.25)보다 높게
 
 # ── 상태 머신 ────────────────────────────────────────────
@@ -326,8 +342,9 @@ class RobotState(Enum):
 
 robot_state          = RobotState.SEARCHING
 grip_sent_at         = 0.0
-storage_phase        = 0   # 0=탐색회전, 1=회전+접근 동시 조향
+storage_phase        = 0   # 0=탐색회전, 1=회전+접근 동시 조향, 2=놓친 직후 마지막 방향으로 재정렬
 storage_phase_start  = 0.0
+flag_last_cx         = None  # 태극기가 마지막으로 보였을 때의 cx (놓쳤을 때 재정렬 방향 판단용)
 flag_final_forward       = False  # area가 FLAG_AREA_STOP_THRESHOLD 도달 후 고정 시간 직진 중
 flag_final_forward_start = 0.0
 flag_arrived             = False  # 직진 끝나고 정지 완료 — 이후 아무 것도 안 함
@@ -919,6 +936,7 @@ if STORAGE_ONLY:
     # 태극기 정렬+접근+dump 로직만 단독으로 테스트할 때 사용.
     robot_state        = RobotState.GO_TO_STORAGE
     storage_phase       = 0
+    flag_last_cx         = None
     flag_final_forward   = False
     flag_arrived         = False
     storage_enter_time   = time.time()
@@ -1019,14 +1037,16 @@ try:
             _write_esp32({"T": 126})
             _last_imu_req = _now_loop
 
-        # ── 픽업 시간 마감 체크 — 남은 경기 시간이 STORAGE_ENTRY_REMAINING_SECS(기본 30초)
-        # 이하로 떨어지면 SEARCHING/GRIPPING/POST_GRIP_SCAN 중 어느 상태에 있든(grip 응답
-        # 대기 중이든 집기후 스캔 중이든) 즉시 중단하고 보관함 이동으로 전환한다.
+        # ── 픽업 시간 마감 / IR 카운트 마감 체크 — 둘 중 하나라도 만족하면
+        # SEARCHING/GRIPPING/POST_GRIP_SCAN 중 어느 상태에 있든(grip 응답 대기 중이든
+        # 집기후 스캔 중이든) 즉시 중단하고 보관함 이동으로 전환한다.
         # GRIPPING/POST_GRIP_SCAN에서도 걸리게 해야 최악의 경우(grip 타임아웃 15초 +
         # 스캔 4초)에도 남은 30초를 거의 다 까먹지 않는다.
         _remaining_match_secs = MATCH_DURATION_SECS - (time.time() - match_start_time)
+        _time_up  = _remaining_match_secs <= STORAGE_ENTRY_REMAINING_SECS
+        _ir_full  = ir_object_count >= IR_COUNT_STORAGE_THRESHOLD
         if (robot_state in (RobotState.SEARCHING, RobotState.GRIPPING, RobotState.POST_GRIP_SCAN)
-                and _remaining_match_secs <= STORAGE_ENTRY_REMAINING_SECS):
+                and (_time_up or _ir_full)):
             control_wheels(None)
             if gripper_prepped:
                 send_gripper_close()
@@ -1038,12 +1058,16 @@ try:
             fb_final_forward     = False
             robot_state          = RobotState.GO_TO_STORAGE
             storage_phase        = 0
+            flag_last_cx         = None
             flag_final_forward   = False
             flag_arrived         = False
             storage_enter_time   = time.time()
             send_cam_backward()   # 경기당 1회 — 이후 다시 정면으로 돌릴 일 없음
             send_arm_up()         # 카메라 회전과 동시에 팔도 규정 크기 위치로 복귀
-            print(f"\n[상태] 픽업 시간 종료(남은 {_remaining_match_secs:.0f}s) → GO_TO_STORAGE 전환")
+            if _ir_full:
+                print(f"\n[상태] IR 카운트 {ir_object_count}개 도달 → GO_TO_STORAGE 전환")
+            else:
+                print(f"\n[상태] 픽업 시간 종료(남은 {_remaining_match_secs:.0f}s) → GO_TO_STORAGE 전환")
 
         # ── 상태 머신 ──────────────────────────────────
         if robot_state == RobotState.SEARCHING:
@@ -1419,14 +1443,18 @@ try:
                             flag_arrived       = True
                             print(f"\n[상태] 스토리지 도달 — 정지")
                     elif not flag_candidates:
-                        # 태극기 전부 놓침 → 탐색으로 복귀
+                        # 태극기 전부 놓침 → 바로 일반 탐색(phase 0)으로 돌아가지 않고, 일단 정지한
+                        # 뒤 마지막으로 보였던 방향(flag_last_cx)으로 회전+후진 재정렬을 먼저 시도한다
+                        # (phase 2). 이렇게 하면 살짝 카메라 프레임을 벗어난 정도로는 처음부터
+                        # 다시 훑지 않고 바로 그 방향을 보며 재발견을 노릴 수 있다.
                         control_wheels(None)
-                        storage_phase       = 0
+                        storage_phase       = 2
                         storage_phase_start = now
-                        print(f"\n[상태] 태극기 놓침 → 탐색 복귀")
+                        print(f"\n[상태] 태극기 놓침 → 마지막 방향(cx={flag_last_cx}) 재정렬 시도")
                     else:
                         avg_cx   = sum(o["cx"] for o in flag_candidates) / len(flag_candidates)
                         avg_area = sum(o["area"] for o in flag_candidates) / len(flag_candidates)
+                        flag_last_cx = avg_cx
 
                         if avg_area >= FLAG_AREA_STOP_THRESHOLD:
                             flag_final_forward       = True
@@ -1443,6 +1471,31 @@ try:
                                            override_l=-speed + FLAG_ALIGN_SPEED * turn,
                                            override_r=-speed - FLAG_ALIGN_SPEED * turn)
                             print(f"[상태] 태극기로 동시 접근중... cx={avg_cx:.0f} area={avg_area:.0f} (n={len(flag_candidates)})", end="\r")
+
+                elif storage_phase == 2:
+                    # 태극기를 막 놓친 직후 — 제자리 회전만이 아니라 후진(FLAG_REORIENT_APPROACH_SPEED)도
+                    # 같이 섞어서, 마지막으로 보였던 방향(flag_last_cx)을 향해 계속 다가가며 재정렬을
+                    # 시도한다(phase 1 접근과 동일한 부호 규칙 — 카메라가 후방을 보고 있어 "다가간다"는
+                    # 바퀴 기준 후진). 다시 보이면 즉시 phase 1(접근)로 복귀 — 이 경우 각도만 살짝
+                    # 튀는 정도라 처음부터 다시 훑는 것보다 훨씬 빨리 재발견할 수 있다.
+                    # FLAG_REORIENT_TIMEOUT_SECS 안에 못 찾으면 일반 탐색(phase 0)으로 넘어간다.
+                    if flag_candidates:
+                        storage_phase       = 1
+                        storage_phase_start = now
+                        print(f"\n[상태] 재정렬 중 태극기 재발견 → 접근 재개")
+                    elif now - storage_phase_start >= FLAG_REORIENT_TIMEOUT_SECS:
+                        control_wheels(None)
+                        storage_phase       = 0
+                        storage_phase_start = now
+                        print(f"\n[상태] 재정렬 시간 초과 → 일반 탐색 복귀")
+                    else:
+                        # flag_last_cx가 화면 중앙보다 오른쪽에 있었으면 그쪽으로, 왼쪽이면 반대로
+                        # 회전 — phase 1 조향 공식과 동일한 부호 규칙(속도 성분 + 회전 성분).
+                        turn_dir = 1.0 if (flag_last_cx is None or flag_last_cx >= fw2 / 2) else -1.0
+                        control_wheels(None,
+                                       override_l=-FLAG_REORIENT_APPROACH_SPEED + FLAG_ALIGN_SPEED * turn_dir,
+                                       override_r=-FLAG_REORIENT_APPROACH_SPEED - FLAG_ALIGN_SPEED * turn_dir)
+                        print(f"[상태] 태극기 놓침 — 마지막 방향으로 후진하며 재정렬중... ({now - storage_phase_start:.1f}/{FLAG_REORIENT_TIMEOUT_SECS:.1f}s)", end="\r")
 
         # ── 시각화 ──────────────────────────────────────
         if results is not None:
