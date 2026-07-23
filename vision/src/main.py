@@ -11,7 +11,12 @@ MERO_AI_ROBOT 메인 실행 파일
 select_target()이 flag 클래스는 항상 제외하므로 SEARCHING/GRIPPING 중엔 절대
 flag를 집으러 가지 않고, GO_TO_STORAGE에서만 같은 탐지 결과 중 flag를 걸러 씀.
 
-경기 시작(Enter) 후 PICK_PHASE_SECS(150s=2분30초) 동안 SEARCHING/GRIPPING/
+경기 시작 시 "남은 경기 시간"을 MM:SS로 입력받음(처음 시작이면 그냥 Enter = 3:00) —
+match_start_time을 그만큼 과거로 당겨서 실제 경기 시계와 동기화. 카메라 hang 등으로
+경기 도중 main.py를 재시작해야 할 때, 그 시점의 실제 남은 시간을 입력하면 됨
+(안 하면 PICK_PHASE_SECS 카운트다운이 재시작 시점부터 새로 시작돼서 실제 경기 종료
+전에 GO_TO_STORAGE 전환을 영영 못 하는 문제가 있었음). 이 입력 직후 PICK_PHASE_SECS
+(150s=2분30초) 동안 SEARCHING/GRIPPING/
 POST_GRIP_SCAN을 반복하다가, 그 시간이 지나면 셋 중 어느 상태에 있든(grip
 응답 대기 중이든 집기후 스캔 중이든) 매 프레임 즉시 GO_TO_STORAGE로 전환됨
 (남은 30초 동안 회전하며 flag 탐색 → 발견하면 정렬 후 멈추지 않고 스토리지 안까지 직진 진입).
@@ -250,7 +255,7 @@ CENTER_OFFSET_X_PX  = 0       # 가로 중심 오프셋 (양수=오른쪽)
 ALIGN_THRESHOLD     = 0.25    # 이 이상 turn값이면 전진 없이 제자리 회전 우선
 TURN_ONLY_SPEED     = 0.1     # 제자리 회전 속도
 FINAL_APPROACH_SECS  = 1.7        # area 임계 도달 후 정지→직진하는 시간
-FINAL_APPROACH_SPEED = 0.15       # 직진 접근 속도
+FINAL_APPROACH_SPEED = 0.2        # 직진 접근 속도
 FORWARD_TRIM = 0.025  # 직진 시 우측으로 쏠리는 것 보정 (양수=오른쪽 바퀴를 더 빠르게)
 
 # 오인식 방지
@@ -884,9 +889,32 @@ if STORAGE_ONLY:
     send_cam_backward()
     send_arm_up()
     print("[시작] --storage-only: GO_TO_STORAGE로 바로 진입 (카메라 후방 회전 + 팔 올림)")
+    match_start_time = time.time()
 else:
+    # match_start_time은 "이 프로세스가 이 줄에 도달한 시각"일 뿐이라, 경기 도중
+    # 카메라 hang 등으로 main.py를 재시작해야 하면 PICK_PHASE_SECS(150s) 카운트다운이
+    # 재시작 시점부터 다시 시작돼서 실제 경기 시계랑 완전히 어긋난다(실제로 확인된
+    # 문제 — 재시작 시점에 남은 실제 시간보다 소프트웨어가 더 많이 남았다고 착각해서
+    # GO_TO_STORAGE 전환 시점을 영영 못 맞추는 경우가 생김). 그래서 시작할 때 "남은
+    # 경기 시간"을 직접 입력받아 match_start_time을 그만큼 과거로 당겨서 보정한다.
+    while True:
+        raw_remain = input(f"[시작] 남은 경기 시간 입력 (MM:SS, 처음 시작이면 그냥 Enter = {int(MATCH_DURATION_SECS)//60}:{int(MATCH_DURATION_SECS)%60:02d}): ").strip()
+        if raw_remain == "":
+            remaining_secs = MATCH_DURATION_SECS
+            break
+        try:
+            mm, ss = raw_remain.split(":")
+            remaining_secs = int(mm) * 60 + int(ss)
+            if 0 < remaining_secs <= MATCH_DURATION_SECS:
+                break
+            print(f"[오류] 0~{int(MATCH_DURATION_SECS)}초(0:00~{int(MATCH_DURATION_SECS)//60}:{int(MATCH_DURATION_SECS)%60:02d}) 사이로 입력하세요.")
+        except ValueError:
+            print("[오류] MM:SS 형식으로 입력하세요 (예: 1:38).")
+    elapsed_already = MATCH_DURATION_SECS - remaining_secs
     send_start()  # 시작 크기 규정으로 올려둔 팔을 내림 (전진 시작과 함께)
-match_start_time = time.time()  # PICK_PHASE_SECS 경과 판단 + (--timer면) 화면 표시 기준
+    match_start_time = time.time() - elapsed_already  # 이미 지난 시간만큼 과거로 당겨서 보정
+    if elapsed_already > 0:
+        print(f"[시작] 남은 시간 {int(remaining_secs)//60}:{int(remaining_secs)%60:02d} 반영 — 이미 {elapsed_already:.0f}초 경과한 것으로 시작")
 
 # ── 메인 루프 ────────────────────────────────────────────
 try:
