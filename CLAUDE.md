@@ -41,6 +41,7 @@ MERO_AI_ROBOT/
 │   │   ├── basket_test.py         # OpenRB 바스켓(ID3)만 단독 테스트 — o(열기, 유지)/c(닫기)
 │   │   ├── arm_angle_test.py      # OpenRB 팔(ID2)+그리퍼(ID1) 단독 테스트 — 임의 raw 값(0~4095)으로 팔 이동, o/x로 그리퍼 열기/닫기, 브라우저 :8084 스트림 + 빈 Enter로 사진 저장(vision/records/arm_angle_test/), ARM_CHECK_RAW 등 각도 실측용, 재업로드 불필요
 │   │   ├── motion_test.py         # YOLO 없이 프레임 차이(frame differencing)만으로 이동중/정지 판별, 브라우저 :8085 스트림 — 바퀴 명령대로 실제로 움직이는지 확인용
+│   │   ├── wheels_motion_test.py  # wheels_test.py + motion_test.py 통합판 — 바퀴 명령 입력 직후 이동중/정지 판별 결과를 바로 출력, 브라우저 :8086 스트림
 │   │   ├── launcher.py            # 물리 버튼 3개 + OLED로 카메라·젯슨 없이 클래스 선택/실행하는 독립 런처
 │   │   ├── trt_export.py          # TensorRT 변환 스크립트 (Jetson 전용)
 │   │   └── video_to_frames.py
@@ -105,6 +106,9 @@ python vision/src/arm_angle_test.py
 
 # YOLO 없이 프레임 차이로 이동중/정지 판별 — 브라우저 :8085 스트림 (바퀴 명령과 별개 터미널에서 wheels_test.py 등으로 실제 이동시키며 확인)
 python vision/src/motion_test.py
+
+# 바퀴 구동 + 이동중/정지 판별 통합 — 터미널 하나로 명령 입력 직후 결과 확인, 브라우저 :8086 스트림
+python vision/src/wheels_motion_test.py
 
 # 데이터 수집
 python vision/src/capture.py --cls apple            # 스페이스바로 사진 저장
