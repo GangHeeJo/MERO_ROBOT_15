@@ -790,14 +790,22 @@ if HEADLESS:
     print("[시작] 헤드리스 모드")
 
 # ── MJPEG 스트리밍 서버 (브라우저에서 http://jetson_ip:8080 접속) ──
-_stream_frame = None
-_stream_lock  = threading.Lock()
+# 박스/오버레이 그리는 작업(results.plot() + 여러 cv2 draw 호출)을 예전엔 아무도
+# 스트림을 안 보고 있어도 매 프레임 무조건 했음 — yolo_cam_test.py에서 검증한 것과
+# 동일하게, 실제로 브라우저가 붙어있을 때만(+--record로 박스 그려진 걸 저장해야 할 때만)
+# 그리도록 해서 아무도 안 볼 때 그 오버헤드를 통째로 스킵한다.
+_stream_frame  = None
+_stream_lock   = threading.Lock()
+_stream_client_count = 0
 
 class _MJPEGHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        global _stream_client_count
         self.send_response(200)
         self.send_header('Content-type', 'multipart/x-mixed-replace; boundary=frame')
         self.end_headers()
+        with _stream_lock:
+            _stream_client_count += 1
         try:
             while True:
                 with _stream_lock:
@@ -809,6 +817,9 @@ class _MJPEGHandler(BaseHTTPRequestHandler):
                 self.wfile.write(b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + jpg.tobytes() + b'\r\n')
         except Exception:
             pass
+        finally:
+            with _stream_lock:
+                _stream_client_count -= 1
     def log_message(self, *_):
         pass
 
@@ -1319,84 +1330,10 @@ try:
                                            override_r=-speed - FLAG_ALIGN_SPEED * turn)
                             print(f"[상태] 태극기로 동시 접근중... cx={avg_cx:.0f} area={avg_area:.0f} (n={len(flag_candidates)})", end="\r")
 
-        # ── 시각화 ──────────────────────────────────────
-        if results is not None:
-            annotated_frame = results[0].plot()
-        elif frame is not None:
-            annotated_frame = frame.copy()
-        else:
+        if frame is None:
             continue
 
-        # 중앙 정렬 가이드라인 (OK 박스)
-        _fw = FRAME_W or 640
-        _fh = FRAME_H or 480
-        _cx = _fw // 2 + CENTER_OFFSET_X_PX
-        _cy = _fh // 2 + CENTER_OFFSET_Y_PX
-        _box_color = (0, 255, 0) if at_target else (0, 200, 255)
-        cv2.rectangle(annotated_frame,
-                      (_cx - CENTER_MARGIN_PX, _cy - CENTER_MARGIN_Y_PX),
-                      (_cx + CENTER_MARGIN_PX, _cy + CENTER_MARGIN_Y_PX),
-                      _box_color, 1)
-        cv2.line(annotated_frame, (_cx, _cy - 8), (_cx, _cy + 8), _box_color, 1)
-        cv2.line(annotated_frame, (_cx - 8, _cy), (_cx + 8, _cy), _box_color, 1)
-
-        # 타겟 노란 테두리 — 정밀 정렬 중엔 실제로 추적 중인 last_target_id를 표시
-        # (그 순간 select_target()이 고르는 것과 다를 수 있어서 혼동 방지)
-        _highlight_id = last_target_id if (precise_align or fb_final_forward) else (target["id"] if target else None)
-        if _highlight_id is not None and boxes is not None:
-            ids = boxes.id
-            for i, box in enumerate(boxes):
-                if (int(ids[i]) if ids is not None else -1) == _highlight_id:
-                    x1, y1, x2, y2 = box.xyxy[0].tolist()
-                    cv2.rectangle(annotated_frame,
-                                  (int(x1) - 4, int(y1) - 4),
-                                  (int(x2) + 4, int(y2) + 4),
-                                  (0, 255, 255), 3)
-                    cv2.putText(annotated_frame, "TARGET",
-                                (int(x1), int(y1) - 12),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-
-        h, w = annotated_frame.shape[:2]
-
-        # 하단 상태 바
-        state_colors = {
-            RobotState.SEARCHING:     (0, 255, 0),
-            RobotState.GRIPPING:      (0, 165, 255),
-            RobotState.GO_TO_STORAGE: (255, 165, 0),
-        }
-        overlay = annotated_frame.copy()
-        cv2.rectangle(overlay, (0, h - 80), (w, h), (0, 0, 0), -1)
-        cv2.addWeighted(overlay, 0.5, annotated_frame, 0.5, 0, annotated_frame)
-
-        cv2.putText(annotated_frame, f"STATE: {robot_state.value}",
-                    (10, h - 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
-                    state_colors.get(robot_state, (255, 255, 255)), 2)
-
-        if target:
-            if target.get("mx") is not None:
-                d = (target["mx"] ** 2 + target["my"] ** 2) ** 0.5
-                tgt_text = f"TARGET: {target['cls']}  dist={d:.0f}mm  conf={target['conf']:.2f}"
-            else:
-                tgt_text = f"TARGET: {target['cls']}  area={target['area']}  conf={target['conf']:.2f}"
-            cv2.putText(annotated_frame, tgt_text,
-                        (10, h - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-
-        # 배터리
-        if battery_v is not None:
-            bc = (0, 255, 0) if battery_v >= 11.5 else (0, 165, 255) if battery_v >= 10.0 else (0, 0, 255)
-            cv2.putText(annotated_frame, f"BAT: {battery_v:.2f}V",
-                        (w - 150, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, bc, 2)
-
-        # 경기 타이머
-        if SHOW_TIMER:
-            remaining = max(0.0, MATCH_DURATION_SECS - (time.time() - match_start_time))
-            mins = int(remaining // 60)
-            secs = int(remaining % 60)
-            tc = (0, 0, 255) if remaining < 30 else (0, 165, 255) if remaining < 60 else (0, 255, 255)
-            cv2.putText(annotated_frame, f"{mins}:{secs:02d}",
-                        (w // 2 - 25, 35), cv2.FONT_HERSHEY_SIMPLEX, 1.0, tc, 2)
-
-        # FPS
+        # ── FPS 카운트 — 그리기(시각화) 여부와 무관하게 항상 집계 ──
         fps_counter += 1
         elapsed_fps = time.time() - fps_timer
         if elapsed_fps >= 1.0:
@@ -1404,11 +1341,89 @@ try:
             fps_counter = 0
             fps_timer   = time.time()
             print(f"[FPS] {fps_display:.1f}")
-        cv2.putText(annotated_frame, f"FPS: {fps_display:.1f}",
-                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
 
+        # ── 시각화 ──────────────────────────────────────
+        # results.plot() + 여러 cv2 draw 호출은 공짜가 아님 — 아무도 브라우저 스트림을
+        # 안 보고 있고 --record(원본 아닌 박스버전)도 아니면 이 블록 자체를 통째로 스킵.
         with _stream_lock:
-            _stream_frame = annotated_frame.copy()
+            _watching = _stream_client_count > 0
+        if _watching or (RECORD and not RECORD_RAW) or not HEADLESS:
+            annotated_frame = results[0].plot() if results is not None else frame.copy()
+
+            # 중앙 정렬 가이드라인 (OK 박스)
+            _fw = FRAME_W or 640
+            _fh = FRAME_H or 480
+            _cx = _fw // 2 + CENTER_OFFSET_X_PX
+            _cy = _fh // 2 + CENTER_OFFSET_Y_PX
+            _box_color = (0, 255, 0) if at_target else (0, 200, 255)
+            cv2.rectangle(annotated_frame,
+                          (_cx - CENTER_MARGIN_PX, _cy - CENTER_MARGIN_Y_PX),
+                          (_cx + CENTER_MARGIN_PX, _cy + CENTER_MARGIN_Y_PX),
+                          _box_color, 1)
+            cv2.line(annotated_frame, (_cx, _cy - 8), (_cx, _cy + 8), _box_color, 1)
+            cv2.line(annotated_frame, (_cx - 8, _cy), (_cx + 8, _cy), _box_color, 1)
+
+            # 타겟 노란 테두리 — 정밀 정렬 중엔 실제로 추적 중인 last_target_id를 표시
+            # (그 순간 select_target()이 고르는 것과 다를 수 있어서 혼동 방지)
+            _highlight_id = last_target_id if (precise_align or fb_final_forward) else (target["id"] if target else None)
+            if _highlight_id is not None and boxes is not None:
+                ids = boxes.id
+                for i, box in enumerate(boxes):
+                    if (int(ids[i]) if ids is not None else -1) == _highlight_id:
+                        x1, y1, x2, y2 = box.xyxy[0].tolist()
+                        cv2.rectangle(annotated_frame,
+                                      (int(x1) - 4, int(y1) - 4),
+                                      (int(x2) + 4, int(y2) + 4),
+                                      (0, 255, 255), 3)
+                        cv2.putText(annotated_frame, "TARGET",
+                                    (int(x1), int(y1) - 12),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
+            h, w = annotated_frame.shape[:2]
+
+            # 하단 상태 바
+            state_colors = {
+                RobotState.SEARCHING:     (0, 255, 0),
+                RobotState.GRIPPING:      (0, 165, 255),
+                RobotState.GO_TO_STORAGE: (255, 165, 0),
+            }
+            overlay = annotated_frame.copy()
+            cv2.rectangle(overlay, (0, h - 80), (w, h), (0, 0, 0), -1)
+            cv2.addWeighted(overlay, 0.5, annotated_frame, 0.5, 0, annotated_frame)
+
+            cv2.putText(annotated_frame, f"STATE: {robot_state.value}",
+                        (10, h - 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+                        state_colors.get(robot_state, (255, 255, 255)), 2)
+
+            if target:
+                if target.get("mx") is not None:
+                    d = (target["mx"] ** 2 + target["my"] ** 2) ** 0.5
+                    tgt_text = f"TARGET: {target['cls']}  dist={d:.0f}mm  conf={target['conf']:.2f}"
+                else:
+                    tgt_text = f"TARGET: {target['cls']}  area={target['area']}  conf={target['conf']:.2f}"
+                cv2.putText(annotated_frame, tgt_text,
+                            (10, h - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+            # 배터리
+            if battery_v is not None:
+                bc = (0, 255, 0) if battery_v >= 11.5 else (0, 165, 255) if battery_v >= 10.0 else (0, 0, 255)
+                cv2.putText(annotated_frame, f"BAT: {battery_v:.2f}V",
+                            (w - 150, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, bc, 2)
+
+            # 경기 타이머
+            if SHOW_TIMER:
+                remaining = max(0.0, MATCH_DURATION_SECS - (time.time() - match_start_time))
+                mins = int(remaining // 60)
+                secs = int(remaining % 60)
+                tc = (0, 0, 255) if remaining < 30 else (0, 165, 255) if remaining < 60 else (0, 255, 255)
+                cv2.putText(annotated_frame, f"{mins}:{secs:02d}",
+                            (w // 2 - 25, 35), cv2.FONT_HERSHEY_SIMPLEX, 1.0, tc, 2)
+
+            cv2.putText(annotated_frame, f"FPS: {fps_display:.1f}",
+                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+
+            with _stream_lock:
+                _stream_frame = annotated_frame.copy()
 
         if RECORD and time.time() - _last_record_t >= RECORD_INTERVAL_SECS:
             _last_record_t = time.time()
