@@ -19,8 +19,9 @@ match_start_time을 그만큼 과거로 당겨서 실제 경기 시계와 동기
 (150s=2분30초) 동안 SEARCHING/GRIPPING/
 POST_GRIP_SCAN을 반복하다가, 그 시간이 지나면 셋 중 어느 상태에 있든(grip
 응답 대기 중이든 집기후 스캔 중이든) 매 프레임 즉시 GO_TO_STORAGE로 전환됨
-(남은 30초 동안 물체 밀집 방향으로 이동하며 flag 탐색 → 감지되면 잠깐 정지 후
-좌우(cx) 중앙 정렬 → 정렬 끝나면 직진 접근 → area 임계 도달 시 정지, 경기 종료 취급).
+(남은 30초 동안 먼저 그 자리에서 천천히 한 바퀴 초기 스캔 → 못 찾으면 물체 밀집
+방향으로 이동하며 flag 탐색 → 감지되면 잠깐 정지 후 좌우(cx) 중앙 정렬 → 정렬 끝나면
+직진 접근 → area 임계 도달 시 정지, 경기 종료 취급).
 전환 시점에
 cam_backward(카메라 후방)와 arm_up(팔 규정 크기 위치 복귀)을 동시에 전송함. 이 체크는
 상태머신 분기 진입 전에 한 번만 수행 — GRIPPING/POST_GRIP_SCAN에서도
@@ -34,8 +35,9 @@ cam_backward(카메라 후방)와 arm_up(팔 규정 크기 위치 복귀)을 동
                    → gripped 수신 시 POST_GRIP_SCAN
   POST_GRIP_SCAN — 집기 직후 POST_GRIP_BACKUP_SECS(1초) 후진 후 제자리 스캔,
                    타겟 있으면/시간 다 차면 SEARCHING
-  GO_TO_STORAGE  — 물체 밀집 방향 이동하며 flag 탐색 → 감지 시 잠깐 정지 후
-                   좌우(cx) 중앙 정렬 → 직진 접근 → area 임계 도달 시 정지
+  GO_TO_STORAGE  — 진입 직후 제자리 초기 스캔(1바퀴) → 못 찾으면 물체 밀집 방향
+                   이동하며 flag 탐색 → 감지 시 잠깐 정지 후 좌우(cx) 중앙 정렬
+                   → 직진 접근 → area 임계 도달 시 정지
                    (dump 명령 없음, 경기 종료 취급)
 
 시리얼:
@@ -282,6 +284,9 @@ SHOW_TIMER            = args.timer  # 화면에 카운트다운 표시 여부 (�
 
 # ── 태극기 네비게이션 파라미터 ──────────────────────────
 FLAG_CONF_THRESHOLD      = 0.5
+FLAG_INITIAL_SPIN_SPEED  = 0.05   # GO_TO_STORAGE 진입 직후 제자리 초기 스캔 회전 속도(천천히)
+FLAG_INITIAL_SPIN_SECS   = 12.0   # 초기 스캔 1바퀴(360도) 소요 시간 — SEARCH_ROTATE_SPEED(0.1)=6초/바퀴
+                                   # 실측값 기준 속도 절반이라 2배로 추정한 값, ⚠️ 실측 필요
 FLAG_SEARCH_SPEED        = 0.07   # 탐색 회전 속도(밀집 이동할 물체가 부족할 때만 사용)
 FLAG_CENTER_MARGIN_PX    = 100    # 정렬 허용 오차(px) — 이 안이면 "정렬 완료"로 판단
 FLAG_ALIGN_SPEED         = 0.25   # 정렬 회전 속도
@@ -303,6 +308,9 @@ class RobotState(Enum):
 robot_state          = RobotState.SEARCHING
 grip_sent_at         = 0.0
 storage_phase        = 0      # 0=탐색(밀집 이동/회전), 1=정렬+접근(내부적으로 flag_aligned로 세분화)
+storage_initial_spin       = True  # GO_TO_STORAGE 진입 직후 딱 한 번, 그 자리에서 천천히 한 바퀴 돌며
+                                    # 먼저 훑어봄 — 못 찾고 다 돌면 이후엔 기존 탐색(밀집 이동/일반 회전)으로 전환
+storage_initial_spin_start = 0.0
 flag_settle          = False  # 태극기 첫 감지 직후 FLAG_SETTLE_SECS만큼 정지 대기 중
 flag_settle_start    = 0.0
 flag_aligned              = False  # storage_phase 1 진입 후 좌우(cx) 정렬 완료 여부 — 한 번 맞으면 재확인 없이 직진만 함
@@ -946,6 +954,8 @@ if STORAGE_ONLY:
     # 태극기 탐색+정렬+접근 로직만 단독으로 테스트할 때 사용.
     robot_state        = RobotState.GO_TO_STORAGE
     storage_phase        = 0
+    storage_initial_spin       = True
+    storage_initial_spin_start = time.time()
     flag_settle          = False
     flag_aligned          = False
     flag_final_forward    = False
@@ -1065,6 +1075,8 @@ try:
             fb_final_forward     = False
             robot_state          = RobotState.GO_TO_STORAGE
             storage_phase        = 0
+            storage_initial_spin       = True
+            storage_initial_spin_start = time.time()
             flag_settle          = False
             flag_aligned          = False
             flag_final_forward    = False
@@ -1346,14 +1358,28 @@ try:
 
                 if storage_phase == 0:
                     # 태극기 탐색 — 1프레임이라도 감지되면 그 자리에서 정지하고 정렬 대기로 전환.
-                    # 안 보이는 동안은 SEARCHING과 동일하게 물체 밀집 방향으로 이동(_dense_object_target),
-                    # 밀집 이동할 만큼 물체가 안 보이면 제자리 회전.
                     if flag_candidates:
                         control_wheels(None)
+                        storage_initial_spin = False  # 초기 스캔 도중이었어도 찾았으니 더 돌 필요 없음
                         flag_settle       = True
                         flag_settle_start = now
                         print(f"\n[상태] 태극기 감지 → 정지 대기 ({FLAG_SETTLE_SECS:.0f}s)")
+
+                    elif storage_initial_spin:
+                        # GO_TO_STORAGE 진입 직후 딱 한 번, 이동 없이 그 자리에서 천천히
+                        # 한 바퀴(FLAG_INITIAL_SPIN_SECS) 돌며 먼저 훑어본다 — 다 돌 때까지
+                        # 못 찾으면 이후엔 기존 방식(밀집 이동/일반 회전)으로 넘어간다.
+                        spin_elapsed = now - storage_initial_spin_start
+                        if spin_elapsed >= FLAG_INITIAL_SPIN_SECS:
+                            storage_initial_spin = False
+                            print("\n[상태] 초기 제자리 스캔 완료 → 기존 탐색으로 전환")
+                        else:
+                            control_wheels(None, override_l=FLAG_INITIAL_SPIN_SPEED, override_r=-FLAG_INITIAL_SPIN_SPEED)
+                            print(f"[상태] 초기 제자리 스캔중... ({spin_elapsed:.1f}/{FLAG_INITIAL_SPIN_SECS:.0f}s)", end="\r")
+
                     else:
+                        # 안 보이는 동안은 SEARCHING과 동일하게 물체 밀집 방향으로 이동
+                        # (_dense_object_target), 밀집 이동할 만큼 물체가 안 보이면 제자리 회전.
                         explorable = [o for o in detected if o['cls'] != 'flag']
                         dense = _dense_object_target(explorable)
                         if dense is not None:
