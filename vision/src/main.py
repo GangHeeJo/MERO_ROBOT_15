@@ -19,7 +19,7 @@ match_start_time을 그만큼 과거로 당겨서 실제 경기 시계와 동기
 (150s=2분30초) 동안 SEARCHING/GRIPPING/
 POST_GRIP_SCAN을 반복하다가, 그 시간이 지나면 셋 중 어느 상태에 있든(grip
 응답 대기 중이든 집기후 스캔 중이든) 매 프레임 즉시 GO_TO_STORAGE로 전환됨
-(남은 30초 동안 회전하며 flag 탐색 → 발견하면 정렬 후 멈추지 않고 스토리지 안까지 직진 진입).
+(남은 30초 동안 회전하며 flag 탐색 → 1프레임이라도 감지되면 정렬/접근 없이 즉시 정지, 경기 종료 취급).
 전환 시점에
 cam_backward(카메라 후방)와 arm_up(팔 규정 크기 위치 복귀)을 동시에 전송함. 이 체크는
 상태머신 분기 진입 전에 한 번만 수행 — GRIPPING/POST_GRIP_SCAN에서도
@@ -33,9 +33,8 @@ cam_backward(카메라 후방)와 arm_up(팔 규정 크기 위치 복귀)을 동
                    → gripped 수신 시 POST_GRIP_SCAN
   POST_GRIP_SCAN — 집기 직후 POST_GRIP_BACKUP_SECS(1초) 후진 후 제자리 스캔,
                    타겟 있으면/시간 다 차면 SEARCHING
-  GO_TO_STORAGE  — 제자리 회전하며 flag 탐색 → 발견 시 좌우(cx)만 정렬(방향만 맞춤,
-                   상하/거리 정렬 없음) → 정렬 끝나면 멈추지 않고 그 상태로 계속 직진 —
-                   모빌리티 자체가 스토리지 안까지 진입 (dump 명령 없음, 여기서 경기 종료 취급)
+  GO_TO_STORAGE  — 제자리 회전하며 flag 탐색 → 1프레임이라도 감지되면 정렬/접근 없이
+                   즉시 정지 (dump 명령 없음, 여기서 경기 종료 취급)
 
 시리얼:
   /dev/ttyACM0 → ESP32  (UGV02 바퀴)   {"T":1, "L":speed, "R":speed}
@@ -277,30 +276,21 @@ PICK_PHASE_SECS      = 150.0  # 이 시간(2분30초) 지나면 SEARCHING/GRIPPI
 SHOW_TIMER            = args.timer  # 화면에 카운트다운 표시 여부 (전환 로직 자체는 --timer 없어도 항상 동작)
 
 # ── 태극기 네비게이션 파라미터 ──────────────────────────
-FLAG_CONF_THRESHOLD       = 0.5
-FLAG_CENTER_MARGIN_PX     = 100    # 가로 정렬 허용 범위 (px)
-FLAG_AREA_SLOW_THRESHOLD  = 30000  # 감속 시작 면적 (px²)  ⚠️ 임의값 — 실측 필요
-FLAG_AREA_STOP_THRESHOLD  = 200000 # 도달 판단 면적 (px²) — 이 이상이면 고정 시간 직진 후 정지
-FLAG_FINAL_FORWARD_SECS   = 0.5    # 도달 판정 후 직진하는 시간
-FLAG_SEARCH_SPEED        = 0.07   # 탐색 회전 속도
-FLAG_ALIGN_SPEED         = 0.25   # 좌우 정렬(제자리 회전) 속도
-FLAG_APPROACH_SPEED      = 0.4    # 후진 접근 속도
-FLAG_APPROACH_SLOW       = 0.1    # 감속 후진 속도
+# 정렬/접근 없이 태극기 1프레임 감지 즉시 정지 — 실측 안 된 area 임계값에 기대는
+# 대신 단순하고 확실한 쪽 선택 (2026-07-24).
+FLAG_CONF_THRESHOLD  = 0.5
+FLAG_SEARCH_SPEED    = 0.07   # 탐색 회전 속도
 
 # ── 상태 머신 ────────────────────────────────────────────
 class RobotState(Enum):
     SEARCHING      = "SEARCHING"
     GRIPPING       = "GRIPPING"
     POST_GRIP_SCAN = "POST_GRIP_SCAN"
-    GO_TO_STORAGE  = "GO_TO_STORAGE"  # 정렬 끝나면 멈추지 않고 그대로 스토리지 안까지 직진 (모빌리티 자체가 진입)
+    GO_TO_STORAGE  = "GO_TO_STORAGE"  # 제자리 회전하며 태극기 탐색 → 1프레임이라도 감지되면 즉시 정지 (경기 종료 취급)
 
 robot_state          = RobotState.SEARCHING
 grip_sent_at         = 0.0
-storage_phase        = 0   # 0=탐색회전, 1=회전+접근 동시 조향
-storage_phase_start  = 0.0
-flag_final_forward       = False  # area가 FLAG_AREA_STOP_THRESHOLD 도달 후 고정 시간 직진 중
-flag_final_forward_start = 0.0
-flag_arrived             = False  # 직진 끝나고 정지 완료 — 이후 아무 것도 안 함
+flag_arrived             = False  # 태극기 감지되어 정지 완료 — 이후 아무 것도 안 함
 storage_enter_time   = 0.0
 confirm_count        = 0
 last_target_id       = -1
@@ -893,10 +883,8 @@ frame = None  # 최초 루프 진입 전 초기화
 
 if STORAGE_ONLY:
     # SEARCHING/GRIPPING 완전히 건너뛰고 시작하자마자 GO_TO_STORAGE 진입 —
-    # 태극기 정렬+접근+dump 로직만 단독으로 테스트할 때 사용.
+    # 태극기 탐색+감지 즉시정지 로직만 단독으로 테스트할 때 사용.
     robot_state        = RobotState.GO_TO_STORAGE
-    storage_phase       = 0
-    flag_final_forward   = False
     flag_arrived         = False
     storage_enter_time   = time.time()
     send_cam_backward()
@@ -1012,8 +1000,6 @@ try:
             gripper_open_wait    = False
             fb_final_forward     = False
             robot_state          = RobotState.GO_TO_STORAGE
-            storage_phase        = 0
-            flag_final_forward   = False
             flag_arrived         = False
             storage_enter_time   = time.time()
             send_cam_backward()   # 경기당 1회 — 이후 다시 정면으로 돌릴 일 없음
@@ -1287,64 +1273,20 @@ try:
                 print("[경고] flag 클래스 없음 — SEARCHING 복귀")
                 robot_state = RobotState.SEARCHING
 
+            elif flag_arrived:
+                # 이미 감지되어 정지 완료 — 더 이상 아무 것도 안 함(경기 종료 취급)
+                control_wheels(None)
+
             else:
+                # 태극기 탐색 — 제자리 회전하다 1프레임이라도 감지되면 정렬/접근 없이 즉시 정지.
                 flag_candidates = [o for o in detected if o['cls'] == 'flag' and o['conf'] >= FLAG_CONF_THRESHOLD]
-
-                fw2 = FRAME_W or 640
-
-                if storage_phase == 0:
-                    # 태극기 탐색 — 제자리 회전
-                    if flag_candidates:
-                        storage_phase       = 1
-                        storage_phase_start = now
-                        print(f"\n[상태] 태극기 발견 → 접근 시작")
-                    else:
-                        control_wheels(None, override_l=FLAG_SEARCH_SPEED, override_r=-FLAG_SEARCH_SPEED)
-                        print(f"[상태] 태극기 탐색 회전중... ({total_elapsed:.1f}s)", end="\r")
-
-                elif storage_phase == 1:
-                    # 보이는 모든 태극기의 중심(cx 평균)을 화면 중앙 세로선에 맞추는 좌우 보정과
-                    # 접근(직진)을 동시에 섞어서 조향 (상하 정렬 없음 — 거리는 area로만 판단).
-                    # area 임계(FLAG_AREA_STOP_THRESHOLD) 도달하면 FLAG_FINAL_FORWARD_SECS만
-                    # 더 직진 후 정지.
-                    if flag_arrived:
-                        # 이미 도달해서 정지 완료 — 더 이상 아무 것도 안 함(경기 종료 취급)
-                        control_wheels(None)
-                    elif flag_final_forward:
-                        # 도달 판정 이후엔 태극기를 놓쳐도 상관없이 고정 시간만 직진 후 정지
-                        control_wheels(None, override_l=-FLAG_APPROACH_SPEED, override_r=-FLAG_APPROACH_SPEED)
-                        elapsed_ff = now - flag_final_forward_start
-                        print(f"[상태] 스토리지 진입 직진중... ({elapsed_ff:.1f}s)", end="\r")
-                        if elapsed_ff >= FLAG_FINAL_FORWARD_SECS:
-                            control_wheels(None)
-                            flag_final_forward = False
-                            flag_arrived       = True
-                            print(f"\n[상태] 스토리지 도달 — 정지")
-                    elif not flag_candidates:
-                        # 태극기 전부 놓침 → 탐색으로 복귀
-                        control_wheels(None)
-                        storage_phase       = 0
-                        storage_phase_start = now
-                        print(f"\n[상태] 태극기 놓침 → 탐색 복귀")
-                    else:
-                        avg_cx   = sum(o["cx"] for o in flag_candidates) / len(flag_candidates)
-                        avg_area = sum(o["area"] for o in flag_candidates) / len(flag_candidates)
-
-                        if avg_area >= FLAG_AREA_STOP_THRESHOLD:
-                            flag_final_forward       = True
-                            flag_final_forward_start = now
-                            print(f"\n[상태] 태극기 area={avg_area:.0f} 도달 → {FLAG_FINAL_FORWARD_SECS:.1f}초 직진 후 정지")
-                        else:
-                            # 좌우 보정(회전)과 접근(직진)을 동시에 섞어서 조향 — 화면 오른쪽에
-                            # 있으면 시계방향으로 도는 성분을 더한다. 카메라가 뒤를 보고 있어도
-                            # 이 회전 방향(부호)은 정면 카메라일 때와 동일(뒤집으면 반대로 돔, 확인됨).
-                            offset = avg_cx - fw2 / 2
-                            turn   = max(-1.0, min(1.0, offset / (fw2 / 2)))
-                            speed  = FLAG_APPROACH_SLOW if avg_area > FLAG_AREA_SLOW_THRESHOLD else FLAG_APPROACH_SPEED
-                            control_wheels(None,
-                                           override_l=-speed + FLAG_ALIGN_SPEED * turn,
-                                           override_r=-speed - FLAG_ALIGN_SPEED * turn)
-                            print(f"[상태] 태극기로 동시 접근중... cx={avg_cx:.0f} area={avg_area:.0f} (n={len(flag_candidates)})", end="\r")
+                if flag_candidates:
+                    control_wheels(None)
+                    flag_arrived = True
+                    print(f"\n[상태] 태극기 감지 → 정지 (경기 종료 취급)")
+                else:
+                    control_wheels(None, override_l=FLAG_SEARCH_SPEED, override_r=-FLAG_SEARCH_SPEED)
+                    print(f"[상태] 태극기 탐색 회전중... ({total_elapsed:.1f}s)", end="\r")
 
         if frame is None:
             continue
