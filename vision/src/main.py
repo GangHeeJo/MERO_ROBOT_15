@@ -259,6 +259,7 @@ CONFIRM_FRAMES      = 3       # 연속 N프레임 도달 조건 만족해야 gri
 # 같이 쓰여서 건드리면 그쪽도 같이 바뀌므로, 정밀 정렬만 따로 뗀 전용 상수를 쓴다.
 PRECISE_ALIGN_FB_SPEED   = 0.25  # 1단계 전후(cy) 정렬 속도
 PRECISE_ALIGN_TURN_SPEED = 0.25  # 2단계 좌우(cx) 회전 정렬 속도
+TARGET_MISS_GRACE_FRAMES = 3     # 정밀 정렬 중 순간적으로 타겟을 놓쳐도 이 프레임 수까지는 포기 안 하고 정지 대기 (모션블러 등 프레임 단위 오탐 대응)
 
 # 탐색 회전
 SEARCH_ROTATE_SPEED = 0.1     # 타겟 없을 때 제자리 회전 속도
@@ -310,6 +311,7 @@ fb_final_forward       = False  # cx/cy 정렬 완료 후 직진 중
 fb_final_forward_start = 0.0
 fb_final_forward_cls   = None
 precise_align = False  # True면 area 임계 도달 후 정밀 정렬(전후진+회전 동시 보정) 진행 중
+target_miss_count = 0  # precise_align 중 연속으로 타겟을 못 잡은 프레임 수 (TARGET_MISS_GRACE_FRAMES까지는 정지 대기)
 gripper_prepped = False  # True면 이번 접근을 위해 그리퍼를 미리 열어둔 상태 (grip 전송 또는 취소 시 False로 복귀)
 search_rotate_start        = None   # 제자리 회전 탐색이 연속으로 시작된 시각 (None=회전 중 아님, 로그 표시용)
 
@@ -1090,13 +1092,21 @@ try:
                 # 있어서, 한 번 정하면 그 물체가 완전히 사라지기(+grace) 전까진 안 바꾼다.
                 locked = next((o for o in detected if o["id"] == last_target_id), None)
                 if not locked:
-                    precise_align     = False
-                    last_target_id    = -1
-                    if gripper_prepped:
-                        send_gripper_close()
-                        gripper_prepped = False
-                    print("\n[상태] 정밀 정렬 중 타겟 놓침 → 재탐색 (그리퍼 닫음)")
+                    target_miss_count += 1
+                    if target_miss_count <= TARGET_MISS_GRACE_FRAMES:
+                        # 모션블러 등으로 순간적으로 놓친 것일 수 있음 — 몇 프레임은 정지하고 재등장을 기다린다
+                        control_wheels(None)
+                        print(f"[상태] 정밀 정렬 중 순간 놓침 ({target_miss_count}/{TARGET_MISS_GRACE_FRAMES}) — 정지 대기", end="\r")
+                    else:
+                        precise_align     = False
+                        last_target_id    = -1
+                        target_miss_count = 0
+                        if gripper_prepped:
+                            send_gripper_close()
+                            gripper_prepped = False
+                        print("\n[상태] 정밀 정렬 중 타겟 놓침 → 재탐색 (그리퍼 닫음)")
                 else:
+                    target_miss_count = 0
                     frame_w = FRAME_W or 640
                     frame_h = FRAME_H or 480
                     cx_ref  = frame_w / 2 + CENTER_OFFSET_X_PX
@@ -1138,6 +1148,7 @@ try:
                 # 직전에만 연다 (엉뚱한 물체가 정렬 중 벌어진 집게에 끼는 것 방지).
                 control_wheels(None)
                 precise_align     = True
+                target_miss_count = 0  # 이전 정렬 시도가 grace 소진 없이 중간에 끊겼을 수 있어 새로 시작할 때 항상 리셋
                 last_target_id    = target["id"]  # 이 물체 id로 락 — 이후 select_target() 재호출 없이 이 id만 추적
                 print(f"\n[상태] 타겟 발견 (area={target['area']}) → 정밀 정렬 시작 (그리퍼는 닫힌 채 유지)")
 
