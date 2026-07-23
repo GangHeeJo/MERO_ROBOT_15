@@ -113,10 +113,11 @@ model = YOLO(MODEL_PATH)
 # 일부 데이터셋 export에서 클래스 이름 앞에 "1_", "2_" 같은 순번 접두어가 붙어 나올 때가
 # 있음(라벨링 순서 표기 등) — 아래 클래스 매칭(SHAPE_CLASSES/FRUIT_CLASSES/'flag')이 전부
 # 접두어 없는 이름 기준이라, 재학습 없이 여기서 이름만 정리해서 맞춘다.
-model.names = {
-    i: (n.split('_', 1)[1] if '_' in n and n.split('_', 1)[0].isdigit() else n)
-    for i, n in model.names.items()
-}
+# model.names는 읽기 전용 프로퍼티라 통째로 재할당은 안 되고, 반환된 dict 자체를
+# in-place로 고쳐야 한다(model.names[i] = ... 는 dict의 __setitem__이라 문제없음).
+for _i, _n in list(model.names.items()):
+    if '_' in _n and _n.split('_', 1)[0].isdigit():
+        model.names[_i] = _n.split('_', 1)[1]
 
 FLAG_CLASS_AVAILABLE = 'flag' in model.names.values()
 if not FLAG_CLASS_AVAILABLE:
