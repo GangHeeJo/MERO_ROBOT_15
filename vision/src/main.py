@@ -235,7 +235,7 @@ MAX_MY              = 150.0
 AREA_GRIP_THRESHOLD = 30000   # 이 면적 이상이면 정지 후 직진 접근 → grip
 AREA_SLOW_THRESHOLD = 20000   # 이 면적 이상이면 감속 시작
 AREA_ROTATE_THRESHOLD = 15000 # 이 이하일 때만 제자리 회전 정렬
-MIN_DETECTED_FOR_EXPLORE = 2      # 탐색 이동 조건: 클래스 무관 총 탐지 개수가 이 이상이어야 시도
+MIN_DETECTED_FOR_EXPLORE = 3      # 탐색 이동 조건: 클래스 무관 총 탐지 개수가 이 이상이어야 시도
                                    # (이 미만, 즉 0~1개면 제자리 회전만 계속함 — 전진 안 함,
                                    #  안 보이는 방향으로 무작정 전진하면 벽에 부딪힐 수 있어서)
                                    # SEARCH_ROTATE_SPEED 기준 3초≈180도 (실측)
