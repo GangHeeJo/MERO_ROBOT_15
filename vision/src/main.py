@@ -282,10 +282,10 @@ SHOW_TIMER            = args.timer  # 화면에 카운트다운 표시 여부 (�
 
 # ── 태극기 네비게이션 파라미터 ──────────────────────────
 FLAG_CONF_THRESHOLD      = 0.5
-FLAG_INITIAL_SPIN_SPEED  = 0.05   # GO_TO_STORAGE 진입 직후 제자리 초기 스캔 회전 속도(천천히)
-FLAG_INITIAL_SPIN_SECS   = 12.0   # 초기 스캔 1바퀴(360도) 소요 시간 — SEARCH_ROTATE_SPEED(0.1)=6초/바퀴
-                                   # 실측값 기준 속도 절반이라 2배로 추정한 값, ⚠️ 실측 필요
-FLAG_SEARCH_SPEED        = 0.07   # 탐색 회전 속도(밀집 이동할 물체가 부족할 때만 사용)
+FLAG_INITIAL_SPIN_SPEED  = 0.15   # GO_TO_STORAGE 진입 직후 제자리 초기 스캔 회전 속도
+FLAG_INITIAL_SPIN_SECS   = 4.0    # 초기 스캔 1바퀴(360도) 소요 시간 — SEARCH_ROTATE_SPEED(0.1)=6초/바퀴 기준
+                                   # 속도 비례로 재추정한 값, ⚠️ 실측 필요
+FLAG_SEARCH_SPEED        = 0.15   # 탐색 회전 속도(밀집 이동할 물체가 부족할 때만 사용)
 FLAG_CENTER_MARGIN_PX    = 100    # 정렬 허용 오차(px) — 이 안이면 "정렬 완료"로 판단
 FLAG_ALIGN_SPEED         = 0.25   # 정렬 회전 속도
 FLAG_SETTLE_SECS         = 1.0    # 태극기 첫 감지 직후 짧게 정지하는 시간(정렬 진입 전 안정화)
