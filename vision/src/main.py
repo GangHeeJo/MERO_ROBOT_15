@@ -488,10 +488,18 @@ def _ramp_speed(target_v, last_v, dt):
         return min(target_v, last_v + max_step)
     return max(target_v, last_v - max_step)
 
-def control_wheels(target: dict | None, override_l: float | None = None, override_r: float | None = None):
+def control_wheels(target: dict | None, override_l: float | None = None, override_r: float | None = None,
+                    reverse: bool = False):
     """
     override 지정 시 직접 속도 전송 (고정 경로 이동용).
-    target 있으면 mm 또는 픽셀 기반 차동 조향.
+    target 있으면 mm 또는 픽셀 기반 차동 조향 — 기본은 "전진하며 조향"을 가정하므로
+    카메라가 정면일 때(SEARCHING 등)만 그대로 맞음. cam_backward() 이후(GO_TO_STORAGE)처럼
+    카메라가 후방을 보는 상태에서 같은 target 기반 조향을 쓰려면 reverse=True로 실제로는
+    후진하며 카메라가 보는 방향으로 이동하게 한다. L=fwd+turn, R=fwd-turn 형태로 계산되므로
+    단순 부호 반전(-L,-R)을 하면 조향(turn) 성분 부호까지 같이 뒤집혀 방향이 어긋난다 —
+    "L,R = -R,-L"(맞바꾼 뒤 반전)로 해야 전진 성분만 후진으로 바뀌고 조향 성분은 그대로
+    유지됨 (태극기 정렬 코드의 검증된 override_l=-speed+turn 패턴과 동일한 결과가 나오게
+    수학적으로 맞춘 것). override는 호출부가 이미 방향을 직접 정하므로 reverse 영향 안 받음.
     target=None이면 정지.
     최종 L/R은 항상 _ramp_speed()를 거쳐 전송 — 급가속 방지.
     """
@@ -517,6 +525,8 @@ def control_wheels(target: dict | None, override_l: float | None = None, overrid
             R = max(-0.5, min(0.5, speed * (fwd - turn)))
         else:
             L, R = 0.0, 0.0
+        if reverse:
+            L, R = -R, -L
 
     else:
         # ── 픽셀 모드 (calibration 없을 때) ──
@@ -533,6 +543,8 @@ def control_wheels(target: dict | None, override_l: float | None = None, overrid
             speed = SLOW_SPEED if area > AREA_SLOW_THRESHOLD else MOVE_SPEED
             L = max(-0.5, min(0.5, speed * (1.0 + turn)))
             R = max(-0.5, min(0.5, speed * (1.0 - turn)))
+        if reverse:
+            L, R = -R, -L
 
     now = time.time()
     dt = (now - _last_wheel_t) if _last_wheel_t is not None else 999.0  # 첫 호출은 램프 없이 그대로
@@ -1320,7 +1332,9 @@ try:
                         explorable = [o for o in detected if o['cls'] != 'flag']
                         dense = _dense_object_target(explorable)
                         if dense is not None:
-                            control_wheels(dense)
+                            # cam_backward() 이후라 카메라가 후방을 보는 상태 — reverse=True로
+                            # 실제로는 후진하며 카메라가 보는(밀집) 방향으로 이동하게 함
+                            control_wheels(dense, reverse=True)
                             print(f"[상태] 밀집 방향 이동중... cx={dense['cx']:.0f}", end="\r")
                         else:
                             control_wheels(None, override_l=FLAG_SEARCH_SPEED, override_r=-FLAG_SEARCH_SPEED)
