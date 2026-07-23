@@ -91,6 +91,13 @@ bool armCheck() {
   return safeSetGoalPosition(ARM_ID, ARM_CHECK_RAW, 800);
 }
 
+// ── 팔을 임의 raw 위치로 이동 (디버깅/실측용) ────────────
+// ARM_CHECK_RAW처럼 각도를 눈으로 보며 잡아야 하는 값을 재업로드 없이 여러 번
+// 시험할 때 쓴다 ({"cmd":"arm_to","raw":N}, robot.ino 참고).
+bool armTo(int32_t raw) {
+  return safeSetGoalPosition(ARM_ID, raw, 1000);
+}
+
 // ── 바스켓 닫기 ──────────────────────────────────────────
 bool containerClose() {
   return safeSetGoalPosition(CONT_ID, CONT_CLOSED_RAW, 3000);

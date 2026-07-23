@@ -39,6 +39,7 @@ MERO_AI_ROBOT/
 │   │   ├── camera_test.py         # 카메라만 단독 가동, YOLO 없음 — 연결/해상도/FPS 확인, 브라우저 :8082 스트림
 │   │   ├── cam_servo_test.py      # OpenRB 카메라 서보(ID4)만 단독 테스트 — b(후방)/f(정면)/t(왕복), 재업로드 불필요
 │   │   ├── basket_test.py         # OpenRB 바스켓(ID3)만 단독 테스트 — o(열기, 유지)/c(닫기)
+│   │   ├── arm_angle_test.py      # OpenRB 팔(ID2)만 단독 테스트 — 임의 raw 값(0~4095)으로 이동, ARM_CHECK_RAW 등 각도 실측용, 재업로드 불필요
 │   │   ├── launcher.py            # 물리 버튼 3개 + OLED로 카메라·젯슨 없이 클래스 선택/실행하는 독립 런처
 │   │   ├── trt_export.py          # TensorRT 변환 스크립트 (Jetson 전용)
 │   │   └── video_to_frames.py
@@ -98,6 +99,9 @@ python vision/src/yolo_cam_test.py
 # 카메라 서보(ID4) 단독 회전 테스트 — b(후방)/f(정면)/t(왕복)
 python vision/src/cam_servo_test.py
 
+# 팔(ID2) 각도 단독 테스트 — 임의 raw 값 이동, ARM_CHECK_RAW 등 실측용
+python vision/src/arm_angle_test.py
+
 # 데이터 수집
 python vision/src/capture.py --cls apple            # 스페이스바로 사진 저장
 python vision/src/record.py --cls apple --sec 10    # 10초 녹화 후 자동 프레임 추출
@@ -127,17 +131,17 @@ Roboflow 라벨링 → train.ipynb(Colab) → best.pt → trt_export.py → best
 Jetson main.py
   ├─→ /dev/ttyACM0 → ESP32 (UGV 바퀴)   {"T":1, "L":speed, "R":speed}
   └─→ /dev/ttyACM1 → OpenRB-150          {"cmd":"grip"/"confirm_grip"/"reject_grip"/"dump"/"idle"/"start"/
-                                           "gripper_open"/"gripper_close"/"reset_fault"/"arm_up"/
+                                           "gripper_open"/"gripper_close"/"reset_fault"/"arm_up"/"arm_to"/
                                            "cam_backward"/"cam_forward"/
                                            "basket_open"/"basket_close", ...}
   └─← /dev/ttyACM1 ← OpenRB-150          {"status":"at_check_pos"/"gripped"/"grip_failed"/"dumped"/
-                                           "gripper_opened"/"gripper_closed"/"started"/"arm_up_done"/
+                                           "gripper_opened"/"gripper_closed"/"started"/"arm_up_done"/"arm_to_done"/
                                            "cam_backward_done"/"cam_forward_done"/
                                            "basket_opened"/"basket_closed"/
                                            "motor_fault"/"motor_recovered"/"motion_aborted"/"fault_reset"}
 ```
 
-`gripper_open`/`gripper_close`는 안전정책이 아니라 집기 메커니즘 자체에 필요 — IDLE 기본값이 "닫힘"이라 미리 열어두지 않으면 집을 공간이 없음. 정밀 정렬(전후진+회전 동시 보정) 중엔 그리퍼를 닫은 채로 두고, cx/cy 둘 다 정렬까지 끝나 최종 직진 접근 직전에만 `gripper_open` 전송(엉뚱한 물체가 정렬 중 벌어진 집게에 끼는 것 방지) — 그래서 정렬 단계에서 타겟을 놓쳐도 그리퍼는 애초에 안 열려있어 `gripper_close`를 보낼 필요가 없음. `start`는 경기 시작 시 규정 크기용으로 올려둔 팔을 내리는 명령(전원 켜지면 팔은 기본적으로 올림 상태로 대기) — 동시에 카메라도 `cam_forward`로 정면 리셋(이전 테스트/경기에서 후방을 보고 있던 상태가 남아있을 수 있어서). 카메라 리셋 실패는 팔 내리기를 막지 않고 로그만 남김. `arm_up`은 디버깅용 — 팔을 수동으로 시작 위치(올림)로 복귀. `cam_backward`/`cam_forward`는 ID4 카메라 서보 제어 — `GO_TO_STORAGE` 진입 시(경기당 1회) `cam_backward`를 보내 카메라가 후방(보관함 방향)을 보게 함. `basket_open`/`basket_close`는 임시 디버깅용 — `dump`와 달리 자동으로 안 닫히고 열린 채로 유지되어 바스켓 안을 직접 확인하거나 수동으로 비울 때 사용 (`vision/src/basket_test.py`로 단독 테스트 가능).
+`gripper_open`/`gripper_close`는 안전정책이 아니라 집기 메커니즘 자체에 필요 — IDLE 기본값이 "닫힘"이라 미리 열어두지 않으면 집을 공간이 없음. 정밀 정렬(전후진+회전 동시 보정) 중엔 그리퍼를 닫은 채로 두고, cx/cy 둘 다 정렬까지 끝나 최종 직진 접근 직전에만 `gripper_open` 전송(엉뚱한 물체가 정렬 중 벌어진 집게에 끼는 것 방지) — 그래서 정렬 단계에서 타겟을 놓쳐도 그리퍼는 애초에 안 열려있어 `gripper_close`를 보낼 필요가 없음. `start`는 경기 시작 시 규정 크기용으로 올려둔 팔을 내리는 명령(전원 켜지면 팔은 기본적으로 올림 상태로 대기) — 동시에 카메라도 `cam_forward`로 정면 리셋(이전 테스트/경기에서 후방을 보고 있던 상태가 남아있을 수 있어서). 카메라 리셋 실패는 팔 내리기를 막지 않고 로그만 남김. `arm_up`은 디버깅용 — 팔을 수동으로 시작 위치(올림)로 복귀. `arm_to`는 디버깅/실측용(2026-07-23 추가) — `{"raw":N}`으로 팔(ID2)을 임의의 raw 위치(0~4095)로 이동, `ARM_CHECK_RAW` 같은 각도를 재업로드 없이 여러 번 시험할 때 사용 (`vision/src/arm_angle_test.py`로 단독 테스트 가능). `cam_backward`/`cam_forward`는 ID4 카메라 서보 제어 — `GO_TO_STORAGE` 진입 시(경기당 1회) `cam_backward`를 보내 카메라가 후방(보관함 방향)을 보게 함. `basket_open`/`basket_close`는 임시 디버깅용 — `dump`와 달리 자동으로 안 닫히고 열린 채로 유지되어 바스켓 안을 직접 확인하거나 수동으로 비울 때 사용 (`vision/src/basket_test.py`로 단독 테스트 가능).
 
 `confirm_grip`/`reject_grip`은 그립 중간 확인(2026-07-23 도입) 전용 — `grip` 수신 후 OpenRB는 팔을 끝까지 올리지 않고 `ARM_CHECK_RAW`(중간 각도)에서 멈춘 뒤 `at_check_pos`를 보낸다. Python은 그 순간부터 원래 클래스(`<cls>`, 예: `d6`) 또는 전용 학습 클래스(`gripped_<cls>`, 예: `gripped_d6`) 둘 중 하나가 몇 프레임 연속 보이는지 확인해서 `confirm_grip`(팔 마저 올림) 또는 `reject_grip`(그리퍼 열고 팔 내려 원위치)을 돌려보낸다. OpenRB 쪽엔 Jetson 응답이 아예 안 올 때를 대비한 `CHECK_TIMEOUT_MS`(8초) 안전망도 있음 — 정상 동작에서는 Python이 항상 먼저 응답한다.
 
@@ -197,7 +201,7 @@ safety.ino가 overload/hardware error를 감지하면 어느 상태에서든 즉
 (fatal fault면 사람이 reset_fault 보낼 때까지 명령 거부)
 ```
 
-`ARM_CHECK_RAW`(arm.ino, 현재 2100 — ⚠️ 실측 필요)는 그리퍼 안이 카메라에 보이는 각도로 실물에서 조정해야 함. `gripped_<cls>` 클래스(예: `gripped_d6`, `gripped_apple`)는 아직 학습 전 — best.pt에 없으면 Python이 항상 미확인으로 보고 매번 `reject_grip`을 보내게 되므로, 실전 투입 전 해당 클래스 데이터 수집+학습 필요.
+`ARM_CHECK_RAW`(arm.ino, 현재 2100 — ⚠️ 실측 필요)는 그리퍼 안이 카메라에 보이는 각도로 실물에서 조정해야 함 — `vision/src/arm_angle_test.py`로 재업로드 없이 임의 raw 값을 시험하며 찾을 수 있음. `gripped_<cls>` 클래스(예: `gripped_d6`, `gripped_apple`)는 아직 학습 전 — best.pt에 없으면 Python이 항상 미확인으로 보고 매번 `reject_grip`을 보내게 되므로, 실전 투입 전 해당 클래스 데이터 수집+학습 필요.
 
 ## 알려진 이슈
 

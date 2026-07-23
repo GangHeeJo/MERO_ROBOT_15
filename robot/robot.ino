@@ -253,6 +253,24 @@ void parseCommand(const String& json) {
     return;
   }
 
+  // 디버깅/실측용 — 팔을 임의의 raw 위치로 이동 (ARM_CHECK_RAW 같은 중간 각도를
+  // 재업로드 없이 눈으로 보면서 여러 번 시험할 때 사용)
+  if (strcmp(cmd, "arm_to") == 0 && currentState == IDLE) {
+    int32_t raw = doc["raw"] | -1;
+    if (raw < 0 || raw > 4095) {
+      JETSON_SERIAL.println("{\"status\":\"arm_to_failed\",\"reason\":\"raw range 0~4095\"}");
+      return;
+    }
+    if (!armTo(raw)) {
+      sendSafetyAbortStatus("arm_to_request");
+      return;
+    }
+    JETSON_SERIAL.print("{\"status\":\"arm_to_done\",\"raw\":");
+    JETSON_SERIAL.print(raw);
+    JETSON_SERIAL.println("}");
+    return;
+  }
+
   // 임시 디버깅용 — 바스켓을 열고 그대로 유지 (dump와 달리 자동으로 안 닫힘, 수동 확인/비우기용)
   if (strcmp(cmd, "basket_open") == 0 && currentState == IDLE) {
     if (!containerOpen()) {
