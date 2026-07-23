@@ -24,6 +24,7 @@ bool safeSetGoalPosition(uint8_t id, int32_t goal_raw, uint32_t wait_ms);
 // ── 팔 위치 (raw, 0~4095, 실측) ───────────────────────────
 #define ARM_DOWN_RAW   1480   // 집기 위치
 #define ARM_UP_RAW     2850   // 투하 위치
+#define ARM_CHECK_RAW  2100   // 그립 확인 중간 정지 위치 — ⚠️ 실측 필요 (카메라로 그리퍼 안이 보이는 각도로 조정)
 
 // ── 바스켓 위치 (raw, 0~4095, 실측) ───────────────────────
 #define CONT_CLOSED_RAW  2328
@@ -80,6 +81,14 @@ bool armDown() {
 // 않는지 반드시 확인 필요.
 bool armUp() {
   return safeSetGoalPosition(ARM_ID, ARM_UP_RAW, 1500);
+}
+
+// ── 팔 중간 정지 (그립 확인용) ──────────────────────────
+// 집기 직후 완전히 올리기 전에 여기서 멈춰서, 카메라로 실제로 물체를
+// 집었는지 확인(gripped_<cls> 클래스 탐지)한다. 확인되면 armUp()으로
+// 마저 올리고, 안 되면 armDown()으로 원위치.
+bool armCheck() {
+  return safeSetGoalPosition(ARM_ID, ARM_CHECK_RAW, 800);
 }
 
 // ── 바스켓 닫기 ──────────────────────────────────────────

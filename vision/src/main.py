@@ -31,8 +31,13 @@ cam_backward(카메라 후방)와 arm_up(팔 규정 크기 위치 복귀)을 동
                    코너링, OPENING_ARC_SECS초, 1회) 먼저 수행 → 이후 flag 제외 물체 탐지,
                    보이면 거리 상관없이 바로 정밀 정렬(전후진+회전 동시 보정) 진입 → 정렬 끝나면
                    직진 접근 후 grip 전송
-  GRIPPING       — grip 전송 후 gripped 신호 대기 (집기+팔올림+투하+팔내림 완료)
-                   → gripped 수신 시 POST_GRIP_SCAN
+  GRIPPING       — grip 전송 후 at_check_pos/gripped 신호 대기
+                   → at_check_pos 수신 시 GRIP_CHECK, gripped 수신 시 POST_GRIP_SCAN
+  GRIP_CHECK     — 팔이 중간 위치(ARM_CHECK_RAW)에서 정지한 동안, 집으려 한 클래스에 대응하는
+                   gripped_<cls>(예: gripped_d6) 클래스가 GRIP_CHECK_CONFIRM_FRAMES 연속으로
+                   보이면 confirm_grip 전송(팔 마저 올림), GRIP_CHECK_TIMEOUT_SECS 안에 안 보이면
+                   reject_grip 전송(그리퍼 열고 팔 내림) → 이후 GRIPPING으로 돌아가 최종 gripped/
+                   grip_failed 신호 대기
   POST_GRIP_SCAN — 집기 직후 제자리 스캔, 타겟 있으면/시간 다 차면 SEARCHING
   GO_TO_STORAGE  — 제자리 회전하며 flag 탐색 → 발견 시 좌우(cx)만 정렬(방향만 맞춤,
                    상하/거리 정렬 없음) → 정렬 끝나면 멈추지 않고 그 상태로 계속 직진 —
@@ -43,8 +48,9 @@ cam_backward(카메라 후방)와 arm_up(팔 규정 크기 위치 복귀)을 동
   /dev/ttyACM1 → OpenRB (팔·그리퍼)    {"cmd":"grip"/"idle"/"gripper_open"/"gripper_close"}
 
 OpenRB 응답:
+  {"status":"at_check_pos"}   — 팔이 중간 위치에서 정지, GRIP_CHECK 진입 신호
   {"status":"gripped"}        — 집기+컨테이너 투하+그리퍼 재닫힘 완료 → SEARCHING 복귀
-  {"status":"grip_failed"}    — 집기 실패 → SEARCHING 복귀
+  {"status":"grip_failed"}    — GRIP_CHECK에서 reject_grip/타임아웃 → SEARCHING 복귀
   {"status":"gripper_opened"} — 접근 전 그리퍼 미리 열기 완료
   {"status":"gripper_closed"} — 접근 취소 후 그리퍼 대기 상태로 닫힘 완료
 
@@ -273,6 +279,14 @@ SEARCH_ROTATE_SPEED = 0.1     # 타겟 없을 때 제자리 회전 속도
 GRIP_TIMEOUT_SECS    = 15.0   # grip 전송 후 gripped 신호 최대 대기
 STORAGE_TIMEOUT_SECS = 60.0   # GO_TO_STORAGE 전체 최대 시간 (태극기 탐색 포함)
 
+# ── 그립 중간 확인 파라미터 (GRIP_CHECK) ──────────────────
+# 팔이 중간 위치(ARM_CHECK_RAW)에서 멈춘 동안 GRIP_CHECK_TIMEOUT_SECS 동안 매 프레임
+# 원래 클래스(<cls>, 예: d6) 또는 전용 학습 클래스(gripped_<cls>, 예: gripped_d6)가
+# 보이는지 집계해서, 그 시간 동안 "보임"이 과반수면 확인, 아니면 reject 처리한다
+# (조기 종료 없이 항상 창 전체를 다 채운 뒤 다수결로 판단).
+GRIP_CHECK_CONF_THRESHOLD  = 0.5   # gripped_<cls> 탐지 confidence 임계값
+GRIP_CHECK_TIMEOUT_SECS    = 0.5   # 판단 집계 창 길이
+
 # 경기 타이머 / 픽업↔보관 전환
 MATCH_DURATION_SECS = 180.0
 PICK_PHASE_SECS      = 150.0  # 이 시간(2분30초) 지나면 SEARCHING/GRIPPING 중이든 상관없이 GO_TO_STORAGE로 전환
@@ -293,6 +307,7 @@ FLAG_APPROACH_SLOW       = 0.1    # 감속 후진 속도
 class RobotState(Enum):
     SEARCHING      = "SEARCHING"
     GRIPPING       = "GRIPPING"
+    GRIP_CHECK     = "GRIP_CHECK"  # 팔이 중간 위치에서 정지 — gripped_<cls> 탐지로 실제 집힘 여부 확인
     POST_GRIP_SCAN = "POST_GRIP_SCAN"
     GO_TO_STORAGE  = "GO_TO_STORAGE"  # 정렬 끝나면 멈추지 않고 그대로 스토리지 안까지 직진 (모빌리티 자체가 진입)
 
@@ -308,6 +323,8 @@ confirm_count        = 0
 last_target_id       = -1
 post_grip_scan_start = 0.0   # POST_GRIP_SCAN 진입 시각
 gripped_cls         = None
+grip_check_start        = 0.0   # GRIP_CHECK 진입 시각
+grip_check_class_counts = {}    # 집계 창 동안 클래스별 탐지 횟수 (cls -> count)
 align_phase          = 0      # --align-only 전용: 0=회전으로 좌우(cx) 정렬, 1=전진/후진으로 상하(cy) 정렬
 align_final_forward       = False  # --align-only 전용: cy 정렬 완료 후 1초 직진 중
 align_final_forward_start = 0.0
@@ -362,9 +379,10 @@ threading.Thread(target=_read_esp32_loop, daemon=True).start()
 # ── OpenRB 수신 스레드 (팔 완료 신호) ───────────────────
 openrb_gripped     = False
 openrb_grip_failed = False
+openrb_at_check    = False
 
 def _read_openrb_loop():
-    global openrb_gripped, openrb_grip_failed
+    global openrb_gripped, openrb_grip_failed, openrb_at_check
     while True:
         if ser_openrb is None or not ser_openrb.is_open:
             time.sleep(0.5); continue
@@ -377,12 +395,15 @@ def _read_openrb_loop():
                     data = json.loads(raw)
                 except json.JSONDecodeError:
                     time.sleep(0.01); continue
-                if data.get("status") == "gripped":
+                if data.get("status") == "at_check_pos":
+                    openrb_at_check = True
+                    print("\n[OpenRB] 팔 중간 정지 — 그립 확인 대기")
+                elif data.get("status") == "gripped":
                     openrb_gripped = True
                     print("\n[OpenRB] 집기+투하 완료")
                 elif data.get("status") == "grip_failed":
                     openrb_grip_failed = True
-                    print("\n[OpenRB] 집기 실패 (전류 미달)")
+                    print("\n[OpenRB] 그립 확인 실패 → 그리퍼 열고 팔 내림")
                 elif data.get("status") == "gripper_opened":
                     print("\n[OpenRB] 그리퍼 미리 열기 완료")
                 elif data.get("status") == "gripper_closed":
@@ -580,6 +601,14 @@ def send_gripper_open():
 def send_gripper_close():
     """접근을 포기하고 재탐색으로 돌아갈 때 — 열어뒀던 그리퍼를 대기 상태로 되돌린다."""
     _write_openrb({"cmd": "gripper_close"})
+
+def send_confirm_grip():
+    """GRIP_CHECK에서 gripped_<cls>가 확인됨 — 팔을 마저 올려 투하를 계속하게 한다."""
+    _write_openrb({"cmd": "confirm_grip"})
+
+def send_reject_grip():
+    """GRIP_CHECK에서 확인 실패(미검출/타임아웃) — 그리퍼 열고 팔을 내려 원위치시킨다."""
+    _write_openrb({"cmd": "reject_grip"})
 
 def send_cam_backward():
     """보관함으로 가기 직전 — 카메라를 뒤로 180도 돌려 후방을 보게 한다. 경기당 1회만 호출."""
@@ -987,7 +1016,7 @@ try:
         # 어느 상태에 있든(grip 응답 대기 중이든 집기후 스캔 중이든) 즉시 중단하고
         # 보관함 이동으로 전환. GRIPPING/POST_GRIP_SCAN에서도 걸리게 해야 최악의 경우
         # (grip 타임아웃 15초 + 스캔 4초)에도 남은 30초를 거의 다 까먹지 않는다.
-        if (robot_state in (RobotState.SEARCHING, RobotState.GRIPPING, RobotState.POST_GRIP_SCAN)
+        if (robot_state in (RobotState.SEARCHING, RobotState.GRIPPING, RobotState.GRIP_CHECK, RobotState.POST_GRIP_SCAN)
                 and time.time() - match_start_time >= PICK_PHASE_SECS):
             control_wheels(None)
             if gripper_prepped:
@@ -1200,7 +1229,13 @@ try:
         elif robot_state == RobotState.GRIPPING:
             control_wheels(None)
             elapsed = time.time() - grip_sent_at
-            if openrb_gripped:
+            if openrb_at_check:
+                openrb_at_check         = False
+                grip_check_class_counts = {}
+                grip_check_start        = time.time()
+                robot_state             = RobotState.GRIP_CHECK
+                print(f"\n[상태] GRIPPING → GRIP_CHECK (팔 중간 정지, 확인 대상: gripped_{gripped_cls})")
+            elif openrb_gripped:
                 openrb_gripped       = False
                 openrb_grip_failed   = False
                 gripped_cls          = None
@@ -1225,6 +1260,34 @@ try:
                 post_grip_scan_start = time.time()
             else:
                 print(f"[상태] 집어서 컨테이너 투하중... ({elapsed:.1f}s)", end="\r")
+
+        elif robot_state == RobotState.GRIP_CHECK:
+            # 팔이 중간 위치에서 정지한 동안 GRIP_CHECK_TIMEOUT_SECS 동안 매 프레임 탐지된
+            # 모든 클래스를 집계한다. 창이 끝나면(조기 종료 없이) 가장 많이 탐지된 클래스(최빈값)를
+            # 그 순간 실제로 잡고 있는 물체로 판단 — 그게 원래 클래스(<cls>, 예: d6) 또는
+            # gripped_<cls>(예: gripped_d6)와 같으면 confirm, 다르면(엉뚱한 클래스거나 아예
+            # 아무것도 안 보이면) reject.
+            control_wheels(None)
+            expected_cls     = f"gripped_{gripped_cls}"
+            accepted_classes = {gripped_cls, expected_cls}
+            for o in detected:
+                if o["conf"] >= GRIP_CHECK_CONF_THRESHOLD:
+                    grip_check_class_counts[o["cls"]] = grip_check_class_counts.get(o["cls"], 0) + 1
+            elapsed_check = time.time() - grip_check_start
+
+            if elapsed_check >= GRIP_CHECK_TIMEOUT_SECS:
+                dominant_cls = max(grip_check_class_counts, key=grip_check_class_counts.get) if grip_check_class_counts else None
+                confirmed = dominant_cls in accepted_classes
+                if confirmed:
+                    send_confirm_grip()
+                    print(f"\n[상태] 그립 확인됨 (최빈 클래스={dominant_cls}, {grip_check_class_counts}) → 팔 마저 올리기")
+                else:
+                    send_reject_grip()
+                    print(f"\n[상태] 그립 미확인 (최빈 클래스={dominant_cls}, 기대={gripped_cls}/{expected_cls}, {grip_check_class_counts}) → 그리퍼 열고 팔 내림")
+                robot_state  = RobotState.GRIPPING
+                grip_sent_at = time.time()
+            else:
+                print(f"[상태] 그립 확인중... ({grip_check_class_counts}, {elapsed_check:.2f}s)", end="\r")
 
         elif robot_state == RobotState.POST_GRIP_SCAN:
             # 집기 시도(성공/실패 무관) 직후 — 이동하지 않고 제자리에서 한 바퀴 돌며
