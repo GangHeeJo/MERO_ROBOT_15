@@ -26,8 +26,8 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # ── 파라미터 ─────────────────────────────────────────────
-CANNY_LOW              = 25   # Canny 하위 임계값
-CANNY_HIGH             = 90   # Canny 상위 임계값 (보통 하위의 2~3배)
+CANNY_LOW              = 15   # Canny 하위 임계값
+CANNY_HIGH             = 60   # Canny 상위 임계값 (보통 하위의 2~3배)
 HOUGH_THRESHOLD        = 80   # 이 표 수 이상 누적돼야 직선으로 인정
 MIN_LINE_LENGTH_RATIO  = 0.3  # 프레임 폭의 이 비율 이상 길어야 후보로 인정
 MAX_LINE_GAP           = 30   # 이 픽셀 이내 끊김은 같은 선으로 이어붙임
