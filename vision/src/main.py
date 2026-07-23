@@ -27,10 +27,8 @@ cam_backward(카메라 후방)와 arm_up(팔 규정 크기 위치 복귀)을 동
 까먹을 수 있어서 반드시 세 상태 모두에서 체크해야 함.
 
 상태 머신:
-  SEARCHING      — 경기 시작 직후 탐지 결과 무시하고 오프닝 무브(전진하며 좌회전하는
-                   코너링, OPENING_ARC_SECS초, 1회) 먼저 수행 → 이후 flag 제외 물체 탐지,
-                   보이면 거리 상관없이 바로 정밀 정렬(전후진+회전 동시 보정) 진입 → 정렬 끝나면
-                   직진 접근 후 grip 전송
+  SEARCHING      — flag 제외 물체 탐지, 보이면 거리 상관없이 바로 정밀 정렬
+                   (전후진+회전 동시 보정) 진입 → 정렬 끝나면 직진 접근 후 grip 전송
   GRIPPING       — grip 전송 후 gripped 신호 대기 (집기+팔올림+투하+팔내림 완료)
                    → gripped 수신 시 POST_GRIP_SCAN
   POST_GRIP_SCAN — 집기 직후 POST_GRIP_BACKUP_SECS(1초) 후진 후 제자리 스캔,
@@ -226,13 +224,6 @@ FRAME_FAIL_LIMIT = 100  # 연속 이 횟수만큼 실패해야 진짜 종료
 # ── 바퀴 제어 파라미터 ───────────────────────────────────
 MOVE_SPEED          = 0.35
 SLOW_SPEED          = 0.25
-
-# ── 경기 시작 오프닝 무브 (탐지 결과 무시하고 무조건 실행, 1회) ──
-# 시작 위치가 필드 가장자리라 중앙 쪽으로 먼저 진입시키기 위함.
-# 직진→회전 순차가 아니라 전진하며 좌회전하는 코너링(arc turn) 방식.
-OPENING_ARC_SECS       = 3.0   # 코너링 지속 시간 (기존 전진2초+회전1초 합)
-OPENING_ARC_SPEED      = MOVE_SPEED   # 바깥쪽(오른쪽) 바퀴 기준 속도
-OPENING_ARC_TURN_RATIO = 0.4   # 왼쪽 바퀴를 이 비율만큼 느리게 해서 곡선 그림 (0=직진, 1=제자리회전 수준)
 
 # mm 모드 (calibration 있을 때)
 ARRIVE_THRESHOLD_MM = 30.0
@@ -1011,18 +1002,7 @@ try:
 
         # ── 상태 머신 ──────────────────────────────────
         if robot_state == RobotState.SEARCHING:
-            _opening_elapsed = _now_loop - match_start_time
-            if _opening_elapsed < OPENING_ARC_SECS:
-                # 경기 시작 직후 오프닝 무브 — 탐지 결과 무시하고 전진하며 좌회전(코너링, 1회)
-                # 두 바퀴 다 전진 방향이되 왼쪽을 느리게 해서 곡선을 그림 (제자리 회전 아님)
-                # 왼쪽이 실제로 안쪽(좌회전)인지는 실측 필요 — 반대로 돌면 TURN_RATIO 부호만 뒤집을 것
-                control_wheels(None,
-                               override_l=OPENING_ARC_SPEED * (1 - OPENING_ARC_TURN_RATIO),
-                               override_r=OPENING_ARC_SPEED)
-                send_idle()
-                print(f"[오프닝] 코너링중... ({_opening_elapsed:.1f}/{OPENING_ARC_SECS:.0f}s)", end="\r")
-
-            elif align_final_forward:
+            if align_final_forward:
                 # cy 정렬 완료 후 1초 직진 → grip 전송 → GRIPPING (완료되면 다시 SEARCHING으로 반복)
                 control_wheels(None, override_l=FINAL_APPROACH_SPEED - FORWARD_TRIM / 2, override_r=FINAL_APPROACH_SPEED + FORWARD_TRIM / 2)
                 elapsed_af = time.time() - align_final_forward_start
