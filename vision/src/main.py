@@ -278,6 +278,7 @@ PRECISE_ALIGN_FB_SPEED   = 0.25  # 1단계 전후(cy) 정렬 속도
 PRECISE_ALIGN_TURN_SPEED = 0.18  # 2단계 좌우(cx) 회전 정렬 속도
 TARGET_MISS_GRACE_FRAMES = 3    # 정밀 정렬 중 순간적으로 타겟을 놓쳐도 이 프레임 수까지는 포기 안 하고 정지 대기 (모션블러 등 프레임 단위 오탐 대응)
 GRIPPER_OPEN_LEAD_SECS   = 0.3    # gripper_open 명령 후 직진 시작까지 짧게 두는 텀 (그리퍼가 실제로 열리는 물리 시간, gripper.ino wait_ms=300과 맞춤)
+FINAL_CLASS_CHECK_WINDOW_SECS = 0.5  # 돌진(직진 접근) 직전 최근 이 시간 동안의 최빈 클래스를 확인해서 락 시점 클래스와 비교
 
 # 탐색 회전
 SEARCH_ROTATE_SPEED = 0.1     # 타겟 없을 때 제자리 회전 속도
@@ -344,6 +345,10 @@ gripper_open_wait_start = 0.0
 gripper_open_wait_cls   = None
 precise_align = False  # True면 area 임계 도달 후 정밀 정렬(전후진+회전 동시 보정) 진행 중
 target_miss_count = 0  # precise_align 중 연속으로 타겟을 못 잡은 프레임 수 (TARGET_MISS_GRACE_FRAMES까지는 정지 대기)
+locked_target_cls = None  # precise_align 락 시점에 선택됐던 클래스 — 최종 확인 시 이거랑 비교
+_cls_history = []  # [(timestamp, cls), ...] — precise_align 중 이 물체가 매 프레임 어떤 클래스로 보였는지 기록.
+                    # 돌진(직진 접근) 직전에 최근 FINAL_CLASS_CHECK_WINDOW_SECS 동안의 최빈 클래스를 확인해서
+                    # 오인식 한 프레임 때문에 엉뚱한 물체가 락 걸린 채로 그대로 집어버리는 것 방지.
 gripper_prepped = False  # True면 이번 접근을 위해 그리퍼를 미리 열어둔 상태 (grip 전송 또는 취소 시 False로 복귀)
 search_rotate_start        = None   # 제자리 회전 탐색이 연속으로 시작된 시각 (None=회전 중 아님, 로그 표시용)
 
@@ -1222,12 +1227,14 @@ try:
                         precise_align     = False
                         last_target_id    = -1
                         target_miss_count = 0
+                        _cls_history       = []
                         if gripper_prepped:
                             send_gripper_close()
                             gripper_prepped = False
                         print("\n[상태] 정밀 정렬 중 타겟 놓침 → 재탐색 (그리퍼 닫음)")
                 else:
                     target_miss_count = 0
+                    _cls_history.append((time.time(), locked["cls"]))
                     frame_w = FRAME_W or 640
                     frame_h = FRAME_H or 480
                     cx_ref  = frame_w / 2 + CENTER_OFFSET_X_PX
@@ -1236,14 +1243,31 @@ try:
                     cy_aligned = abs(locked["cy"] - cy_ref) <= CENTER_MARGIN_Y_PX
 
                     if cx_aligned and cy_aligned:
-                        control_wheels(None)
-                        precise_align           = False
-                        gripper_open_wait       = True
-                        gripper_open_wait_start = time.time()
-                        gripper_open_wait_cls   = locked["cls"]
-                        send_gripper_open()
-                        gripper_prepped = True
-                        print(f"\n[상태] 정렬 완료 (cx={locked['cx']:.0f}, cy={locked['cy']:.0f}) → 그리퍼 열기 ({GRIPPER_OPEN_LEAD_SECS:.1f}s 대기 후 직진)")
+                        # 돌진(직진 접근) 직전 최종 확인 — 최근 FINAL_CLASS_CHECK_WINDOW_SECS 동안
+                        # 이 물체가 어떤 클래스로 보였는지 최빈값을 구해서, 락 시점 클래스와 다르면
+                        # 애초에 오인식 한 프레임 때문에 엉뚱한 물체가 락 걸렸던 것으로 보고 포기한다.
+                        cutoff      = time.time() - FINAL_CLASS_CHECK_WINDOW_SECS
+                        recent_cls  = [c for t, c in _cls_history if t >= cutoff]
+                        final_cls   = max(set(recent_cls), key=recent_cls.count) if recent_cls else locked["cls"]
+
+                        if final_cls != locked_target_cls:
+                            control_wheels(None)
+                            precise_align  = False
+                            last_target_id = -1
+                            _cls_history   = []
+                            if gripper_prepped:
+                                send_gripper_close()
+                                gripper_prepped = False
+                            print(f"\n[상태] 최종 확인 실패 (최근 클래스={final_cls} != 락 시점={locked_target_cls}) → 재탐색")
+                        else:
+                            control_wheels(None)
+                            precise_align           = False
+                            gripper_open_wait       = True
+                            gripper_open_wait_start = time.time()
+                            gripper_open_wait_cls   = locked["cls"]
+                            send_gripper_open()
+                            gripper_prepped = True
+                            print(f"\n[상태] 정렬 완료 (cx={locked['cx']:.0f}, cy={locked['cy']:.0f}) → 최종 확인 통과({final_cls}) → 그리퍼 열기 ({GRIPPER_OPEN_LEAD_SECS:.1f}s 대기 후 직진)")
                     else:
                         # cy_ref보다 위(작음)=목표가 더 멀리 있음 → 전진, 아래(큼)=너무 가까움 → 후진
                         fwd = 0.0
@@ -1271,6 +1295,8 @@ try:
                 precise_align     = True
                 target_miss_count = 0  # 이전 정렬 시도가 grace 소진 없이 중간에 끊겼을 수 있어 새로 시작할 때 항상 리셋
                 last_target_id    = target["id"]  # 이 물체 id로 락 — 이후 select_target() 재호출 없이 이 id만 추적
+                locked_target_cls = target["cls"]  # 최종 확인용 — 이 클래스로 락 걸렸다는 기준값
+                _cls_history      = []
                 print(f"\n[상태] 타겟 발견 (area={target['area']}) → 정밀 정렬 시작 (그리퍼는 닫힌 채 유지)")
 
             else:
