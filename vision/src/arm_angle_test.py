@@ -1,18 +1,20 @@
 """
 arm_angle_test.py — 팔(ID2) 각도(raw)를 실시간으로 시험하는 단독 테스트 (카메라 확인 포함)
 
-robot.ino(현재 올라가 있는 메인 펌웨어)에 이미 통합된 arm_to 명령("cmd":"arm_to","raw":N)을
-OpenRB로 그대로 보내는 방식이라 재업로드 없이 바로 사용 가능. arm_to는 OpenRB가 IDLE
+robot.ino(현재 올라가 있는 메인 펌웨어)에 이미 통합된 arm_to/gripper_open/gripper_close
+명령을 OpenRB로 그대로 보내는 방식이라 재업로드 없이 바로 사용 가능(단, arm_to는 로직
+자체가 새로 추가된 것이라 robot.ino 재업로드가 한 번 필요함). 이 명령들은 OpenRB가 IDLE
 상태일 때만 처리됨(robot.ino) — 그리퍼가 grip/CHECKING/LIFTING 진행 중이면 무시됨.
 
 카메라 스트리밍은 camera_test.py와, Enter로 사진 저장하는 방식은 record.py의
 --shutter 모드와 동일한 패턴을 그대로 재사용함.
 
 주로 GRIP_CHECK 중간 정지 각도(arm.ino의 ARM_CHECK_RAW)를 실측할 때 사용한다:
-1. 그리퍼가 물체를 문 채로 이 스크립트에서 raw 값을 이것저것 옮겨보고
-2. 브라우저(http://<젯슨IP>:8084)로 그 각도에서 그리퍼 안(집은 물체)이 보이는지 확인한 뒤
-3. Enter만 누르면 그 순간 화면을 사진으로 저장(vision/records/arm_angle_test/)해서 비교
-4. 딱 맞는 값을 찾으면 arm.ino의 ARM_CHECK_RAW 상수에 반영.
+1. o로 그리퍼를 열어 물체를 손으로 물려두거나 x로 닫아 빈 상태를 만들고
+2. 팔 raw 값을 이것저것 옮겨보며
+3. 브라우저(http://<젯슨IP>:8084)로 그 각도에서 그리퍼 안(집은 물체)이 보이는지 확인한 뒤
+4. Enter만 누르면 그 순간 화면을 사진으로 저장(vision/records/arm_angle_test/)해서 비교
+5. 딱 맞는 값을 찾으면 arm.ino의 ARM_CHECK_RAW 상수에 반영.
 
 사용법:
   python vision/src/arm_angle_test.py
@@ -22,6 +24,8 @@ OpenRB로 그대로 보내는 방식이라 재업로드 없이 바로 사용 가
   d Enter        ARM_DOWN_RAW(1480, 집기 위치)로 이동
   u Enter        ARM_UP_RAW(2850, 투하 위치)로 이동
   c Enter        ARM_CHECK_RAW(2100, arm.ino 현재값)로 이동
+  o Enter        그리퍼 열기 (gripper_open)
+  x Enter        그리퍼 닫기 (gripper_close, 대기 상태)
   그냥 Enter     현재 화면을 사진으로 저장 (파일명에 마지막으로 보낸 raw 값 포함)
   q Enter        종료
 """
@@ -171,6 +175,16 @@ def send_arm_to(ser, raw):
     print(f"[전송] arm_to raw={raw}")
 
 
+def send_gripper_open(ser):
+    ser.write((json.dumps({"cmd": "gripper_open"}) + "\n").encode())
+    print("[전송] gripper_open")
+
+
+def send_gripper_close(ser):
+    ser.write((json.dumps({"cmd": "gripper_close"}) + "\n").encode())
+    print("[전송] gripper_close")
+
+
 def wait_response(ser, timeout=5.0):
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -194,7 +208,7 @@ def main():
     ser.reset_input_buffer()
 
     print("[준비 완료] <숫자>=raw 이동, d(집기위치)/u(투하위치)/c(그립확인 중간위치),")
-    print("            그냥 Enter=사진 촬영, q=종료")
+    print("            o(그리퍼 열기)/x(그리퍼 닫기), 그냥 Enter=사진 촬영, q=종료")
 
     last_raw    = None
     snapshot_no = 0
@@ -220,11 +234,17 @@ def main():
                 last_raw = ARM_CHECK_RAW
                 send_arm_to(ser, last_raw)
                 wait_response(ser)
+            elif raw_in == "o":
+                send_gripper_open(ser)
+                wait_response(ser)
+            elif raw_in == "x":
+                send_gripper_close(ser)
+                wait_response(ser)
             else:
                 try:
                     raw = int(raw_in)
                 except ValueError:
-                    print("[오류] 숫자(0~4095), d/u/c, 빈 Enter(촬영), q 중 하나를 입력하세요")
+                    print("[오류] 숫자(0~4095), d/u/c, o/x(그리퍼), 빈 Enter(촬영), q 중 하나를 입력하세요")
                     continue
                 if not (0 <= raw <= 4095):
                     print("[오류] raw는 0~4095 범위여야 합니다")
