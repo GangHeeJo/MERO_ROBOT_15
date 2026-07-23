@@ -15,10 +15,10 @@ flag를 집으러 가지 않고, GO_TO_STORAGE에서만 같은 탐지 결과 중
 match_start_time을 그만큼 과거로 당겨서 실제 경기 시계와 동기화. 카메라 hang 등으로
 경기 도중 main.py를 재시작해야 할 때, 그 시점의 실제 남은 시간을 입력하면 됨
 (안 하면 PICK_PHASE_SECS 카운트다운이 재시작 시점부터 새로 시작돼서 실제 경기 종료
-전에 GO_TO_STORAGE 전환을 영영 못 하는 문제가 있었음). 이 입력 직후 PICK_PHASE_SECS
-(150s=2분30초) 동안 SEARCHING/GRIPPING/
-POST_GRIP_SCAN을 반복하다가, 그 시간이 지나면 셋 중 어느 상태에 있든(grip
-응답 대기 중이든 집기후 스캔 중이든) 매 프레임 즉시 GO_TO_STORAGE로 전환됨
+전에 GO_TO_STORAGE 전환을 영영 못 하는 문제가 있었음). 이 입력 직후 SEARCHING/GRIPPING/
+POST_GRIP_SCAN을 반복하다가, GRIP_COUNT_STORAGE_THRESHOLD(7개) 다 집었거나
+PICK_PHASE_SECS(150s=2분30초, 안전장치) 지나면 — 둘 중 하나만 만족해도 — 셋 중
+어느 상태에 있든(grip 응답 대기 중이든 집기후 스캔 중이든) 매 프레임 즉시 GO_TO_STORAGE로 전환됨
 (남은 30초 동안 먼저 그 자리에서 천천히 한 바퀴 초기 스캔 → 못 찾으면 물체 밀집
 방향으로 이동하며 flag 탐색 → 감지되면 잠깐 정지 후 좌우(cx) 중앙 정렬 → 정렬 끝나면
 직진 접근 → area 임계 도달 시 정지, 경기 종료 취급).
@@ -279,7 +279,8 @@ STORAGE_TIMEOUT_SECS = 60.0   # GO_TO_STORAGE 전체 최대 시간 (태극기 �
 
 # 경기 타이머 / 픽업↔보관 전환
 MATCH_DURATION_SECS = 180.0
-PICK_PHASE_SECS      = 150.0  # 이 시간(2분30초) 지나면 SEARCHING/GRIPPING 중이든 상관없이 GO_TO_STORAGE로 전환
+PICK_PHASE_SECS      = 150.0  # 이 시간(2분30초) 지나면 SEARCHING/GRIPPING 중이든 상관없이 GO_TO_STORAGE로 전환 (안전장치)
+GRIP_COUNT_STORAGE_THRESHOLD = 7  # grip_success_count가 이 개수 이상이면 PICK_PHASE_SECS 안 기다리고 바로 GO_TO_STORAGE로 전환
 SHOW_TIMER            = args.timer  # 화면에 카운트다운 표시 여부 (전환 로직 자체는 --timer 없어도 항상 동작)
 
 # ── 태극기 네비게이션 파라미터 ──────────────────────────
@@ -1058,12 +1059,15 @@ try:
             _write_esp32({"T": 126})
             _last_imu_req = _now_loop
 
-        # ── 픽업 시간(2분30초) 마감 체크 — SEARCHING/GRIPPING/POST_GRIP_SCAN 중
-        # 어느 상태에 있든(grip 응답 대기 중이든 집기후 스캔 중이든) 즉시 중단하고
-        # 보관함 이동으로 전환. GRIPPING/POST_GRIP_SCAN에서도 걸리게 해야 최악의 경우
-        # (grip 타임아웃 15초 + 스캔 4초)에도 남은 30초를 거의 다 까먹지 않는다.
+        # ── 픽업 종료 조건 체크 — SEARCHING/GRIPPING/POST_GRIP_SCAN 중 어느 상태에 있든
+        # (grip 응답 대기 중이든 집기후 스캔 중이든) 즉시 중단하고 보관함 이동으로 전환.
+        # 둘 중 하나만 만족해도 전환: GRIP_COUNT_STORAGE_THRESHOLD(7개) 다 잡았거나,
+        # PICK_PHASE_SECS(2분30초, 안전장치) 지났거나. GRIPPING/POST_GRIP_SCAN에서도
+        # 걸리게 해야 최악의 경우(grip 타임아웃 15초+스캔 4초)에도 남은 시간을 거의 안 까먹는다.
+        _pick_time_up  = time.time() - match_start_time >= PICK_PHASE_SECS
+        _pick_count_up = grip_success_count >= GRIP_COUNT_STORAGE_THRESHOLD
         if (robot_state in (RobotState.SEARCHING, RobotState.GRIPPING, RobotState.POST_GRIP_SCAN)
-                and time.time() - match_start_time >= PICK_PHASE_SECS):
+                and (_pick_time_up or _pick_count_up)):
             control_wheels(None)
             if gripper_prepped:
                 send_gripper_close()
@@ -1084,7 +1088,8 @@ try:
             storage_enter_time   = time.time()
             send_cam_backward()   # 경기당 1회 — 이후 다시 정면으로 돌릴 일 없음
             send_arm_up()         # 카메라 회전과 동시에 팔도 규정 크기 위치로 복귀
-            print(f"\n[상태] 픽업 시간 종료({PICK_PHASE_SECS:.0f}s) → GO_TO_STORAGE 전환")
+            _reason = f"{GRIP_COUNT_STORAGE_THRESHOLD}개 다 집음" if _pick_count_up else f"픽업 시간 종료({PICK_PHASE_SECS:.0f}s)"
+            print(f"\n[상태] {_reason} → GO_TO_STORAGE 전환")
 
         # ── 상태 머신 ──────────────────────────────────
         if robot_state == RobotState.SEARCHING:
