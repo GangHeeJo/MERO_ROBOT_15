@@ -116,8 +116,8 @@ FRUIT_CLASSES = {'apple', 'banana', 'orange', 'pineapple'}
 
 # ── 모델 로드 (통합 모델 하나 — 도형+과일+flag 전부 포함) ──
 BASE_DIR   = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODEL_PATH = os.path.join(BASE_DIR, "model", "best.engine")  # 2026-07-22 TensorRT 변환 완료, 전환
-# 변환 전(PyTorch) 원본: MODEL_PATH = os.path.join(BASE_DIR, "model", "best.pt")
+MODEL_PATH = os.path.join(BASE_DIR, "model", "best.pt")  # TensorRT 변환 생략, PyTorch 원본 직접 사용(속도는 느림)
+# TensorRT 변환본 쓸 때: MODEL_PATH = os.path.join(BASE_DIR, "model", "best.engine")
 model = YOLO(MODEL_PATH)
 FLAG_CLASS_AVAILABLE = 'flag' in model.names.values()
 if not FLAG_CLASS_AVAILABLE:
