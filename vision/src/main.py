@@ -163,11 +163,11 @@ CLUSTER_RADIUS_PX      = 300   # 이 픽셀 반경 안에 있는 다른 물체 �
 OVERLAP_MERGE_RADIUS_PX = 40   # 이 픽셀 이내로 중심이 겹치면 "같은 물체"로 보고 과일 쪽 우선
 
 def select_target(objects: list) -> dict | None:
-    """--cls 필터 + 클래스별 confidence 임계값 통과한 것 중 화면 중앙에 가장 가까운(=area가 큰) 것 하나를 고른다.
-    예전엔 주변 밀집도(cluster_score)를 1순위로 썼는데, 그 값이 다른 물체 검출 여부에 따라
-    프레임마다 흔들리기 쉬워서 후보가 여러 개일 때 매 프레임 다른 물체로 선택이 튀는 원인이었음 —
-    area 단독 기준으로 단순화. (정밀 정렬 시작 후에는 이 함수를 다시 안 부르고 last_target_id로
-    같은 물체를 계속 추적하니, 이 함수는 "처음에 뭘 고를지"만 담당한다.)
+    """--cls 필터 + 클래스별 confidence 임계값 통과한 것 중 가장 오른쪽(cx 큰 것) 하나를 고른다.
+    예전엔 area(화면 중앙 가까운/큰 것) 기준이었는데, 같은 물체 2개가 붙어있는 경우처럼
+    area만으로 고르기 애매한 상황 대응을 위해 오른쪽 우선으로 변경. (정밀 정렬 시작 후에는
+    이 함수를 다시 안 부르고 last_target_id로 같은 물체를 계속 추적하니, 이 함수는
+    "처음에 뭘 고를지"만 담당한다.)
     과일 큐브는 모양이 d6과 같아서 같은 물체에 shape+fruit 박스가 겹쳐 잡힐 수 있음 —
     이 경우 표면 이미지가 진짜 정체성이므로 과일 쪽을 우선(겹치는 shape 후보는 제거)."""
     if not objects:
@@ -197,7 +197,9 @@ def select_target(objects: list) -> dict | None:
                 break
     filtered = fruit_candidates + shape_candidates
 
-    return max(filtered, key=lambda o: o['area'])
+    # 후보가 여러 개면(같은 물체끼리 붙어있는 경우 등 area만으로 고르기 애매한 상황)
+    # 오른쪽에 있는 것부터(cx 큰 순) 우선 선택 — 후보 1개면 그거 그대로 반환
+    return max(filtered, key=lambda o: o['cx'])
 
 
 # ── 시리얼 포트 자동 감지 ────────────────────────────────
