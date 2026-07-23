@@ -34,7 +34,7 @@ bool safeSetGoalPosition(uint8_t id, int32_t goal_raw, uint32_t wait_ms);
 #define CONTAINER_TORQUE_PCT 60
 
 // ── 속도 (Profile Velocity, 낮을수록 느림) ───────────────
-#define ARM_SPEED       150
+#define ARM_SPEED       110
 #define CONTAINER_SPEED 40
 
 // ── 모터 한 개 초기화 헬퍼 ───────────────────────────────
