@@ -33,7 +33,8 @@ cam_backward(카메라 후방)와 arm_up(팔 규정 크기 위치 복귀)을 동
                    직진 접근 후 grip 전송
   GRIPPING       — grip 전송 후 gripped 신호 대기 (집기+팔올림+투하+팔내림 완료)
                    → gripped 수신 시 POST_GRIP_SCAN
-  POST_GRIP_SCAN — 집기 직후 제자리 스캔, 타겟 있으면/시간 다 차면 SEARCHING
+  POST_GRIP_SCAN — 집기 직후 POST_GRIP_BACKUP_SECS(1초) 후진 후 제자리 스캔,
+                   타겟 있으면/시간 다 차면 SEARCHING
   GO_TO_STORAGE  — 제자리 회전하며 flag 탐색 → 발견 시 좌우(cx)만 정렬(방향만 맞춤,
                    상하/거리 정렬 없음) → 정렬 끝나면 멈추지 않고 그 상태로 계속 직진 —
                    모빌리티 자체가 스토리지 안까지 진입 (dump 명령 없음, 여기서 경기 종료 취급)
@@ -248,6 +249,8 @@ MIN_DETECTED_FOR_EXPLORE = 3      # 탐색 이동 조건: 클래스 무관 총 �
                                    #  안 보이는 방향으로 무작정 전진하면 벽에 부딪힐 수 있어서)
                                    # SEARCH_ROTATE_SPEED 기준 3초≈180도 (실측)
 POST_GRIP_SCAN_SECS       = 4.0   # 집기 완료 직후 제자리 360도 스캔 시간 (SEARCH_ROTATE_SPEED 기준, 실측 필요)
+POST_GRIP_BACKUP_SECS     = 1.0   # 회전 스캔 시작 전 먼저 뒤로 후진하는 시간
+POST_GRIP_BACKUP_SPEED    = 0.2   # 후진 속도
 CENTER_MARGIN_PX    = 42      # 픽셀 모드: 가로 중심에서 이 픽셀 이내 (시각화 가이드용, 면적 2배)
 CENTER_MARGIN_Y_PX  = 35      # 픽셀 모드: 세로 중심에서 이 픽셀 이내 (시각화 가이드용, 면적 2배)
 CENTER_OFFSET_Y_PX  = 170     # 세로 중심 오프셋 (양수=아래)
@@ -1227,21 +1230,26 @@ try:
                 print(f"[상태] 집어서 컨테이너 투하중... ({elapsed:.1f}s)", end="\r")
 
         elif robot_state == RobotState.POST_GRIP_SCAN:
-            # 집기 시도(성공/실패 무관) 직후 — 이동하지 않고 제자리에서 한 바퀴 돌며
-            # 주변에 바로 이어서 집을 만한 타겟이 있는지 확인한다. 발견하거나 스캔 시간이
-            # 다 차면 SEARCHING으로 넘겨서 이후 정밀 정렬/탐색은 기존 로직이 그대로 처리한다.
+            # 집기 시도(성공/실패 무관) 직후 — 먼저 POST_GRIP_BACKUP_SECS(1초) 동안 뒤로
+            # 후진한 다음, 제자리에서 한 바퀴 돌며(POST_GRIP_SCAN_SECS) 주변에 바로 이어서
+            # 집을 만한 타겟이 있는지 확인한다. 발견하거나 스캔 시간이 다 차면 SEARCHING으로
+            # 넘겨서 이후 정밀 정렬/탐색은 기존 로직이 그대로 처리한다.
             elapsed_scan = time.time() - post_grip_scan_start
             if target:
                 control_wheels(None)
                 robot_state = RobotState.SEARCHING
                 print(f"\n[상태] 스캔 중 타겟 발견 ({target['cls']}) → SEARCHING 복귀")
-            elif elapsed_scan >= POST_GRIP_SCAN_SECS:
+            elif elapsed_scan < POST_GRIP_BACKUP_SECS:
+                control_wheels(None, override_l=-POST_GRIP_BACKUP_SPEED, override_r=-POST_GRIP_BACKUP_SPEED)
+                print(f"[상태] 집기 후 후진중... ({elapsed_scan:.1f}/{POST_GRIP_BACKUP_SECS:.1f}s)", end="\r")
+            elif elapsed_scan >= POST_GRIP_BACKUP_SECS + POST_GRIP_SCAN_SECS:
                 control_wheels(None)
                 robot_state = RobotState.SEARCHING
                 print(f"\n[상태] 주변 스캔 완료 (새 타겟 없음) → SEARCHING 복귀")
             else:
+                scan_elapsed = elapsed_scan - POST_GRIP_BACKUP_SECS
                 control_wheels(None, override_l=-SEARCH_ROTATE_SPEED, override_r=SEARCH_ROTATE_SPEED)
-                print(f"[상태] 집기 후 주변 스캔중... ({elapsed_scan:.1f}/{POST_GRIP_SCAN_SECS:.1f}s)", end="\r")
+                print(f"[상태] 집기 후 주변 스캔중... ({scan_elapsed:.1f}/{POST_GRIP_SCAN_SECS:.1f}s)", end="\r")
             send_idle()
 
         elif robot_state == RobotState.GO_TO_STORAGE:
