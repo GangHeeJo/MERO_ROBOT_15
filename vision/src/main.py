@@ -112,14 +112,16 @@ model = YOLO(MODEL_PATH)
 
 # 일부 데이터셋 export에서 클래스 이름 앞에 "1_", "2_" 같은 순번 접두어가 붙어 나올 때가
 # 있음(라벨링 순서 표기 등) — 아래 클래스 매칭(SHAPE_CLASSES/FRUIT_CLASSES/'flag')이 전부
-# 접두어 없는 이름 기준이라, 재학습 없이 여기서 이름만 정리해서 맞춘다.
-# model.names는 읽기 전용 프로퍼티라 통째로 재할당은 안 되고, 반환된 dict 자체를
-# in-place로 고쳐야 한다(model.names[i] = ... 는 dict의 __setitem__이라 문제없음).
-for _i, _n in list(model.names.items()):
-    if '_' in _n and _n.split('_', 1)[0].isdigit():
-        model.names[_i] = _n.split('_', 1)[1]
+# 접두어 없는 이름 기준이라 맞춰줘야 함. model.names를 직접 고쳐도(in-place) 실제
+# track()/predict() 추론 결과에는 반영이 안 됨(ultralytics가 내부적으로 predictor
+# 생성 시 체크포인트에서 별도로 다시 읽어오는 것으로 보임, 실측 확인됨) — 그래서
+# model.names는 그대로 두고, 별도의 이름 매핑 테이블을 만들어서 그걸 쓴다.
+CLASS_NAMES = {
+    i: (n.split('_', 1)[1] if '_' in n and n.split('_', 1)[0].isdigit() else n)
+    for i, n in model.names.items()
+}
 
-FLAG_CLASS_AVAILABLE = 'flag' in model.names.values()
+FLAG_CLASS_AVAILABLE = 'flag' in CLASS_NAMES.values()
 if not FLAG_CLASS_AVAILABLE:
     print("[모델] best.pt에 flag 클래스 없음 — GO_TO_STORAGE 태극기 감지 비활성화")
 
@@ -1049,7 +1051,7 @@ try:
             ids = boxes.id
             for i, box in enumerate(boxes):
                 cls_id   = int(box.cls[0])
-                cls_name = model.names[cls_id]
+                cls_name = CLASS_NAMES[cls_id]
                 conf     = float(box.conf[0])
                 x1, y1, x2, y2 = box.xyxy[0].tolist()
                 cx = (x1 + x2) / 2
