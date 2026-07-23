@@ -1341,8 +1341,10 @@ try:
                 robot_state = RobotState.SEARCHING
 
             elif flag_arrived:
-                # 이미 정렬 완료 — 더 이상 아무 것도 안 함(경기 종료 취급)
+                # 정렬+접근 완료 — 경기 종료 취급, 정지하고 프로그램 자체를 끝낸다
                 control_wheels(None)
+                print("\n[상태] 스토리지 도달 완료 — 프로그램 종료")
+                break
 
             elif flag_settle:
                 # 태극기 첫 감지 직후 — 정렬 진입 전 짧게 정지해서 카메라/트래킹 안정화
