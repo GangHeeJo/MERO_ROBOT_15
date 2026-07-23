@@ -23,8 +23,8 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # ── 파라미터 ─────────────────────────────────────────────
-GRADIENT_THRESHOLD  = 40    # 이 값 이상이면 "강한 가로 경계"로 판단 (0~255 스케일, 실측 후 조정)
-MIN_COVERAGE_RATIO  = 0.6   # 한 행에서 이 비율(60%) 이상 폭에 걸쳐 경계가 있어야 "쭉 이어진 선"으로 인정
+GRADIENT_THRESHOLD  = 25    # 이 값 이상이면 "강한 가로 경계"로 판단 (0~255 스케일, 실측 후 조정)
+MIN_COVERAGE_RATIO  = 0.3   # 한 행에서 이 비율 이상 폭에 걸쳐 경계가 있어야 "쭉 이어진 선"으로 인정
 SMOOTH_WINDOW       = 5     # coverage 프로파일 노이즈 완화용 이동평균 윈도우(행 단위)
 
 
@@ -48,8 +48,9 @@ def _find_camera_index(keywords, fallback):
 
 
 def find_wall_line(gray):
-    """가장 넓게 이어진 가로 경계선의 y좌표를 반환. 못 찾으면 None.
-    반환값: (y, coverage_ratio)"""
+    """가장 넓게 이어진 가로 경계선의 y좌표를 반환. 임계값 통과 여부와 무관하게
+    항상 최선 후보를 반환 — 튜닝 중엔 위치가 맞는지 눈으로 먼저 확인하기 위함.
+    반환값: (best_y, coverage_ratio, passed_threshold)"""
     sobel_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
     edge_mask = np.abs(sobel_y) >= GRADIENT_THRESHOLD
 
@@ -62,10 +63,7 @@ def find_wall_line(gray):
 
     best_y = int(np.argmax(smoothed))
     best_coverage = smoothed[best_y]
-
-    if best_coverage < MIN_COVERAGE_RATIO:
-        return None, best_coverage
-    return best_y, best_coverage
+    return best_y, best_coverage, best_coverage >= MIN_COVERAGE_RATIO
 
 
 CAM_INDEX = _find_camera_index(["arducam"], 0)
@@ -142,14 +140,12 @@ try:
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         gray = cv2.GaussianBlur(gray, (5, 5), 0)
-        wall_y, coverage = find_wall_line(gray)
+        wall_y, coverage, passed = find_wall_line(gray)
 
         if time.time() - _last_print_t >= 0.3:
             h = gray.shape[0]
-            if wall_y is not None:
-                print(f"[벽] y={wall_y} ({wall_y/h*100:.0f}% 지점, coverage={coverage*100:.0f}%)")
-            else:
-                print(f"[벽] 못 찾음 (최대 coverage={coverage*100:.0f}%, 필요={MIN_COVERAGE_RATIO*100:.0f}%)", end="\r")
+            tag = "확정" if passed else "후보(미달)"
+            print(f"[벽:{tag}] y={wall_y} ({wall_y/h*100:.0f}% 지점, coverage={coverage*100:.0f}%, 필요={MIN_COVERAGE_RATIO*100:.0f}%)")
             _last_print_t = time.time()
 
         fps_counter += 1
@@ -164,13 +160,11 @@ try:
         if watching:
             annotated = frame.copy()
             h, w = annotated.shape[:2]
-            if wall_y is not None:
-                cv2.line(annotated, (0, wall_y), (w, wall_y), (0, 255, 0), 2)
-                cv2.putText(annotated, f"WALL y={wall_y} ({wall_y/h*100:.0f}%) cov={coverage*100:.0f}%",
-                            (10, max(30, wall_y - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            else:
-                cv2.putText(annotated, f"WALL not found (best cov={coverage*100:.0f}%)",
-                            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            color = (0, 255, 0) if passed else (0, 165, 255)  # 확정=초록, 미달 후보=주황
+            cv2.line(annotated, (0, wall_y), (w, wall_y), color, 2)
+            tag = "WALL" if passed else "candidate(below threshold)"
+            cv2.putText(annotated, f"{tag} y={wall_y} ({wall_y/h*100:.0f}%) cov={coverage*100:.0f}%",
+                        (10, max(30, wall_y - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
             with _lock:
                 _stream_frame = annotated
 
