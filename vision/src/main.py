@@ -106,8 +106,8 @@ FRUIT_CLASSES = {'apple', 'banana', 'orange', 'pineapple'}
 
 # ── 모델 로드 (통합 모델 하나 — 도형+과일+flag 전부 포함) ──
 BASE_DIR   = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODEL_PATH = os.path.join(BASE_DIR, "model", "best.engine")  # 2026-07-22 TensorRT 변환 완료, 전환
-# 변환 전(PyTorch) 원본: MODEL_PATH = os.path.join(BASE_DIR, "model", "best.pt")
+MODEL_PATH = os.path.join(BASE_DIR, "model", "best_final.pt")  # 2026-07-24 test-best-final 브랜치 — 새 가중치 테스트용
+# 기존(snapshot-1504) TensorRT 경로: MODEL_PATH = os.path.join(BASE_DIR, "model", "best.engine")
 model = YOLO(MODEL_PATH)
 
 # 일부 데이터셋 export에서 클래스 이름 앞에 "1_", "2_" 같은 순번 접두어가 붙어 나올 때가
