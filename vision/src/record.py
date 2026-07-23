@@ -181,7 +181,12 @@ def shutter(cls, cam_idx, args_w=None, args_h=None):
     try:
         while True:
             input(f"  [{frame_num}번째] Enter로 촬영...")
-            ret, frame = cap.read()
+            # Enter 기다리는 동안 카메라가 계속 프레임을 버퍼에 쌓아둬서, read() 한 번만
+            # 하면 지금 이 순간이 아니라 버퍼에 밀려있던 오래된 프레임이 나옴 — 몇 장
+            # 미리 읽어서 버퍼를 비운 뒤 마지막 것만 저장한다.
+            ret, frame = False, None
+            for _ in range(5):
+                ret, frame = cap.read()
             if not ret:
                 print("프레임 읽기 실패")
                 continue
