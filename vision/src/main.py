@@ -304,6 +304,13 @@ FLAG_ALIGN_SPEED         = 0.25   # 좌우 정렬(제자리 회전) 속도
 FLAG_APPROACH_SPEED      = 0.4    # 후진 접근 속도
 FLAG_APPROACH_SLOW       = 0.1    # 감속 후진 속도
 
+# 태극기 탐색 중 물체가 많이 보이면(밀집 방향, SEARCHING과 동일 로직) 그쪽으로 이동 —
+# 필드 배치상 물체 격자 중앙 쪽이 구석보다 보관함 방향 시야가 덜 가려서, 회전만 하는
+# 것보다 태극기 발견 확률이 올라감. SEARCHING(MIN_DETECTED_FOR_EXPLORE=3)보다 임계값을
+# 높게 잡아서(확실히 많이 보일 때만) 신중하게 이동.
+STORAGE_EXPLORE_MIN_DETECTED = 6
+STORAGE_EXPLORE_SPEED        = 0.35   # SEARCHING의 MOVE_SPEED(0.25)보다 높게
+
 # ── 상태 머신 ────────────────────────────────────────────
 class RobotState(Enum):
     SEARCHING      = "SEARCHING"
@@ -1351,14 +1358,31 @@ try:
                 fw2 = FRAME_W or 640
 
                 if storage_phase == 0:
-                    # 태극기 탐색 — 제자리 회전
+                    # 태극기 탐색 — 기본은 제자리 회전, 물체가 많이(밀집) 보이면 그쪽으로
+                    # 이동(SEARCHING 밀집 이동과 동일 로직, 임계값/속도만 다름)
                     if flag_candidates:
                         storage_phase       = 1
                         storage_phase_start = now
                         print(f"\n[상태] 태극기 발견 → 접근 시작")
                     else:
-                        control_wheels(None, override_l=FLAG_SEARCH_SPEED, override_r=-FLAG_SEARCH_SPEED)
-                        print(f"[상태] 태극기 탐색 회전중... ({total_elapsed:.1f}s)", end="\r")
+                        explorable_s = [o for o in detected if o['cls'] != 'flag']
+                        if len(explorable_s) >= STORAGE_EXPLORE_MIN_DETECTED:
+                            def _neighbor_count_s(o):
+                                return sum(
+                                    1 for other in explorable_s
+                                    if other is not o and ((other['cx'] - o['cx']) ** 2 + (other['cy'] - o['cy']) ** 2) ** 0.5 <= CLUSTER_RADIUS_PX
+                                )
+                            weights_s    = [_neighbor_count_s(o) + 1 for o in explorable_s]
+                            weight_sum_s = sum(weights_s)
+                            dense_cx_s   = sum(o["cx"] * w for o, w in zip(explorable_s, weights_s)) / weight_sum_s
+                            turn_s = max(-1.0, min(1.0, (dense_cx_s - fw2 / 2) / (fw2 / 2)))
+                            L_s = max(-0.5, min(0.5, STORAGE_EXPLORE_SPEED * (1.0 + turn_s)))
+                            R_s = max(-0.5, min(0.5, STORAGE_EXPLORE_SPEED * (1.0 - turn_s)))
+                            control_wheels(None, override_l=L_s, override_r=R_s)
+                            print(f"[상태] 태극기 탐색중 물체 밀집({len(explorable_s)}개) 쪽으로 이동... cx={dense_cx_s:.0f}", end="\r")
+                        else:
+                            control_wheels(None, override_l=FLAG_SEARCH_SPEED, override_r=-FLAG_SEARCH_SPEED)
+                            print(f"[상태] 태극기 탐색 회전중... ({total_elapsed:.1f}s)", end="\r")
 
                 elif storage_phase == 1:
                     # 보이는 모든 태극기의 중심(cx 평균)을 화면 중앙 세로선에 맞추는 좌우 보정과
