@@ -19,7 +19,8 @@ match_start_time을 그만큼 과거로 당겨서 실제 경기 시계와 동기
 (150s=2분30초) 동안 SEARCHING/GRIPPING/
 POST_GRIP_SCAN을 반복하다가, 그 시간이 지나면 셋 중 어느 상태에 있든(grip
 응답 대기 중이든 집기후 스캔 중이든) 매 프레임 즉시 GO_TO_STORAGE로 전환됨
-(남은 30초 동안 회전하며 flag 탐색 → 1프레임이라도 감지되면 정렬/접근 없이 즉시 정지, 경기 종료 취급).
+(남은 30초 동안 물체 밀집 방향으로 이동하며 flag 탐색 → 감지되면 잠깐 정지 후
+좌우(cx) 중앙 정렬 → 정렬 완료되면 정지, 경기 종료 취급).
 전환 시점에
 cam_backward(카메라 후방)와 arm_up(팔 규정 크기 위치 복귀)을 동시에 전송함. 이 체크는
 상태머신 분기 진입 전에 한 번만 수행 — GRIPPING/POST_GRIP_SCAN에서도
@@ -33,8 +34,8 @@ cam_backward(카메라 후방)와 arm_up(팔 규정 크기 위치 복귀)을 동
                    → gripped 수신 시 POST_GRIP_SCAN
   POST_GRIP_SCAN — 집기 직후 POST_GRIP_BACKUP_SECS(1초) 후진 후 제자리 스캔,
                    타겟 있으면/시간 다 차면 SEARCHING
-  GO_TO_STORAGE  — 제자리 회전하며 flag 탐색 → 1프레임이라도 감지되면 정렬/접근 없이
-                   즉시 정지 (dump 명령 없음, 여기서 경기 종료 취급)
+  GO_TO_STORAGE  — 물체 밀집 방향 이동하며 flag 탐색 → 감지 시 잠깐 정지 후
+                   좌우(cx) 중앙 정렬 → 완료되면 정지 (dump 명령 없음, 경기 종료 취급)
 
 시리얼:
   /dev/ttyACM0 → ESP32  (UGV02 바퀴)   {"T":1, "L":speed, "R":speed}
@@ -276,21 +277,25 @@ PICK_PHASE_SECS      = 150.0  # 이 시간(2분30초) 지나면 SEARCHING/GRIPPI
 SHOW_TIMER            = args.timer  # 화면에 카운트다운 표시 여부 (전환 로직 자체는 --timer 없어도 항상 동작)
 
 # ── 태극기 네비게이션 파라미터 ──────────────────────────
-# 정렬/접근 없이 태극기 1프레임 감지 즉시 정지 — 실측 안 된 area 임계값에 기대는
-# 대신 단순하고 확실한 쪽 선택 (2026-07-24).
-FLAG_CONF_THRESHOLD  = 0.5
-FLAG_SEARCH_SPEED    = 0.07   # 탐색 회전 속도
+FLAG_CONF_THRESHOLD   = 0.5
+FLAG_SEARCH_SPEED     = 0.07   # 탐색 회전 속도(밀집 이동할 물체가 부족할 때만 사용)
+FLAG_CENTER_MARGIN_PX = 100    # 정렬 허용 오차(px) — 이 안이면 "정렬 완료"로 판단
+FLAG_ALIGN_SPEED      = 0.25   # 정렬 회전 속도
+FLAG_SETTLE_SECS      = 1.0    # 태극기 첫 감지 직후 짧게 정지하는 시간(정렬 진입 전 안정화)
 
 # ── 상태 머신 ────────────────────────────────────────────
 class RobotState(Enum):
     SEARCHING      = "SEARCHING"
     GRIPPING       = "GRIPPING"
     POST_GRIP_SCAN = "POST_GRIP_SCAN"
-    GO_TO_STORAGE  = "GO_TO_STORAGE"  # 제자리 회전하며 태극기 탐색 → 1프레임이라도 감지되면 즉시 정지 (경기 종료 취급)
+    GO_TO_STORAGE  = "GO_TO_STORAGE"  # 밀집 방향 탐색 → 태극기 감지 시 잠깐 정지 후 중앙 정렬 → 정렬 완료되면 정지(경기 종료 취급)
 
 robot_state          = RobotState.SEARCHING
 grip_sent_at         = 0.0
-flag_arrived             = False  # 태극기 감지되어 정지 완료 — 이후 아무 것도 안 함
+storage_phase        = 0      # 0=탐색(밀집 이동/회전), 1=정렬(중앙 맞추기)
+flag_settle          = False  # 태극기 첫 감지 직후 FLAG_SETTLE_SECS만큼 정지 대기 중
+flag_settle_start    = 0.0
+flag_arrived         = False  # 정렬 완료 — 이후 아무 것도 안 함
 storage_enter_time   = 0.0
 confirm_count        = 0
 last_target_id       = -1
@@ -549,6 +554,28 @@ def _is_at_target(target: dict) -> bool:
         dist = (target["mx"] ** 2 + target["my"] ** 2) ** 0.5
         return dist < ARRIVE_THRESHOLD_MM
     return target.get("area", 0) >= AREA_GRIP_THRESHOLD
+
+
+def _dense_object_target(objects: list) -> dict | None:
+    """물체가 가장 많이 몰려있는 방향(밀집도 가중 중심)을 조향 타겟으로 반환.
+    고립된 물체 하나 쪽으로 잘못 쏠리지 않도록, 각 물체의 조향 기여도를
+    "주변 CLUSTER_RADIUS_PX 이내 이웃 개수+1"로 가중해서 평균낸다.
+    objects 개수가 MIN_DETECTED_FOR_EXPLORE 미만이면(=밀집도 비교 불가) None.
+    SEARCHING 탐색과 GO_TO_STORAGE 태극기 탐색이 공유해서 씀."""
+    if len(objects) < MIN_DETECTED_FOR_EXPLORE:
+        return None
+
+    def _neighbor_count(o):
+        return sum(
+            1 for other in objects
+            if other is not o and ((other['cx'] - o['cx']) ** 2 + (other['cy'] - o['cy']) ** 2) ** 0.5 <= CLUSTER_RADIUS_PX
+        )
+
+    weights    = [_neighbor_count(o) + 1 for o in objects]
+    weight_sum = sum(weights)
+    dense_cx   = sum(o["cx"] * w for o, w in zip(objects, weights)) / weight_sum
+    dense_area = sum(o["area"] * w for o, w in zip(objects, weights)) / weight_sum
+    return {"cx": dense_cx, "area": dense_area}
 
 
 # ── OpenRB 명령 전송 ─────────────────────────────────────
@@ -883,8 +910,10 @@ frame = None  # 최초 루프 진입 전 초기화
 
 if STORAGE_ONLY:
     # SEARCHING/GRIPPING 완전히 건너뛰고 시작하자마자 GO_TO_STORAGE 진입 —
-    # 태극기 탐색+감지 즉시정지 로직만 단독으로 테스트할 때 사용.
+    # 태극기 탐색+정렬 로직만 단독으로 테스트할 때 사용.
     robot_state        = RobotState.GO_TO_STORAGE
+    storage_phase        = 0
+    flag_settle          = False
     flag_arrived         = False
     storage_enter_time   = time.time()
     send_cam_backward()
@@ -1000,6 +1029,8 @@ try:
             gripper_open_wait    = False
             fb_final_forward     = False
             robot_state          = RobotState.GO_TO_STORAGE
+            storage_phase        = 0
+            flag_settle          = False
             flag_arrived         = False
             storage_enter_time   = time.time()
             send_cam_backward()   # 경기당 1회 — 이후 다시 정면으로 돌릴 일 없음
@@ -1171,31 +1202,18 @@ try:
                 align_phase   = 0
                 precise_align = False
 
-                # 타겟 미검출 — 클래스/신뢰도 상관없이(flag는 제외) 탐지된 물체가 2개 이상이면
-                # 물체가 가장 많이 몰려있는 방향(밀집도 가중 중심)으로 이동하며 탐색한다.
-                # 고립된 물체 하나 쪽으로 잘못 쏠리지 않도록, 각 물체의 조향 기여도를
-                # "주변 CLUSTER_RADIUS_PX 이내 이웃 개수+1"로 가중해서 평균낸다.
-                # 1개 이하면(=밀집도 비교 불가) 제자리 회전만 계속한다 — 안 보이는 방향으로
-                # 무작정 전진하면 벽에 부딪힐 수 있어서 전진은 절대 안 함. 뭔가 보일 때까지 회전.
+                # 타겟 미검출 — 물체가 가장 많이 몰려있는 방향(밀집도 가중 중심)으로 이동하며
+                # 탐색한다(_dense_object_target). 밀집도 비교 불가할 만큼 적으면 제자리 회전만
+                # 계속한다 — 안 보이는 방향으로 무작정 전진하면 벽에 부딪힐 수 있어서 전진은
+                # 절대 안 함. 뭔가 보일 때까지 회전.
                 explorable = [o for o in detected if o['cls'] != 'flag']
-                can_explore = len(explorable) >= MIN_DETECTED_FOR_EXPLORE
+                dense = _dense_object_target(explorable)
 
-                if can_explore:
-                    def _neighbor_count(o):
-                        return sum(
-                            1 for other in explorable
-                            if other is not o and ((other['cx'] - o['cx']) ** 2 + (other['cy'] - o['cy']) ** 2) ** 0.5 <= CLUSTER_RADIUS_PX
-                        )
-
-                    weights     = [_neighbor_count(o) + 1 for o in explorable]
-                    weight_sum  = sum(weights)
-                    dense_cx    = sum(o["cx"] * w for o, w in zip(explorable, weights)) / weight_sum
-                    dense_area  = sum(o["area"] * w for o, w in zip(explorable, weights)) / weight_sum
-
-                    control_wheels({"cx": dense_cx, "area": dense_area})
+                if dense is not None:
+                    control_wheels(dense)
                     search_rotate_start = None
                     if time.time() - _last_print_t >= 0.5:
-                        print(f"[탐색] 물체 {len(explorable)}개 감지, 밀집 방향(cx={dense_cx:.0f}) 으로 이동")
+                        print(f"[탐색] 물체 {len(explorable)}개 감지, 밀집 방향(cx={dense['cx']:.0f}) 으로 이동")
                         _last_print_t = time.time()
 
                 else:
@@ -1274,19 +1292,60 @@ try:
                 robot_state = RobotState.SEARCHING
 
             elif flag_arrived:
-                # 이미 감지되어 정지 완료 — 더 이상 아무 것도 안 함(경기 종료 취급)
+                # 이미 정렬 완료 — 더 이상 아무 것도 안 함(경기 종료 취급)
                 control_wheels(None)
 
+            elif flag_settle:
+                # 태극기 첫 감지 직후 — 정렬 진입 전 짧게 정지해서 카메라/트래킹 안정화
+                control_wheels(None)
+                if now - flag_settle_start >= FLAG_SETTLE_SECS:
+                    flag_settle   = False
+                    storage_phase = 1
+                    print("\n[상태] 정지 대기 완료 → 정렬 시작")
+
             else:
-                # 태극기 탐색 — 제자리 회전하다 1프레임이라도 감지되면 정렬/접근 없이 즉시 정지.
                 flag_candidates = [o for o in detected if o['cls'] == 'flag' and o['conf'] >= FLAG_CONF_THRESHOLD]
-                if flag_candidates:
-                    control_wheels(None)
-                    flag_arrived = True
-                    print(f"\n[상태] 태극기 감지 → 정지 (경기 종료 취급)")
+                fw2 = FRAME_W or 640
+
+                if storage_phase == 0:
+                    # 태극기 탐색 — 1프레임이라도 감지되면 그 자리에서 정지하고 정렬 대기로 전환.
+                    # 안 보이는 동안은 SEARCHING과 동일하게 물체 밀집 방향으로 이동(_dense_object_target),
+                    # 밀집 이동할 만큼 물체가 안 보이면 제자리 회전.
+                    if flag_candidates:
+                        control_wheels(None)
+                        flag_settle       = True
+                        flag_settle_start = now
+                        print(f"\n[상태] 태극기 감지 → 정지 대기 ({FLAG_SETTLE_SECS:.0f}s)")
+                    else:
+                        explorable = [o for o in detected if o['cls'] != 'flag']
+                        dense = _dense_object_target(explorable)
+                        if dense is not None:
+                            control_wheels(dense)
+                            print(f"[상태] 밀집 방향 이동중... cx={dense['cx']:.0f}", end="\r")
+                        else:
+                            control_wheels(None, override_l=FLAG_SEARCH_SPEED, override_r=-FLAG_SEARCH_SPEED)
+                            print(f"[상태] 태극기 탐색 회전중... ({total_elapsed:.1f}s)", end="\r")
+
                 else:
-                    control_wheels(None, override_l=FLAG_SEARCH_SPEED, override_r=-FLAG_SEARCH_SPEED)
-                    print(f"[상태] 태극기 탐색 회전중... ({total_elapsed:.1f}s)", end="\r")
+                    # 정렬 — 보이는 모든 태극기의 중심(cx 평균)을 화면 중앙 세로선에 맞춘다.
+                    # 놓치면(1프레임이라도) 탐색으로 복귀.
+                    if not flag_candidates:
+                        control_wheels(None)
+                        storage_phase = 0
+                        print("\n[상태] 태극기 놓침 → 탐색 복귀")
+                    else:
+                        avg_cx = sum(o["cx"] for o in flag_candidates) / len(flag_candidates)
+                        offset = avg_cx - fw2 / 2
+                        if abs(offset) <= FLAG_CENTER_MARGIN_PX:
+                            control_wheels(None)
+                            flag_arrived = True
+                            print(f"\n[상태] 정렬 완료 (cx={avg_cx:.0f}) → 정지 (경기 종료 취급)")
+                        else:
+                            turn = max(-1.0, min(1.0, offset / (fw2 / 2)))
+                            control_wheels(None,
+                                           override_l=FLAG_ALIGN_SPEED * turn,
+                                           override_r=-FLAG_ALIGN_SPEED * turn)
+                            print(f"[상태] 태극기 정렬중... cx={avg_cx:.0f} (n={len(flag_candidates)})", end="\r")
 
         if frame is None:
             continue
