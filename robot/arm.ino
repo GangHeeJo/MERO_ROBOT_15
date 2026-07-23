@@ -22,7 +22,7 @@ bool safeSetGoalPosition(uint8_t id, int32_t goal_raw, uint32_t wait_ms);
 #define CONT_ID       3
 
 // ── 팔 위치 (raw, 0~4095, 실측) ───────────────────────────
-#define ARM_DOWN_RAW   1480   // 집기 위치
+#define ARM_DOWN_RAW   1580   // 집기 위치
 #define ARM_UP_RAW     2850   // 투하 위치
 
 // ── 바스켓 위치 (raw, 0~4095, 실측) ───────────────────────
