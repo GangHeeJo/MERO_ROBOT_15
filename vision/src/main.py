@@ -300,12 +300,9 @@ FLAG_SEARCH_SPEED        = 0.15   # 탐색 회전 속도(밀집 이동할 물체
 FLAG_CENTER_MARGIN_PX    = 100    # 정렬 허용 오차(px) — 이 안이면 "정렬 완료"로 판단
 FLAG_ALIGN_SPEED         = 0.25   # 정렬 회전 속도
 FLAG_SETTLE_SECS         = 1.0    # 태극기 첫 감지 직후 짧게 정지하는 시간(정렬 진입 전 안정화)
-FLAG_AREA_SLOW_THRESHOLD = 140000 # 감속 시작 면적 (px²) — STOP_THRESHOLD(20만)의 15%였던 걸 70%로 올림,
-                                   # 너무 일찍 감속해서 접근 대부분을 느린 속도로 기어갔던 문제 대응  ⚠️ 임의값 — 실측 필요
 FLAG_AREA_STOP_THRESHOLD = 200000 # 도달 판단 면적 (px²) — 이 이상이면 고정 시간 직진 후 정지  ⚠️ 임의값 — 실측 필요
 FLAG_FINAL_FORWARD_SECS  = 0.5    # 도달 판정 후 직진하는 시간
-FLAG_APPROACH_SPEED      = 0.4    # 직진 접근 속도(후진 — cam_backward 이후라 -값이 카메라가 보는 방향)
-FLAG_APPROACH_SLOW       = 0.1    # 감속 접근 속도
+FLAG_APPROACH_SPEED      = 0.4    # 직진 접근 속도(후진 — cam_backward 이후라 -값이 카메라가 보는 방향) — 감속 없이 끝까지 이 속도 유지
 FLAG_MISS_GRACE_FRAMES   = 10     # 정렬/접근 중 순간적으로 태극기를 놓쳐도 이 프레임까지는 정지 대기 (TARGET_MISS_GRACE_FRAMES와 동일 값)
 
 # ── 상태 머신 ────────────────────────────────────────────
@@ -1485,13 +1482,12 @@ try:
                         else:
                             # 좌우 보정(회전)과 접근(직진)을 동시에 섞어서 조향 — 화면 오른쪽에
                             # 있으면 시계방향으로 도는 성분을 더한다(카메라 후방이어도 회전
-                            # 방향 부호는 정면과 동일, 확인됨). 가까워질수록만 감속.
+                            # 방향 부호는 정면과 동일, 확인됨). 감속 없이 FLAG_APPROACH_SPEED 유지.
                             offset = avg_cx - fw2 / 2
                             turn   = max(-1.0, min(1.0, offset / (fw2 / 2)))
-                            speed  = FLAG_APPROACH_SLOW if avg_area > FLAG_AREA_SLOW_THRESHOLD else FLAG_APPROACH_SPEED
                             control_wheels(None,
-                                           override_l=-speed + FLAG_ALIGN_SPEED * turn,
-                                           override_r=-speed - FLAG_ALIGN_SPEED * turn)
+                                           override_l=-FLAG_APPROACH_SPEED + FLAG_ALIGN_SPEED * turn,
+                                           override_r=-FLAG_APPROACH_SPEED - FLAG_ALIGN_SPEED * turn)
                             print(f"[상태] 태극기로 동시 정렬+접근중... cx={avg_cx:.0f} area={avg_area:.0f} (n={len(flag_candidates)})", end="\r")
 
         if frame is None:
