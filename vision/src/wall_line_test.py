@@ -5,10 +5,10 @@ wall_line_test.py — 바닥-벽 경계선(가로 방향으로 화면 전체를 
       로봇/시리얼 전혀 안 건드림 — 카메라 입력만 사용.
 
 원리: 세로 방향 그라디언트(Sobel y)가 강한 픽셀 = 가로 방향 밝기 변화(=수평 경계선 후보).
-      각 행(y)마다 "그라디언트가 강한 픽셀이 전체 폭의 몇 %인가"를 계산해서,
-      그 비율이 가장 높은(=화면 왼쪽부터 오른쪽까지 쭉 이어진) 행을 경계선으로 판단.
-      y가 클수록(화면 아래쪽) 벽이 가깝다고 해석 — 카메라 고정 각도 기준 원근법상
-      멀리 있는 경계는 위쪽(작은 y), 가까운 경계는 아래쪽(큰 y)에 보임.
+      각 행(y)마다 "그라디언트가 강한 픽셀이 전체 폭의 몇 %인가"를 계산해서 coverage
+      프로파일을 만들고, 그 안에서 극댓값(local peak)들을 전부 찾는다 — 벽이 낮아서
+      "바닥→벽 앞면" 경계와 "벽 윗면→먼 바닥(또는 배경)" 경계처럼 선이 여러 개 동시에
+      존재하는 경우까지 대응. y가 클수록(화면 아래쪽) 가깝다고 해석.
 
 실행: python vision/src/wall_line_test.py
 브라우저에서 http://<젯슨IP>:8084 접속하면 감지된 선 확인 가능
@@ -23,8 +23,10 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # ── 파라미터 ─────────────────────────────────────────────
-GRADIENT_THRESHOLD  = 25    # 이 값 이상이면 "강한 가로 경계"로 판단 (0~255 스케일, 실측 후 조정)
-MIN_COVERAGE_RATIO  = 0.3   # 한 행에서 이 비율 이상 폭에 걸쳐 경계가 있어야 "쭉 이어진 선"으로 인정
+GRADIENT_THRESHOLD  = 15    # 이 값 이상이면 "강한 가로 경계"로 판단 (0~255 스케일, 실측 후 조정)
+MIN_PEAK_COVERAGE   = 0.15  # 한 행에서 이 비율 이상 폭에 걸쳐 경계가 있어야 후보로 인정
+MIN_PEAK_DISTANCE_PX = 25   # 이 거리 이내의 극댓값은 같은 선으로 보고 하나만 남김(NMS)
+MAX_LINES           = 5     # 화면당 최대 몇 개 선까지 보고할지
 SMOOTH_WINDOW       = 5     # coverage 프로파일 노이즈 완화용 이동평균 윈도우(행 단위)
 
 
@@ -47,10 +49,10 @@ def _find_camera_index(keywords, fallback):
     return fallback
 
 
-def find_wall_line(gray):
-    """가장 넓게 이어진 가로 경계선의 y좌표를 반환. 임계값 통과 여부와 무관하게
-    항상 최선 후보를 반환 — 튜닝 중엔 위치가 맞는지 눈으로 먼저 확인하기 위함.
-    반환값: (best_y, coverage_ratio, passed_threshold)"""
+def find_wall_lines(gray):
+    """coverage 프로파일에서 극댓값(local peak)을 전부 찾아 y가 작은 순(먼 것부터)으로
+    반환. 벽이 낮아 "바닥→벽 앞면"/"벽 윗면→먼 바닥" 선이 동시에 잡히는 상황 대응.
+    반환값: [(y, coverage_ratio), ...] — MIN_PEAK_COVERAGE 미만은 아예 제외."""
     sobel_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
     edge_mask = np.abs(sobel_y) >= GRADIENT_THRESHOLD
 
@@ -61,9 +63,25 @@ def find_wall_line(gray):
     kernel = np.ones(SMOOTH_WINDOW) / SMOOTH_WINDOW
     smoothed = np.convolve(row_coverage, kernel, mode="same")
 
-    best_y = int(np.argmax(smoothed))
-    best_coverage = smoothed[best_y]
-    return best_y, best_coverage, best_coverage >= MIN_COVERAGE_RATIO
+    # 극댓값 후보: 양옆보다 크거나 같은 행
+    candidates = [
+        (y, smoothed[y]) for y in range(1, h - 1)
+        if smoothed[y] >= MIN_PEAK_COVERAGE
+        and smoothed[y] >= smoothed[y - 1]
+        and smoothed[y] >= smoothed[y + 1]
+    ]
+
+    # coverage 높은 순으로 정렬 후 NMS — 이미 뽑은 선과 너무 가까우면 스킵
+    candidates.sort(key=lambda c: c[1], reverse=True)
+    picked = []
+    for y, cov in candidates:
+        if all(abs(y - py) >= MIN_PEAK_DISTANCE_PX for py, _ in picked):
+            picked.append((y, cov))
+        if len(picked) >= MAX_LINES:
+            break
+
+    picked.sort(key=lambda c: c[0])  # 화면 위(먼 것)부터 아래(가까운 것) 순으로 반환
+    return picked
 
 
 CAM_INDEX = _find_camera_index(["arducam"], 0)
@@ -140,12 +158,15 @@ try:
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         gray = cv2.GaussianBlur(gray, (5, 5), 0)
-        wall_y, coverage, passed = find_wall_line(gray)
+        lines = find_wall_lines(gray)
 
         if time.time() - _last_print_t >= 0.3:
             h = gray.shape[0]
-            tag = "확정" if passed else "후보(미달)"
-            print(f"[벽:{tag}] y={wall_y} ({wall_y/h*100:.0f}% 지점, coverage={coverage*100:.0f}%, 필요={MIN_COVERAGE_RATIO*100:.0f}%)")
+            if lines:
+                desc = ", ".join(f"y={y}({y/h*100:.0f}%,cov={cov*100:.0f}%)" for y, cov in lines)
+                print(f"[벽] {len(lines)}개 후보: {desc}")
+            else:
+                print(f"[벽] 후보 없음 (필요 coverage={MIN_PEAK_COVERAGE*100:.0f}%)")
             _last_print_t = time.time()
 
         fps_counter += 1
@@ -160,11 +181,12 @@ try:
         if watching:
             annotated = frame.copy()
             h, w = annotated.shape[:2]
-            color = (0, 255, 0) if passed else (0, 165, 255)  # 확정=초록, 미달 후보=주황
-            cv2.line(annotated, (0, wall_y), (w, wall_y), color, 2)
-            tag = "WALL" if passed else "candidate(below threshold)"
-            cv2.putText(annotated, f"{tag} y={wall_y} ({wall_y/h*100:.0f}%) cov={coverage*100:.0f}%",
-                        (10, max(30, wall_y - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+            # 가까운(아래쪽/큰 y) 선일수록 진한 초록, 먼 선일수록 연한 색으로 구분
+            for i, (y, cov) in enumerate(lines):
+                color = (0, 255, 0) if i == len(lines) - 1 else (0, 255, 255)
+                cv2.line(annotated, (0, y), (w, y), color, 2)
+                cv2.putText(annotated, f"y={y} ({y/h*100:.0f}%) cov={cov*100:.0f}%",
+                            (10, max(20, y - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
             with _lock:
                 _stream_frame = annotated
 
