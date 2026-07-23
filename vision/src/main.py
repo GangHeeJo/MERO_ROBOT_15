@@ -262,6 +262,7 @@ CONFIRM_FRAMES      = 3       # 연속 N프레임 도달 조건 만족해야 gri
 PRECISE_ALIGN_FB_SPEED   = 0.25  # 1단계 전후(cy) 정렬 속도
 PRECISE_ALIGN_TURN_SPEED = 0.25  # 2단계 좌우(cx) 회전 정렬 속도
 TARGET_MISS_GRACE_FRAMES = 10    # 정밀 정렬 중 순간적으로 타겟을 놓쳐도 이 프레임 수까지는 포기 안 하고 정지 대기 (모션블러 등 프레임 단위 오탐 대응)
+GRIPPER_OPEN_LEAD_SECS   = 0.3    # gripper_open 명령 후 직진 시작까지 짧게 두는 텀 (그리퍼가 실제로 열리는 물리 시간, gripper.ino wait_ms=300과 맞춤)
 
 # 탐색 회전
 SEARCH_ROTATE_SPEED = 0.1     # 타겟 없을 때 제자리 회전 속도
@@ -312,6 +313,9 @@ align_final_forward_cls   = None
 fb_final_forward       = False  # cx/cy 정렬 완료 후 직진 중
 fb_final_forward_start = 0.0
 fb_final_forward_cls   = None
+gripper_open_wait       = False  # cx/cy 정렬 완료 → gripper_open 명령 보낸 직후 GRIPPER_OPEN_LEAD_SECS만큼 짧게 정지 대기 (응답 확인 아님, 고정 시간만)
+gripper_open_wait_start = 0.0
+gripper_open_wait_cls   = None
 precise_align = False  # True면 area 임계 도달 후 정밀 정렬(전후진+회전 동시 보정) 진행 중
 target_miss_count = 0  # precise_align 중 연속으로 타겟을 못 잡은 프레임 수 (TARGET_MISS_GRACE_FRAMES까지는 정지 대기)
 gripper_prepped = False  # True면 이번 접근을 위해 그리퍼를 미리 열어둔 상태 (grip 전송 또는 취소 시 False로 복귀)
@@ -1005,6 +1009,7 @@ try:
             precise_align        = False
             align_phase          = 0
             align_final_forward  = False
+            gripper_open_wait    = False
             fb_final_forward     = False
             robot_state          = RobotState.GO_TO_STORAGE
             storage_phase        = 0
@@ -1074,6 +1079,17 @@ try:
                         direction = "전진" if fwd > 0 else "후진"
                         print(f"[테스트] {direction} 정렬중... cy={target['cy']:.0f}", end="\r")
 
+            elif gripper_open_wait:
+                # gripper_open 명령 보낸 직후 — 응답 확인은 안 하고, 그리퍼가 실제로 열리는
+                # 물리 시간(GRIPPER_OPEN_LEAD_SECS)만큼만 정지한 채 기다렸다가 직진 시작.
+                control_wheels(None)
+                if time.time() - gripper_open_wait_start >= GRIPPER_OPEN_LEAD_SECS:
+                    gripper_open_wait      = False
+                    fb_final_forward       = True
+                    fb_final_forward_start = time.time()
+                    fb_final_forward_cls   = gripper_open_wait_cls
+                    print(f"\n[상태] 그리퍼 열림 대기 완료 → 직진 접근 시작")
+
             elif fb_final_forward:
                 # cx 정렬 완료 후 1초 직진 → grip 전송 → GRIPPING (완료되면 다시 SEARCHING으로 반복)
                 control_wheels(None, override_l=FINAL_APPROACH_SPEED - FORWARD_TRIM / 2, override_r=FINAL_APPROACH_SPEED + FORWARD_TRIM / 2)
@@ -1129,13 +1145,13 @@ try:
 
                     if cx_aligned and cy_aligned:
                         control_wheels(None)
-                        precise_align          = False
-                        fb_final_forward        = True
-                        fb_final_forward_start  = time.time()
-                        fb_final_forward_cls    = locked["cls"]
+                        precise_align           = False
+                        gripper_open_wait       = True
+                        gripper_open_wait_start = time.time()
+                        gripper_open_wait_cls   = locked["cls"]
                         send_gripper_open()
                         gripper_prepped = True
-                        print(f"\n[상태] 정렬 완료 (cx={locked['cx']:.0f}, cy={locked['cy']:.0f}) → 그리퍼 열기 + 직진 접근 시작")
+                        print(f"\n[상태] 정렬 완료 (cx={locked['cx']:.0f}, cy={locked['cy']:.0f}) → 그리퍼 열기 ({GRIPPER_OPEN_LEAD_SECS:.1f}s 대기 후 직진)")
                     else:
                         # cy_ref보다 위(작음)=목표가 더 멀리 있음 → 전진, 아래(큼)=너무 가까움 → 후진
                         fwd = 0.0
@@ -1365,7 +1381,7 @@ try:
 
             # 타겟 노란 테두리 — 정밀 정렬 중엔 실제로 추적 중인 last_target_id를 표시
             # (그 순간 select_target()이 고르는 것과 다를 수 있어서 혼동 방지)
-            _highlight_id = last_target_id if (precise_align or fb_final_forward) else (target["id"] if target else None)
+            _highlight_id = last_target_id if (precise_align or gripper_open_wait or fb_final_forward) else (target["id"] if target else None)
             if _highlight_id is not None and boxes is not None:
                 ids = boxes.id
                 for i, box in enumerate(boxes):
