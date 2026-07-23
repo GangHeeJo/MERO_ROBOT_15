@@ -1322,13 +1322,15 @@ try:
             # 집을 만한 타겟이 있는지 확인한다. 발견하거나 스캔 시간이 다 차면 SEARCHING으로
             # 넘겨서 이후 정밀 정렬/탐색은 기존 로직이 그대로 처리한다.
             elapsed_scan = time.time() - post_grip_scan_start
-            if target:
+            if elapsed_scan < POST_GRIP_BACKUP_SECS:
+                # target이 이미 보여도 후진부터 끝내야 함 — 아니면 집자마자 바로 옆에
+                # 다른 물체가 보일 때 후진을 아예 건너뛰고 바로 SEARCHING으로 빠짐(확인된 버그).
+                control_wheels(None, override_l=-POST_GRIP_BACKUP_SPEED, override_r=-POST_GRIP_BACKUP_SPEED)
+                print(f"[상태] 집기 후 후진중... ({elapsed_scan:.1f}/{POST_GRIP_BACKUP_SECS:.1f}s)", end="\r")
+            elif target:
                 control_wheels(None)
                 robot_state = RobotState.SEARCHING
                 print(f"\n[상태] 스캔 중 타겟 발견 ({target['cls']}) → SEARCHING 복귀")
-            elif elapsed_scan < POST_GRIP_BACKUP_SECS:
-                control_wheels(None, override_l=-POST_GRIP_BACKUP_SPEED, override_r=-POST_GRIP_BACKUP_SPEED)
-                print(f"[상태] 집기 후 후진중... ({elapsed_scan:.1f}/{POST_GRIP_BACKUP_SECS:.1f}s)", end="\r")
             elif elapsed_scan >= POST_GRIP_BACKUP_SECS + POST_GRIP_SCAN_SECS:
                 control_wheels(None)
                 robot_state = RobotState.SEARCHING
