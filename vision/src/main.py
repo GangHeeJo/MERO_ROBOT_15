@@ -76,8 +76,6 @@ from ultralytics import YOLO
 parser = argparse.ArgumentParser()
 parser.add_argument('--cls', nargs='+', default=None,
                     help='타겟 클래스 목록 (예: --cls d8 apple). 미지정 시 카메라/모델 로드 후 콘솔에서 2개 직접 입력받음')
-parser.add_argument('--timer', action='store_true',
-                    help='3분 경기 타이머 표시')
 parser.add_argument('--test', action='store_true',
                     help='테스트 모드: 집으면 1초 직진 후 바로 drop')
 parser.add_argument('--align-only', action='store_true',
@@ -279,7 +277,7 @@ STORAGE_TIMEOUT_SECS = 60.0   # GO_TO_STORAGE 전체 최대 시간 (태극기 �
 MATCH_DURATION_SECS = 180.0
 PICK_PHASE_SECS      = 150.0  # 이 시간(2분30초) 지나면 SEARCHING/GRIPPING 중이든 상관없이 GO_TO_STORAGE로 전환 (안전장치)
 GRIP_COUNT_STORAGE_THRESHOLD = 7  # grip_success_count가 이 개수 이상이면 PICK_PHASE_SECS 안 기다리고 바로 GO_TO_STORAGE로 전환
-SHOW_TIMER            = args.timer  # 화면에 카운트다운 표시 여부 (전환 로직 자체는 --timer 없어도 항상 동작)
+SHOW_TIMER            = True  # 화면에 카운트다운 항상 표시 (전환 로직 자체는 이 값과 무관하게 항상 동작)
 
 # ── 태극기 네비게이션 파라미터 ──────────────────────────
 FLAG_CONF_THRESHOLD      = 0.5
