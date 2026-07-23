@@ -79,6 +79,8 @@ parser.add_argument('--no-wheels', action='store_true',
                     help='바퀴 명령을 ESP32로 보내지 않음 (탐지/그리퍼만 테스트할 때)')
 parser.add_argument('--record', action='store_true',
                     help='테스트 중 프레임을 저해상도 JPEG로 샘플링해 저장 (vision/records/<시각>/) — 백그라운드 스레드+낮은 fps라 부하 거의 없음')
+parser.add_argument('--record-raw', action='store_true',
+                    help='--record와 같이 씀: 박스/오버레이 없는 원본 프레임을 저장 (기본은 탐지 박스 그려진 화면 저장)')
 parser.add_argument('--storage-only', action='store_true',
                     help='SEARCHING/GRIPPING 건너뛰고 시작하자마자 바로 GO_TO_STORAGE로 진입 (태극기 정렬+접근+dump만 단독 테스트)')
 args       = parser.parse_args()
@@ -88,6 +90,7 @@ ALIGN_ONLY    = args.align_only
 STORAGE_ONLY  = args.storage_only
 NO_WHEELS     = args.no_wheels
 RECORD        = args.record
+RECORD_RAW    = args.record_raw
 SHAPE_CLASSES = {'d6', 'd8', 'd12', 'd20'}
 FRUIT_CLASSES = {'apple', 'banana', 'orange', 'pineapple'}
 
@@ -1384,7 +1387,7 @@ try:
             try:
                 _record_queue.put_nowait((
                     os.path.join(_record_dir, f"frame_{_record_idx:06d}.jpg"),
-                    annotated_frame,
+                    frame if RECORD_RAW else annotated_frame,
                 ))
             except queue.Full:
                 pass  # 디스크가 못 따라오면 그냥 이번 프레임은 버림 (메인 루프 안 막음)
