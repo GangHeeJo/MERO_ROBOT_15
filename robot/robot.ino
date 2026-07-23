@@ -264,12 +264,20 @@ void updateStateMachine() {
     case IDLE:
       break;
 
-    case GRIPPING:
-      // load 임계값 미달(집기 실패)이어도 팔은 그대로 올려서 시퀀스를 계속 진행한다.
-      gripperClose();
+    case GRIPPING: {
+      // load 임계값 미달(집기 실패)이면 팔을 올리지 않고 바로 실패로 보고한다
+      // (2026-07-24 변경 — 예전엔 반환값을 버리고 무조건 팔을 올렸음).
+      bool grabbed = gripperClose();
 
       if (safetyHasFatalFault() || safetyHasRecoveredFlag()) {
         sendSafetyAbortStatus("gripping");
+        break;
+      }
+
+      if (!grabbed) {
+        currentCls[0] = '\0';
+        JETSON_SERIAL.println("{\"status\":\"grip_failed\"}");
+        currentState = IDLE;
         break;
       }
 
@@ -284,6 +292,7 @@ void updateStateMachine() {
       currentState = LIFTING;
       JETSON_SERIAL.println("[OpenRB] 집기 시도 완료 → LIFTING");
       break;
+    }
 
     case LIFTING:
       if (!armUp()) {

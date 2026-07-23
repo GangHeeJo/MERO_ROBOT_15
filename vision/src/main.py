@@ -374,9 +374,11 @@ threading.Thread(target=_read_esp32_loop, daemon=True).start()
 openrb_gripped     = False
 openrb_grip_failed = False
 ir_object_count     = 0  # KY-032 적외선 센서로 센 물체 통과 개수 — ir_counter.ino가 push로 갱신 (현재 관측용)
+grip_success_count  = 0  # "gripped" 수신 횟수 = 실제로 집어서 팔 올렸다 내린 횟수 (robot.ino가 이제 실패 시엔
+                          # LIFTING 자체를 안 타므로, gripped는 항상 진짜 성공한 픽만 카운트함)
 
 def _read_openrb_loop():
-    global openrb_gripped, openrb_grip_failed, ir_object_count
+    global openrb_gripped, openrb_grip_failed, ir_object_count, grip_success_count
     while True:
         if ser_openrb is None or not ser_openrb.is_open:
             time.sleep(0.5); continue
@@ -391,7 +393,8 @@ def _read_openrb_loop():
                     time.sleep(0.01); continue
                 if data.get("status") == "gripped":
                     openrb_gripped = True
-                    print("\n[OpenRB] 집기+투하 완료")
+                    grip_success_count += 1
+                    print(f"\n[OpenRB] 집기+투하 완료 (누적 {grip_success_count}개)")
                 elif data.get("status") == "grip_failed":
                     openrb_grip_failed = True
                     print("\n[OpenRB] 집기 실패 (전류 미달)")
@@ -1501,6 +1504,10 @@ try:
             # 적외선 물체 통과 카운트 (관측용)
             cv2.putText(annotated_frame, f"IR: {ir_object_count}",
                         (w - 150, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
+            # 실제 집기 성공 횟수
+            cv2.putText(annotated_frame, f"PICKED: {grip_success_count}",
+                        (w - 150, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
             # 경기 타이머
             if SHOW_TIMER:
