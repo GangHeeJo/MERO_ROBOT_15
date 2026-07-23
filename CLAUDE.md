@@ -39,9 +39,7 @@ MERO_AI_ROBOT/
 │   │   ├── camera_test.py         # 카메라만 단독 가동, YOLO 없음 — 연결/해상도/FPS 확인, 브라우저 :8082 스트림
 │   │   ├── cam_servo_test.py      # OpenRB 카메라 서보(ID4)만 단독 테스트 — b(후방)/f(정면)/t(왕복), 재업로드 불필요
 │   │   ├── basket_test.py         # OpenRB 바스켓(ID3)만 단독 테스트 — o(열기, 유지)/c(닫기)
-│   │   ├── arm_angle_test.py      # OpenRB 팔(ID2)+그리퍼(ID1) 단독 테스트 — 임의 raw 값(0~4095)으로 팔 이동, o/x로 그리퍼 열기/닫기, 브라우저 :8084 스트림 + 빈 Enter로 사진 저장(vision/records/arm_angle_test/), ARM_CHECK_RAW 등 각도 실측용, 재업로드 불필요
-│   │   ├── motion_test.py         # YOLO 없이 프레임 차이(frame differencing)만으로 이동중/정지 판별, 브라우저 :8085 스트림 — 바퀴 명령대로 실제로 움직이는지 확인용
-│   │   ├── wheels_motion_test.py  # wheels_test.py + motion_test.py 통합판 — 바퀴 명령 입력 직후 이동중/정지 판별 결과를 바로 출력, 브라우저 :8086 스트림
+│   │   ├── arm_angle_test.py      # OpenRB 팔(ID2)+그리퍼(ID1) 단독 테스트 — 임의 raw 값(0~4095)으로 팔 이동, o/x로 그리퍼 열기/닫기, 브라우저 :8084 스트림 + 빈 Enter로 사진 저장(vision/records/arm_angle_test/), 각도 실측용, 재업로드 불필요
 │   │   ├── launcher.py            # 물리 버튼 3개 + OLED로 카메라·젯슨 없이 클래스 선택/실행하는 독립 런처
 │   │   ├── trt_export.py          # TensorRT 변환 스크립트 (Jetson 전용)
 │   │   └── video_to_frames.py
@@ -101,14 +99,8 @@ python vision/src/yolo_cam_test.py
 # 카메라 서보(ID4) 단독 회전 테스트 — b(후방)/f(정면)/t(왕복)
 python vision/src/cam_servo_test.py
 
-# 팔(ID2)+그리퍼(ID1) 각도 단독 테스트 — 임의 raw 값 이동, 그리퍼 열기/닫기 + 카메라 스트림(:8084) + Enter로 사진 저장, ARM_CHECK_RAW 등 실측용
+# 팔(ID2)+그리퍼(ID1) 각도 단독 테스트 — 임의 raw 값 이동, 그리퍼 열기/닫기 + 카메라 스트림(:8084) + Enter로 사진 저장, 각도 실측용
 python vision/src/arm_angle_test.py
-
-# YOLO 없이 프레임 차이로 이동중/정지 판별 — 브라우저 :8085 스트림 (바퀴 명령과 별개 터미널에서 wheels_test.py 등으로 실제 이동시키며 확인)
-python vision/src/motion_test.py
-
-# 바퀴 구동 + 이동중/정지 판별 통합 — 터미널 하나로 명령 입력 직후 결과 확인, 브라우저 :8086 스트림
-python vision/src/wheels_motion_test.py
 
 # 데이터 수집
 python vision/src/capture.py --cls apple            # 스페이스바로 사진 저장
@@ -131,53 +123,54 @@ Roboflow 라벨링 → train.ipynb(Colab) → best.pt → trt_export.py → best
 
 `best.pt`는 도형 4종 + 과일 4종 + flag를 합친 9클래스 통합 모델(2026-07-22 병합). flag 단독 데이터셋은 반례 부족으로 오탐이 심해서 통합 모델로 재학습함. `select_target()`이 flag 클래스는 grip 후보에서 항상 제외.
 
-⚠️ `GRIP_CHECK` 상태(2026-07-23 도입, main.py)는 원래 클래스(`<cls>`) 또는 전용 학습 클래스(`gripped_<cls>`, 예: `gripped_d6`, `gripped_apple`) 둘 중 하나가 보이면 확인된 것으로 처리한다 — `gripped_<cls>`는 아직 데이터 수집·학습 전이라, 그리퍼가 물체를 많이 가려 원래 클래스로도 안 잡히는 각도라면 best.pt에 `gripped_<cls>`가 추가되기 전까지는 매번 미확인(reject_grip)될 수 있음. 실전 투입 전 클래스별 "그리퍼에 물체가 물린 상태" 데이터 수집 + 재학습 필요. `select_target()`은 `TARGET_CLS` 필터로 `gripped_<cls>` 클래스를 자동으로 걸러내므로 grip 후보 선정에는 영향 없음.
-
 ## 통신 구조
 
 ```
 Jetson main.py
   ├─→ /dev/ttyACM0 → ESP32 (UGV 바퀴)   {"T":1, "L":speed, "R":speed}
-  └─→ /dev/ttyACM1 → OpenRB-150          {"cmd":"grip"/"confirm_grip"/"reject_grip"/"dump"/"idle"/"start"/
+  └─→ /dev/ttyACM1 → OpenRB-150          {"cmd":"grip"/"dump"/"idle"/"start"/
                                            "gripper_open"/"gripper_close"/"reset_fault"/"arm_up"/"arm_to"/
                                            "cam_backward"/"cam_forward"/
                                            "basket_open"/"basket_close", ...}
-  └─← /dev/ttyACM1 ← OpenRB-150          {"status":"at_check_pos"/"gripped"/"grip_failed"/"dumped"/
+  └─← /dev/ttyACM1 ← OpenRB-150          {"status":"gripped"/"grip_failed"/"dumped"/
                                            "gripper_opened"/"gripper_closed"/"started"/"arm_up_done"/"arm_to_done"/
                                            "cam_backward_done"/"cam_forward_done"/
                                            "basket_opened"/"basket_closed"/
                                            "motor_fault"/"motor_recovered"/"motion_aborted"/"fault_reset"}
 ```
 
-`gripper_open`/`gripper_close`는 안전정책이 아니라 집기 메커니즘 자체에 필요 — IDLE 기본값이 "닫힘"이라 미리 열어두지 않으면 집을 공간이 없음. 정밀 정렬(전후진+회전 동시 보정) 중엔 그리퍼를 닫은 채로 두고, cx/cy 둘 다 정렬까지 끝나 최종 직진 접근 직전에만 `gripper_open` 전송(엉뚱한 물체가 정렬 중 벌어진 집게에 끼는 것 방지) — 그래서 정렬 단계에서 타겟을 놓쳐도 그리퍼는 애초에 안 열려있어 `gripper_close`를 보낼 필요가 없음. `start`는 경기 시작 시 규정 크기용으로 올려둔 팔을 내리는 명령(전원 켜지면 팔은 기본적으로 올림 상태로 대기) — 동시에 카메라도 `cam_forward`로 정면 리셋(이전 테스트/경기에서 후방을 보고 있던 상태가 남아있을 수 있어서). 카메라 리셋 실패는 팔 내리기를 막지 않고 로그만 남김. `arm_up`은 디버깅용 — 팔을 수동으로 시작 위치(올림)로 복귀. `arm_to`는 디버깅/실측용(2026-07-23 추가) — `{"raw":N}`으로 팔(ID2)을 임의의 raw 위치(0~4095)로 이동, `ARM_CHECK_RAW` 같은 각도를 재업로드 없이 여러 번 시험할 때 사용 (`vision/src/arm_angle_test.py`로 단독 테스트 가능). `cam_backward`/`cam_forward`는 ID4 카메라 서보 제어 — `GO_TO_STORAGE` 진입 시(경기당 1회) `cam_backward`를 보내 카메라가 후방(보관함 방향)을 보게 함. `basket_open`/`basket_close`는 임시 디버깅용 — `dump`와 달리 자동으로 안 닫히고 열린 채로 유지되어 바스켓 안을 직접 확인하거나 수동으로 비울 때 사용 (`vision/src/basket_test.py`로 단독 테스트 가능).
-
-`confirm_grip`/`reject_grip`은 그립 중간 확인(2026-07-23 도입) 전용 — `grip` 수신 후 OpenRB는 팔을 끝까지 올리지 않고 `ARM_CHECK_RAW`(중간 각도)에서 멈춘 뒤 `at_check_pos`를 보낸다. Python은 그 순간부터 원래 클래스(`<cls>`, 예: `d6`) 또는 전용 학습 클래스(`gripped_<cls>`, 예: `gripped_d6`) 둘 중 하나가 몇 프레임 연속 보이는지 확인해서 `confirm_grip`(팔 마저 올림) 또는 `reject_grip`(그리퍼 열고 팔 내려 원위치)을 돌려보낸다. OpenRB 쪽엔 Jetson 응답이 아예 안 올 때를 대비한 `CHECK_TIMEOUT_MS`(8초) 안전망도 있음 — 정상 동작에서는 Python이 항상 먼저 응답한다.
+`gripper_open`/`gripper_close`는 안전정책이 아니라 집기 메커니즘 자체에 필요 — IDLE 기본값이 "닫힘"이라 미리 열어두지 않으면 집을 공간이 없음. 정밀 정렬(전후진+회전 동시 보정) 중엔 그리퍼를 닫은 채로 두고, cx/cy 둘 다 정렬까지 끝나 최종 직진 접근 직전에만 `gripper_open` 전송(엉뚱한 물체가 정렬 중 벌어진 집게에 끼는 것 방지) — 그래서 정렬 단계에서 타겟을 놓쳐도 그리퍼는 애초에 안 열려있어 `gripper_close`를 보낼 필요가 없음. `start`는 경기 시작 시 규정 크기용으로 올려둔 팔을 내리는 명령(전원 켜지면 팔은 기본적으로 올림 상태로 대기) — 동시에 카메라도 `cam_forward`로 정면 리셋(이전 테스트/경기에서 후방을 보고 있던 상태가 남아있을 수 있어서). 카메라 리셋 실패는 팔 내리기를 막지 않고 로그만 남김. `arm_up`은 디버깅용 — 팔을 수동으로 시작 위치(올림)로 복귀. `arm_to`는 디버깅/실측용 — `{"raw":N}`으로 팔(ID2)을 임의의 raw 위치(0~4095)로 이동, 각도를 재업로드 없이 여러 번 시험할 때 사용 (`vision/src/arm_angle_test.py`로 단독 테스트 가능). `cam_backward`/`cam_forward`는 ID4 카메라 서보 제어 — `GO_TO_STORAGE` 진입 시(경기당 1회) `cam_backward`를 보내 카메라가 후방(보관함 방향)을 보게 함. `basket_open`/`basket_close`는 임시 디버깅용 — `dump`와 달리 자동으로 안 닫히고 열린 채로 유지되어 바스켓 안을 직접 확인하거나 수동으로 비울 때 사용 (`vision/src/basket_test.py`로 단독 테스트 가능).
 
 ## 상태 머신
 
 > 2026-07-23: `DROPPING` 상태는 완전히 삭제됨 — 모빌리티 자체가 스토리지 안까지 들어가는 것으로 경기 종료 취급(`dump` 명령 없음). 또한 정밀 정렬(SEARCHING)과 태극기 접근(GO_TO_STORAGE)이 둘 다 "전후진 먼저 맞추고 회전은 나중" 순차 방식에서, **cx/cy 오프셋 크기에 비례한 회전+전후진 보정을 매 프레임 동시에 섞어서 조향**하는 방식으로 바뀜(`fb_phase`/`flag_aligned` 같은 순차 단계 변수는 제거됨) — 오프셋이 클수록 회전 속도도 비례해서 빨라짐.
 >
-> 경기 시작(Enter) 시점에 `match_start_time`을 기록하고, 매 프레임 상태머신 분기 진입 전에 `SEARCHING`/`GRIPPING`/`GRIP_CHECK`/`POST_GRIP_SCAN` 넷 중 어느 상태에 있든 `PICK_PHASE_SECS`(150초=2분30초) 지나면 즉시 중단하고 `GO_TO_STORAGE`로 강제 전환됨 — SEARCHING에서만 체크하면 grip 타임아웃(15초)+그립 확인(0.5초)+스캔(4초)으로 남은 30초를 거의 다 까먹을 수 있어서 네 상태 모두 체크.
+> 경기 시작(Enter) 시점에 `match_start_time`을 기록하고, 매 프레임 상태머신 분기 진입 전에 `SEARCHING`/`GRIPPING`/`POST_GRIP_SCAN` 셋 중 어느 상태에 있든 `PICK_PHASE_SECS`(150초=2분30초) 지나면 즉시 중단하고 `GO_TO_STORAGE`로 강제 전환됨 — SEARCHING에서만 체크하면 grip 타임아웃(15초)+스캔(4초)으로 남은 30초를 거의 다 까먹을 수 있어서 세 상태 모두 체크.
 >
-> 2026-07-23: 그립 성공 여부를 팔을 끝까지 올리기 전에 카메라로 한 번 더 확인하는 `GRIP_CHECK` 상태가 추가됨 — 0.5초 창 동안 탐지된 모든 클래스를 집계해 최빈 클래스를 뽑고, 그게 원래 클래스(`<cls>`, 예: `d6`) 또는 새로 학습할 전용 클래스(`gripped_<cls>`, 예: `gripped_d6`)와 같으면 확인으로 처리한다(`gripped_<cls>` 미학습이어도 원래 클래스가 최빈값이면 확인 가능).
+> 2026-07-23: 정밀 정렬 완료 후 바로 접근하지 않고 제자리 정지 상태로 ALIGN_CONFIRM_SECS(0.5초)간
+> 정렬 유지 + 타겟 클래스 일치를 재확인하는 `align_confirm` 단계가 추가됨(아래 SEARCHING 흐름 참고).
+> 그립 성공 여부를 팔 중간 위치에서 카메라로 한 번 더 확인하는 `GRIP_CHECK` 상태도 같은 날 추가됐다가,
+> 실효성이 부족하다고 판단해 다시 삭제됨(OpenRB robot.ino의 CHECKING 상태·confirm_grip/reject_grip
+> 명령도 함께 제거) — GRIPPING은 예전처럼 곧장 LIFTING(팔 끝까지 올림)으로 넘어간다.
 
 **Python (main.py) — 현재 실제 동작:**
 ```
-(SEARCHING/GRIPPING/GRIP_CHECK/POST_GRIP_SCAN 공통) PICK_PHASE_SECS(150초) 경과 시 즉시 중단
+(SEARCHING/GRIPPING/POST_GRIP_SCAN 공통) PICK_PHASE_SECS(150초) 경과 시 즉시 중단
     → gripper_close(열려있었다면) → cam_backward 전송 → GO_TO_STORAGE
 
 SEARCHING → 타겟 발견 시 정밀 정렬(전후진+회전 동시 보정, cx/cy 오프셋에 비례한 속도) 진행 (그리퍼는 닫힌 채 유지)
-         → cx/cy 둘 다 정렬되면 gripper_open 전송 → FINAL_APPROACH_SECS(1.7초) 직진 → grip 전송 → GRIPPING
-         → 정렬 중(그리퍼 열기 전) 타겟 놓치면 그대로 재탐색 복귀 (그리퍼 안 열었으니 닫을 것도 없음)
-GRIPPING → at_check_pos 수신 시 GRIP_CHECK
-GRIP_CHECK → GRIP_CHECK_TIMEOUT_SECS(0.5초) 동안 매 프레임 탐지되는 모든 클래스를 집계 →
-           창이 끝나면(조기 종료 없이) 가장 많이 탐지된 클래스(최빈값)가 <cls>(원래 클래스, 예: d6)
-           또는 gripped_<cls>(예: gripped_d6)와 같으면 confirm_grip, 다르면(엉뚱한 클래스거나
-           아무것도 안 보이면) reject_grip 전송 → 어느 쪽이든 GRIPPING으로 돌아가 팔 마저
-           올리기/그리퍼 열고 팔 내리기 완료(gripped/grip_failed) 대기
+           락 시점 클래스를 locked_target_cls에 저장 — 이후 같은 track id라도 클래스가
+           달라지면(트래커 id 재사용 등) 다른 물체로 보고 놓친 것으로 처리
+         → cx/cy 둘 다 정렬되면 즉시 접근하지 않고 제자리 정지 상태로 ALIGN_CONFIRM_SECS(0.5초)간
+           정렬 유지 + 클래스 일치를 재확인(align_confirm) — 그 사이 흔들려서
+           다시 안 맞으면 정밀 정렬로 복귀, 클래스가 바뀌었으면 재탐색으로 복귀
+         → 0.5초 다 채우면 마지막으로 locked["cls"]가 실제 TARGET_CLS(이번 경기에서
+           잡기로 한 클래스 목록)에 속하는지 최종 대조 — 아니면 재탐색으로 복귀
+         → 통과하면 gripper_open 전송 → FINAL_APPROACH_SECS(1.7초) 직진 → grip 전송 → GRIPPING
+         → 정렬/확인 중(그리퍼 열기 전) 타겟 놓치면 그대로 재탐색 복귀 (그리퍼 안 열었으니 닫을 것도 없음)
 GRIPPING → (gripped/grip_failed/timeout 무엇이든) → POST_GRIP_SCAN
-POST_GRIP_SCAN → 이동 없이 제자리 회전(POST_GRIP_SCAN_SECS=4초)하며 주변 재탐색
-              → 타겟 발견하거나 시간 다 차면 → SEARCHING (이후 정밀 정렬/탐색은 기존 로직 그대로)
+POST_GRIP_SCAN → 먼저 POST_GRIP_BACKUP_SECS(1초) 후진 → 이후 제자리 회전(POST_GRIP_SCAN_SECS=4초)하며 주변 재탐색
+              → (후진 중이든 회전 중이든) 타겟 발견하거나 전체 시간 다 차면 → SEARCHING (이후 정밀 정렬/탐색은 기존 로직 그대로)
 GO_TO_STORAGE → phase 0: 제자리 회전하며 flag 탐색 (같은 카메라/프레임에서 cls=='flag'만 필터, 별도 추론 없음)
               → phase 1: flag 보이면 좌우 보정(회전)+접근(직진)을 동시에 섞어서 조향
                 (카메라가 후방을 보는 상태라 "뒤가 앞"처럼 취급하지만, 조향 부호 자체는 정면
@@ -193,23 +186,18 @@ GO_TO_STORAGE → phase 0: 제자리 회전하며 flag 탐색 (같은 카메라/
 
 `select_target()`은 밀집도가 아니라 **area(화면 중앙에 가까운 정도) 단독 기준**으로 후보 하나를 고른다 — 원래 밀집도(cluster_score)를 1순위로 썼었는데, 그 값이 다른 물체 검출 여부에 따라 프레임마다 흔들리기 쉬워서 타겟 후보가 여러 개일 때 정밀 정렬 도중 다른 물체로 선택이 튀는 문제가 있어 단순화함(2026-07-22). 정밀 정렬(`precise_align`) 진입 시 그 물체의 track id를 `last_target_id`에 락 걸고, 이후로는 `select_target()`을 다시 안 부르고 그 id만 `detected`에서 찾아 추적 — 놓치면 `TARGET_MISS_GRACE_FRAMES`(3프레임)까지는 정지 대기 후 재등장 기다리고, 그래도 안 잡히면 재탐색으로 복귀.
 
-**OpenRB (robot.ino) — 상태: IDLE / GRIPPING / CHECKING / LIFTING / DUMPING**
+**OpenRB (robot.ino) — 상태: IDLE / GRIPPING / LIFTING / DUMPING**
 ```
-IDLE(그리퍼 닫힘) → (grip 수신) → GRIPPING → (집기 시도, 성공/실패 무관 항상 진행, 200ms 대기)
-    → armCheck()로 팔을 중간 위치(ARM_CHECK_RAW)까지만 올려 정지 → at_check_pos 전송 → CHECKING
-CHECKING → (confirm_grip 수신) → LIFTING
+IDLE(그리퍼 닫힘) → (grip 수신) → GRIPPING → (집기 시도, 성공/실패 무관 항상 진행, 200ms 대기) → LIFTING
     (팔 올림 → 그리퍼 열어 투하 → 500ms 대기 → 팔 내림 → 그리퍼 다시 닫기(대기상태)) → IDLE (gripped 전송)
     ⚠️ 2026-07-22: 순서가 "열고→닫고→내림"에서 "열고→내림→닫고"로 재변경됨(사용자 요청) —
     열린 그리퍼를 단 채로 팔이 내려가는 구간이 생겨, 그 경로의 물체를 낚아챌 위험 있음
-CHECKING → (reject_grip 수신 또는 CHECK_TIMEOUT_MS(8초) 경과) → 그리퍼 열기+팔 내림 동시 구동 → 그리퍼 다시 닫기(대기상태) → IDLE (grip_failed 전송)
 IDLE → (dump 수신) → DUMPING → (컨테이너 열고 500ms 후 닫기) → IDLE (dumped 전송)
-IDLE → (gripper_open/gripper_close/start/arm_up/cam_backward/cam_forward/basket_open/basket_close 수신) → 해당 동작만 수행, 상태 변화 없음
+IDLE → (gripper_open/gripper_close/start/arm_up/arm_to/cam_backward/cam_forward/basket_open/basket_close 수신) → 해당 동작만 수행, 상태 변화 없음
 
 safety.ino가 overload/hardware error를 감지하면 어느 상태에서든 즉시 IDLE로 복귀
 (fatal fault면 사람이 reset_fault 보낼 때까지 명령 거부)
 ```
-
-`ARM_CHECK_RAW`(arm.ino, 현재 2100 — ⚠️ 실측 필요)는 그리퍼 안이 카메라에 보이는 각도로 실물에서 조정해야 함 — `vision/src/arm_angle_test.py`로 재업로드 없이 임의 raw 값을 시험하며 찾을 수 있음. `gripped_<cls>` 클래스(예: `gripped_d6`, `gripped_apple`)는 아직 학습 전 — best.pt에 없으면 Python이 항상 미확인으로 보고 매번 `reject_grip`을 보내게 되므로, 실전 투입 전 해당 클래스 데이터 수집+학습 필요.
 
 ## 알려진 이슈
 

@@ -24,7 +24,6 @@ bool safeSetGoalPosition(uint8_t id, int32_t goal_raw, uint32_t wait_ms);
 // ── 팔 위치 (raw, 0~4095, 실측) ───────────────────────────
 #define ARM_DOWN_RAW   1480   // 집기 위치
 #define ARM_UP_RAW     2850   // 투하 위치
-#define ARM_CHECK_RAW  2100   // 그립 확인 중간 정지 위치 — ⚠️ 실측 필요 (카메라로 그리퍼 안이 보이는 각도로 조정)
 
 // ── 바스켓 위치 (raw, 0~4095, 실측) ───────────────────────
 #define CONT_CLOSED_RAW  2328
@@ -83,17 +82,9 @@ bool armUp() {
   return safeSetGoalPosition(ARM_ID, ARM_UP_RAW, 1500);
 }
 
-// ── 팔 중간 정지 (그립 확인용) ──────────────────────────
-// 집기 직후 완전히 올리기 전에 여기서 멈춰서, 카메라로 실제로 물체를
-// 집었는지 확인(gripped_<cls> 클래스 탐지)한다. 확인되면 armUp()으로
-// 마저 올리고, 안 되면 armDown()으로 원위치.
-bool armCheck() {
-  return safeSetGoalPosition(ARM_ID, ARM_CHECK_RAW, 800);
-}
-
 // ── 팔을 임의 raw 위치로 이동 (디버깅/실측용) ────────────
-// ARM_CHECK_RAW처럼 각도를 눈으로 보며 잡아야 하는 값을 재업로드 없이 여러 번
-// 시험할 때 쓴다 ({"cmd":"arm_to","raw":N}, robot.ino 참고).
+// 각도를 눈으로 보며 잡아야 하는 값을 재업로드 없이 여러 번 시험할 때 쓴다
+// ({"cmd":"arm_to","raw":N}, robot.ino 참고).
 bool armTo(int32_t raw) {
   return safeSetGoalPosition(ARM_ID, raw, 1000);
 }

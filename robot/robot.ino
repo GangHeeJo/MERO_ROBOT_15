@@ -10,10 +10,7 @@
  *     ID 1: 그리퍼  ID 2: 팔(양쪽, 한쪽 Reverse Mode)  ID 3: 바스켓 힌지(양쪽, 한쪽 Reverse Mode)
  *
  * Jetson이 보내는 명령:
- *   {"cmd":"grip", "cls":"d8"}  ← 집기 → 팔을 중간 위치(ARM_CHECK_RAW)까지만 올려 정지
- *                                  → at_check_pos 전송 → Jetson의 confirm_grip/reject_grip 대기
- *   {"cmd":"confirm_grip"}      ← (CHECKING 중만 유효) 카메라로 그립 확인됨 → 팔 마저 올려 투하 계속
- *   {"cmd":"reject_grip"}       ← (CHECKING 중만 유효) 그립 안 됨 → 그리퍼 열고 팔 내려 원위치
+ *   {"cmd":"grip", "cls":"d8"}  ← 집기 → 팔 올려 컨테이너 투하 → 팔 내림 → 그리퍼 다시 닫기
  *   {"cmd":"dump"}              ← 컨테이너 열어서 쏟기 (도착 지점)
  *   {"cmd":"gripper_open"}      ← 그리퍼 미리 열기 (물체로 접근/전진하기 직전)
  *   {"cmd":"gripper_close"}     ← 그리퍼 대기 상태로 닫기 (접근 중 타겟 놓쳐 취소할 때)
@@ -26,9 +23,8 @@
  *   {"cmd":"reset_fault"}       ← safety.ino가 fatal fault로 멈춘 뒤 사람이 확인하고 재개할 때
  *
  * OpenRB가 보내는 응답:
- *   {"status":"at_check_pos","cls":"d8"} ← 팔이 중간 위치에서 정지, 카메라 확인 대기 중
  *   {"status":"gripped"}         ← 집기+투하+복귀+재닫힘 완료 (Python → SEARCHING 복귀)
- *   {"status":"grip_failed"}     ← 그립 확인 실패(reject_grip 또는 확인 타임아웃) → 그리퍼 열고 팔 내려 원위치 (Python → SEARCHING 복귀)
+ *   {"status":"grip_failed"}     ← 전류 미달, 집기 실패 (Python → SEARCHING 복귀)
  *   {"status":"dumped"}          ← 컨테이너 열기 완료 (Python → SEARCHING 복귀)
  *   {"status":"gripper_opened"}  ← gripper_open 명령 처리 완료
  *   {"status":"gripper_closed"}  ← gripper_close 명령 처리 완료
@@ -43,9 +39,8 @@
  *   {"status":"fault_reset"}     ← reset_fault 처리 완료
  *
  * 상태 머신:
- *   IDLE(그리퍼 닫힘) → (grip) → GRIPPING → (집기 시도 완료) → CHECKING(팔 중간 정지, at_check_pos 전송)
- *        CHECKING → (confirm_grip) → LIFTING → IDLE(그리퍼 다시 닫힘, gripped 전송)
- *        CHECKING → (reject_grip 또는 확인 타임아웃) → IDLE(그리퍼 열었다 다시 닫힘, grip_failed 전송)
+ *   IDLE(그리퍼 닫힘) → (grip) → GRIPPING → (성공) → LIFTING → IDLE(그리퍼 다시 닫힘)
+ *                                          → (실패) → IDLE(그리퍼 다시 닫힘)
  *        → (dump) → DUMPING → IDLE
  *        → (gripper_open/gripper_close) → IDLE (그리퍼만 열고/닫고 상태 변화 없음)
  *        → (basket_open/basket_close) → IDLE (바스켓만 열고/닫고 상태 변화 없음, 임시 디버깅용)
@@ -92,32 +87,12 @@ void safetyResetFaultFlags();
 enum State {
   IDLE,      // 대기
   GRIPPING,  // 그리퍼 닫기
-  CHECKING,  // 팔 중간 정지 — 카메라로 그립 확인, Jetson의 confirm_grip/reject_grip 대기
   LIFTING,   // 팔 올림 → 그리퍼 열기 → 팔 내림 (컨테이너 투하)
   DUMPING,   // 컨테이너 열기 (도착 지점)
 };
 
 State currentState = IDLE;
 char  currentCls[16] = "";
-uint32_t checkStartMs = 0;
-
-// CHECKING 중 Jetson 응답이 아예 안 올 때(시리얼 문제 등) 팔이 중간 위치에
-// 무한정 멈춰있지 않도록 하는 안전망. Python 쪽 GRIP_CHECK 판단(수 초)보다
-// 넉넉히 길게 잡아서, 정상 동작에서는 이 타임아웃보다 항상 먼저 confirm/reject가 온다.
-#define CHECK_TIMEOUT_MS 8000
-
-// CHECKING에서 그립 실패로 판단됐을 때(reject_grip 또는 타임아웃) 공통 정리 동작 —
-// 그리퍼를 열면서 동시에 팔을 내리고(gripperOpenWithArmDown) → 그리퍼 대기 상태로 재닫힘.
-// 실패 시 sendSafetyAbortStatus를 호출하고 false를 반환하며, 호출부는 그 이상 아무 것도
-// 더 하지 않아야 한다.
-bool doRejectGrip(const char* ctx) {
-  String w;
-  w = String(ctx) + "_open_down";
-  if (!gripperOpenWithArmDown()) { sendSafetyAbortStatus(w.c_str()); return false; }
-  w = String(ctx) + "_close";
-  if (!gripperCloseIdle()) { sendSafetyAbortStatus(w.c_str()); return false; }
-  return true;
-}
 
 // safety 개입으로 동작이 중단됐을 때 원인별로 Jetson에 상태를 알린다.
 void sendSafetyAbortStatus(const char* where) {
@@ -185,22 +160,6 @@ void parseCommand(const String& json) {
     return;
   }
 
-  // 그립 중간 확인(카메라) 결과 — 확인됨 → 팔 마저 올리는 LIFTING으로 이어간다.
-  if (strcmp(cmd, "confirm_grip") == 0 && currentState == CHECKING) {
-    currentState = LIFTING;
-    JETSON_SERIAL.println("[OpenRB] confirm_grip → LIFTING 계속");
-    return;
-  }
-
-  // 그립 중간 확인(카메라) 결과 — 실패로 판단됨 → 그리퍼 열고 팔 내려 원위치.
-  if (strcmp(cmd, "reject_grip") == 0 && currentState == CHECKING) {
-    if (!doRejectGrip("reject_grip_cmd")) return;
-    currentCls[0] = '\0';
-    currentState = IDLE;
-    JETSON_SERIAL.println("{\"status\":\"grip_failed\"}");
-    return;
-  }
-
   if (strcmp(cmd, "dump") == 0 && currentState == IDLE) {
     currentState = DUMPING;
     JETSON_SERIAL.println("[OpenRB] dump → DUMPING");
@@ -253,7 +212,7 @@ void parseCommand(const String& json) {
     return;
   }
 
-  // 디버깅/실측용 — 팔을 임의의 raw 위치로 이동 (ARM_CHECK_RAW 같은 중간 각도를
+  // 디버깅/실측용 — 팔을 임의의 raw 위치로 이동 (중간 각도 등을
   // 재업로드 없이 눈으로 보면서 여러 번 시험할 때 사용)
   if (strcmp(cmd, "arm_to") == 0 && currentState == IDLE) {
     int32_t raw = doc["raw"] | -1;
@@ -340,27 +299,8 @@ void updateStateMachine() {
         break;
       }
 
-      if (!armCheck()) {
-        sendSafetyAbortStatus("arm_check");
-        break;
-      }
-      checkStartMs = millis();
-      currentState = CHECKING;
-      JETSON_SERIAL.print("{\"status\":\"at_check_pos\",\"cls\":\"");
-      JETSON_SERIAL.print(currentCls);
-      JETSON_SERIAL.println("\"}");
-      break;
-
-    case CHECKING:
-      // Jetson이 confirm_grip/reject_grip을 보내면 parseCommand()가 상태를 바꾼다.
-      // 여기서는 응답이 아예 안 올 때를 대비한 타임아웃만 본다.
-      if (millis() - checkStartMs >= CHECK_TIMEOUT_MS) {
-        JETSON_SERIAL.println("[OpenRB] 그립 확인 타임아웃 → 그리퍼 열고 팔 내림");
-        if (!doRejectGrip("check_timeout")) break;
-        currentCls[0] = '\0';
-        currentState = IDLE;
-        JETSON_SERIAL.println("{\"status\":\"grip_failed\"}");
-      }
+      currentState = LIFTING;
+      JETSON_SERIAL.println("[OpenRB] 집기 시도 완료 → LIFTING");
       break;
 
     case LIFTING:

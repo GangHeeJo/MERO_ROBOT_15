@@ -16,30 +16,31 @@ match_start_time을 그만큼 과거로 당겨서 실제 경기 시계와 동기
 경기 도중 main.py를 재시작해야 할 때, 그 시점의 실제 남은 시간을 입력하면 됨
 (안 하면 PICK_PHASE_SECS 카운트다운이 재시작 시점부터 새로 시작돼서 실제 경기 종료
 전에 GO_TO_STORAGE 전환을 영영 못 하는 문제가 있었음). 이 입력 직후 PICK_PHASE_SECS
-(150s=2분30초) 동안 SEARCHING/GRIPPING/GRIP_CHECK/
-POST_GRIP_SCAN을 반복하다가, 그 시간이 지나면 넷 중 어느 상태에 있든(grip
-응답 대기 중이든 그립 확인 중이든 집기후 스캔 중이든) 매 프레임 즉시 GO_TO_STORAGE로 전환됨
+(150s=2분30초) 동안 SEARCHING/GRIPPING/
+POST_GRIP_SCAN을 반복하다가, 그 시간이 지나면 셋 중 어느 상태에 있든(grip
+응답 대기 중이든 집기후 스캔 중이든) 매 프레임 즉시 GO_TO_STORAGE로 전환됨
 (남은 30초 동안 회전하며 flag 탐색 → 발견하면 정렬 후 멈추지 않고 스토리지 안까지 직진 진입).
 전환 시점에
 cam_backward(카메라 후방)와 arm_up(팔 규정 크기 위치 복귀)을 동시에 전송함. 이 체크는
-상태머신 분기 진입 전에 한 번만 수행 — GRIPPING/GRIP_CHECK/POST_GRIP_SCAN에서도
-안 걸리면 최악의 경우(grip 타임아웃 15초+그립 확인 0.5초+스캔 4초) 30초 중 대부분을
-까먹을 수 있어서 반드시 네 상태 모두에서 체크해야 함.
+상태머신 분기 진입 전에 한 번만 수행 — GRIPPING/POST_GRIP_SCAN에서도
+안 걸리면 최악의 경우(grip 타임아웃 15초+스캔 4초) 30초 중 19초를
+까먹을 수 있어서 반드시 세 상태 모두에서 체크해야 함.
 
 상태 머신:
   SEARCHING      — 경기 시작 직후 탐지 결과 무시하고 오프닝 무브(전진하며 좌회전하는
                    코너링, OPENING_ARC_SECS초, 1회) 먼저 수행 → 이후 flag 제외 물체 탐지,
-                   보이면 거리 상관없이 바로 정밀 정렬(전후진+회전 동시 보정) 진입 → 정렬 끝나면
-                   직진 접근 후 grip 전송
-  GRIPPING       — grip 전송 후 at_check_pos/gripped 신호 대기
-                   → at_check_pos 수신 시 GRIP_CHECK, gripped 수신 시 POST_GRIP_SCAN
-  GRIP_CHECK     — 팔이 중간 위치(ARM_CHECK_RAW)에서 정지한 동안 GRIP_CHECK_TIMEOUT_SECS(0.5초)
-                   동안 매 프레임 탐지되는 모든 클래스를 집계 → 창이 끝나면(조기 종료 없이)
-                   가장 많이 탐지된 클래스(최빈값)가 집으려 한 클래스(<cls>, 예: d6) 또는
-                   gripped_<cls>(예: gripped_d6)와 같으면 confirm_grip 전송(팔 마저 올림),
-                   다르면(엉뚱한 클래스거나 아무것도 안 보이면) reject_grip 전송(그리퍼 열면서
-                   동시에 팔 내림) → 이후 GRIPPING으로 돌아가 최종 gripped/grip_failed 신호 대기
-  POST_GRIP_SCAN — 집기 직후 제자리 스캔, 타겟 있으면/시간 다 차면 SEARCHING
+                   보이면 거리 상관없이 바로 정밀 정렬(전후진+회전 동시 보정) 진입 → cx/cy
+                   정렬되면 바로 접근하지 않고 제자리에 멈춰 ALIGN_CONFIRM_SECS(0.5초) 동안
+                   정렬 유지 + 클래스 일치(locked_target_cls, 트래커 id 재사용으로 엉뚱한
+                   물체로 바뀌지 않았는지)를 재확인(align_confirm) → 0.5초 다 채운 시점에
+                   마지막으로 locked["cls"]가 실제 TARGET_CLS에 속하는지 한 번 더 대조 →
+                   통과해야만 그리퍼 열고 직진 접근 후 grip 전송. 확인 중 흔들리면 정밀
+                   정렬로 복귀, 클래스가 바뀌었거나(락 시점과 다름) TARGET_CLS가 아니거나
+                   놓치면 재탐색으로 복귀
+  GRIPPING       — grip 전송 후 gripped 신호 대기 (집기+팔올림+투하+팔내림 완료)
+                   → gripped 수신 시 POST_GRIP_SCAN
+  POST_GRIP_SCAN — 집기 직후 POST_GRIP_BACKUP_SECS(1초) 후진 후 제자리 스캔,
+                   타겟 있으면/시간 다 차면 SEARCHING
   GO_TO_STORAGE  — 제자리 회전하며 flag 탐색 → 발견 시 좌우(cx)만 정렬(방향만 맞춤,
                    상하/거리 정렬 없음) → 정렬 끝나면 멈추지 않고 그 상태로 계속 직진 —
                    모빌리티 자체가 스토리지 안까지 진입 (dump 명령 없음, 여기서 경기 종료 취급)
@@ -49,9 +50,8 @@ cam_backward(카메라 후방)와 arm_up(팔 규정 크기 위치 복귀)을 동
   /dev/ttyACM1 → OpenRB (팔·그리퍼)    {"cmd":"grip"/"idle"/"gripper_open"/"gripper_close"}
 
 OpenRB 응답:
-  {"status":"at_check_pos"}   — 팔이 중간 위치에서 정지, GRIP_CHECK 진입 신호
   {"status":"gripped"}        — 집기+컨테이너 투하+그리퍼 재닫힘 완료 → SEARCHING 복귀
-  {"status":"grip_failed"}    — GRIP_CHECK에서 reject_grip/타임아웃 → SEARCHING 복귀
+  {"status":"grip_failed"}    — 집기 실패 → SEARCHING 복귀
   {"status":"gripper_opened"} — 접근 전 그리퍼 미리 열기 완료
   {"status":"gripper_closed"} — 접근 취소 후 그리퍼 대기 상태로 닫힘 완료
 
@@ -255,6 +255,8 @@ MIN_DETECTED_FOR_EXPLORE = 3      # 탐색 이동 조건: 클래스 무관 총 �
                                    #  안 보이는 방향으로 무작정 전진하면 벽에 부딪힐 수 있어서)
                                    # SEARCH_ROTATE_SPEED 기준 3초≈180도 (실측)
 POST_GRIP_SCAN_SECS       = 4.0   # 집기 완료 직후 제자리 360도 스캔 시간 (SEARCH_ROTATE_SPEED 기준, 실측 필요)
+POST_GRIP_BACKUP_SECS     = 1.0   # 회전 스캔 시작 전 먼저 뒤로 후진하는 시간
+POST_GRIP_BACKUP_SPEED    = 0.2   # 후진 속도
 CENTER_MARGIN_PX    = 42      # 픽셀 모드: 가로 중심에서 이 픽셀 이내 (시각화 가이드용, 면적 2배)
 CENTER_MARGIN_Y_PX  = 35      # 픽셀 모드: 세로 중심에서 이 픽셀 이내 (시각화 가이드용, 면적 2배)
 CENTER_OFFSET_Y_PX  = 170     # 세로 중심 오프셋 (양수=아래)
@@ -264,6 +266,12 @@ TURN_ONLY_SPEED     = 0.1     # 제자리 회전 속도
 FINAL_APPROACH_SECS  = 1.7        # area 임계 도달 후 정지→직진하는 시간
 FINAL_APPROACH_SPEED = 0.2        # 직진 접근 속도
 FORWARD_TRIM = 0.025  # 직진 시 우측으로 쏠리는 것 보정 (양수=오른쪽 바퀴를 더 빠르게)
+
+# 정밀 정렬 완료 → 직진 접근(FINAL_APPROACH_SECS) 시작 사이에 넣는 정지 확인 구간.
+# cx/cy가 딱 맞은 그 한 프레임만 보고 바로 1.7초 직진을 커밋하면, 하필 그 프레임에서만
+# 잠깐 흔들려 정렬된 것처럼 보인 경우에도 그대로 돌진하게 된다 — 제자리에 멈춰서
+# ALIGN_CONFIRM_SECS 동안 계속 정렬 상태가 유지되는지 다시 확인한 뒤에만 접근을 시작한다.
+ALIGN_CONFIRM_SECS = 0.5
 
 # 오인식 방지
 CONFIRM_FRAMES      = 3       # 연속 N프레임 도달 조건 만족해야 grip 전송
@@ -279,14 +287,6 @@ SEARCH_ROTATE_SPEED = 0.1     # 타겟 없을 때 제자리 회전 속도
 # 타임아웃
 GRIP_TIMEOUT_SECS    = 15.0   # grip 전송 후 gripped 신호 최대 대기
 STORAGE_TIMEOUT_SECS = 60.0   # GO_TO_STORAGE 전체 최대 시간 (태극기 탐색 포함)
-
-# ── 그립 중간 확인 파라미터 (GRIP_CHECK) ──────────────────
-# 팔이 중간 위치(ARM_CHECK_RAW)에서 멈춘 동안 GRIP_CHECK_TIMEOUT_SECS 동안 매 프레임
-# 원래 클래스(<cls>, 예: d6) 또는 전용 학습 클래스(gripped_<cls>, 예: gripped_d6)가
-# 보이는지 집계해서, 그 시간 동안 "보임"이 과반수면 확인, 아니면 reject 처리한다
-# (조기 종료 없이 항상 창 전체를 다 채운 뒤 다수결로 판단).
-GRIP_CHECK_CONF_THRESHOLD  = 0.5   # gripped_<cls> 탐지 confidence 임계값
-GRIP_CHECK_TIMEOUT_SECS    = 0.5   # 판단 집계 창 길이
 
 # 경기 타이머 / 픽업↔보관 전환
 MATCH_DURATION_SECS = 180.0
@@ -308,7 +308,6 @@ FLAG_APPROACH_SLOW       = 0.1    # 감속 후진 속도
 class RobotState(Enum):
     SEARCHING      = "SEARCHING"
     GRIPPING       = "GRIPPING"
-    GRIP_CHECK     = "GRIP_CHECK"  # 팔이 중간 위치에서 정지 — gripped_<cls> 탐지로 실제 집힘 여부 확인
     POST_GRIP_SCAN = "POST_GRIP_SCAN"
     GO_TO_STORAGE  = "GO_TO_STORAGE"  # 정렬 끝나면 멈추지 않고 그대로 스토리지 안까지 직진 (모빌리티 자체가 진입)
 
@@ -322,10 +321,10 @@ flag_arrived             = False  # 직진 끝나고 정지 완료 — 이후 �
 storage_enter_time   = 0.0
 confirm_count        = 0
 last_target_id       = -1
+locked_target_cls    = None  # last_target_id를 락 걸 때의 클래스 — 트래커 id가 재사용되어
+                              # 엉뚱한 물체로 바뀌는 경우를 감지하기 위해 매 프레임 클래스 일치 재확인
 post_grip_scan_start = 0.0   # POST_GRIP_SCAN 진입 시각
 gripped_cls         = None
-grip_check_start        = 0.0   # GRIP_CHECK 진입 시각
-grip_check_class_counts = {}    # 집계 창 동안 클래스별 탐지 횟수 (cls -> count)
 align_phase          = 0      # --align-only 전용: 0=회전으로 좌우(cx) 정렬, 1=전진/후진으로 상하(cy) 정렬
 align_final_forward       = False  # --align-only 전용: cy 정렬 완료 후 1초 직진 중
 align_final_forward_start = 0.0
@@ -334,6 +333,8 @@ fb_final_forward       = False  # cx/cy 정렬 완료 후 직진 중
 fb_final_forward_start = 0.0
 fb_final_forward_cls   = None
 precise_align = False  # True면 area 임계 도달 후 정밀 정렬(전후진+회전 동시 보정) 진행 중
+align_confirm       = False  # True면 정밀 정렬 완료 후 0.5초간 정지 확인 중 (fb_final_forward 진입 전)
+align_confirm_start = 0.0
 gripper_prepped = False  # True면 이번 접근을 위해 그리퍼를 미리 열어둔 상태 (grip 전송 또는 취소 시 False로 복귀)
 search_rotate_start        = None   # 제자리 회전 탐색이 연속으로 시작된 시각 (None=회전 중 아님, 로그 표시용)
 
@@ -380,10 +381,9 @@ threading.Thread(target=_read_esp32_loop, daemon=True).start()
 # ── OpenRB 수신 스레드 (팔 완료 신호) ───────────────────
 openrb_gripped     = False
 openrb_grip_failed = False
-openrb_at_check    = False
 
 def _read_openrb_loop():
-    global openrb_gripped, openrb_grip_failed, openrb_at_check
+    global openrb_gripped, openrb_grip_failed
     while True:
         if ser_openrb is None or not ser_openrb.is_open:
             time.sleep(0.5); continue
@@ -396,15 +396,12 @@ def _read_openrb_loop():
                     data = json.loads(raw)
                 except json.JSONDecodeError:
                     time.sleep(0.01); continue
-                if data.get("status") == "at_check_pos":
-                    openrb_at_check = True
-                    print("\n[OpenRB] 팔 중간 정지 — 그립 확인 대기")
-                elif data.get("status") == "gripped":
+                if data.get("status") == "gripped":
                     openrb_gripped = True
                     print("\n[OpenRB] 집기+투하 완료")
                 elif data.get("status") == "grip_failed":
                     openrb_grip_failed = True
-                    print("\n[OpenRB] 그립 확인 실패 → 그리퍼 열고 팔 내림")
+                    print("\n[OpenRB] 집기 실패 (전류 미달)")
                 elif data.get("status") == "gripper_opened":
                     print("\n[OpenRB] 그리퍼 미리 열기 완료")
                 elif data.get("status") == "gripper_closed":
@@ -602,14 +599,6 @@ def send_gripper_open():
 def send_gripper_close():
     """접근을 포기하고 재탐색으로 돌아갈 때 — 열어뒀던 그리퍼를 대기 상태로 되돌린다."""
     _write_openrb({"cmd": "gripper_close"})
-
-def send_confirm_grip():
-    """GRIP_CHECK에서 gripped_<cls>가 확인됨 — 팔을 마저 올려 투하를 계속하게 한다."""
-    _write_openrb({"cmd": "confirm_grip"})
-
-def send_reject_grip():
-    """GRIP_CHECK에서 확인 실패(미검출/타임아웃) — 그리퍼 열고 팔을 내려 원위치시킨다."""
-    _write_openrb({"cmd": "reject_grip"})
 
 def send_cam_backward():
     """보관함으로 가기 직전 — 카메라를 뒤로 180도 돌려 후방을 보게 한다. 경기당 1회만 호출."""
@@ -1017,13 +1006,14 @@ try:
         # 어느 상태에 있든(grip 응답 대기 중이든 집기후 스캔 중이든) 즉시 중단하고
         # 보관함 이동으로 전환. GRIPPING/POST_GRIP_SCAN에서도 걸리게 해야 최악의 경우
         # (grip 타임아웃 15초 + 스캔 4초)에도 남은 30초를 거의 다 까먹지 않는다.
-        if (robot_state in (RobotState.SEARCHING, RobotState.GRIPPING, RobotState.GRIP_CHECK, RobotState.POST_GRIP_SCAN)
+        if (robot_state in (RobotState.SEARCHING, RobotState.GRIPPING, RobotState.POST_GRIP_SCAN)
                 and time.time() - match_start_time >= PICK_PHASE_SECS):
             control_wheels(None)
             if gripper_prepped:
                 send_gripper_close()
                 gripper_prepped = False
             precise_align        = False
+            align_confirm        = False
             align_phase          = 0
             align_final_forward  = False
             fb_final_forward     = False
@@ -1115,6 +1105,7 @@ try:
                     control_wheels(None)
                     fb_final_forward   = False
                     last_target_id     = -1
+                    locked_target_cls  = None
                     gripped_cls        = fb_final_forward_cls
                     openrb_gripped     = False
                     openrb_grip_failed = False
@@ -1135,10 +1126,16 @@ try:
                 # select_target()을 매 프레임 다시 부르지 않고 last_target_id로 같은 물체만 계속
                 # 추적한다 — 후보가 여러 개고 점수가 비슷하면 프레임마다 다른 물체로 선택이 튈 수
                 # 있어서, 한 번 정하면 그 물체가 완전히 사라지기(+grace) 전까진 안 바꾼다.
+                # id는 그대로인데 클래스가 락 시점과 달라졌으면(트래커 id 재사용 등으로
+                # 엉뚱한 물체가 같은 id를 물려받은 경우) 같은 물체로 보지 않고 놓친 것으로 처리한다.
                 locked = next((o for o in detected if o["id"] == last_target_id), None)
+                if locked is not None and locked["cls"] != locked_target_cls:
+                    print(f"\n[상태] 정밀 정렬 중 클래스 불일치 감지 (id={last_target_id} {locked_target_cls}→{locked['cls']}) → 놓친 것으로 처리")
+                    locked = None
                 if not locked:
                     precise_align     = False
                     last_target_id    = -1
+                    locked_target_cls = None
                     if gripper_prepped:
                         send_gripper_close()
                         gripper_prepped = False
@@ -1152,14 +1149,13 @@ try:
                     cy_aligned = abs(locked["cy"] - cy_ref) <= CENTER_MARGIN_Y_PX
 
                     if cx_aligned and cy_aligned:
+                        # 바로 그리퍼 열고 직진을 커밋하지 않고, 일단 멈춰서 ALIGN_CONFIRM_SECS
+                        # 동안 정렬이 유지되는지 재확인한다(흔들린 한 프레임만 보고 오판 방지).
                         control_wheels(None)
-                        precise_align          = False
-                        fb_final_forward        = True
-                        fb_final_forward_start  = time.time()
-                        fb_final_forward_cls    = locked["cls"]
-                        send_gripper_open()
-                        gripper_prepped = True
-                        print(f"\n[상태] 정렬 완료 (cx={locked['cx']:.0f}, cy={locked['cy']:.0f}) → 그리퍼 열기 + 직진 접근 시작")
+                        precise_align       = False
+                        align_confirm       = True
+                        align_confirm_start = time.time()
+                        print(f"\n[상태] 정렬 완료 (cx={locked['cx']:.0f}, cy={locked['cy']:.0f}) → {ALIGN_CONFIRM_SECS:.1f}초 정지 확인")
                     else:
                         # cy_ref보다 위(작음)=목표가 더 멀리 있음 → 전진, 아래(큼)=너무 가까움 → 후진
                         fwd = 0.0
@@ -1173,6 +1169,60 @@ try:
                                        override_r=fwd - PRECISE_ALIGN_TURN_SPEED * turn)
                         print(f"[상태] 동시 정렬중... cy={locked['cy']:.0f} cx={locked['cx']:.0f}", end="\r")
 
+            elif align_confirm:
+                # 정밀 정렬이 막 끝난 직후 제자리에 멈춰서, ALIGN_CONFIRM_SECS 동안 계속
+                # 정렬 상태가 유지되는지 + 여전히 같은 클래스의 물체인지(id 재사용으로
+                # 엉뚱한 물체로 바뀌지 않았는지) 재확인한다. 이 구간 내내 그리퍼는 아직
+                # 닫힌 채로 유지(gripper_open은 확인 통과 후에만 전송) — 확인 중 흔들리면
+                # 정밀 정렬로 돌아가 다시 맞추고, 타겟 자체를 놓치거나 클래스가 바뀌면
+                # 재탐색으로 복귀한다.
+                locked = next((o for o in detected if o["id"] == last_target_id), None)
+                control_wheels(None)
+                if locked is not None and locked["cls"] != locked_target_cls:
+                    print(f"\n[상태] 정렬 확인 중 클래스 불일치 감지 (id={last_target_id} {locked_target_cls}→{locked['cls']}) → 놓친 것으로 처리")
+                    locked = None
+                if not locked:
+                    align_confirm     = False
+                    last_target_id    = -1
+                    locked_target_cls = None
+                    print("\n[상태] 정렬 확인 중 타겟 놓침 → 재탐색")
+                else:
+                    frame_w = FRAME_W or 640
+                    frame_h = FRAME_H or 480
+                    cx_ref  = frame_w / 2 + CENTER_OFFSET_X_PX
+                    cy_ref  = frame_h / 2 + CENTER_OFFSET_Y_PX
+                    cx_aligned = abs(locked["cx"] - cx_ref) <= CENTER_MARGIN_PX
+                    cy_aligned = abs(locked["cy"] - cy_ref) <= CENTER_MARGIN_Y_PX
+
+                    if not (cx_aligned and cy_aligned):
+                        # 확인 중 흔들려서 틀어짐 → 정밀 정렬로 복귀해 다시 맞춘다
+                        align_confirm = False
+                        precise_align = True
+                        print(f"\n[상태] 정렬 확인 중 흔들림 감지 (cx={locked['cx']:.0f}, cy={locked['cy']:.0f}) → 정밀 정렬 재개")
+                    else:
+                        elapsed_confirm = time.time() - align_confirm_start
+                        if elapsed_confirm >= ALIGN_CONFIRM_SECS:
+                            # 최종 커밋 직전 마지막 검증 — d6처럼 이번 경기에서 잡기로 한 클래스
+                            # 목록(TARGET_CLS)에 실제로 속하는 물체가 맞는지 확인한다. locked_target_cls
+                            # 비교(락 시점과 같은지)와는 별개로, TARGET_CLS 자체를 직접 대조하는
+                            # 마지막 안전장치 — 접근/그리퍼 개방을 커밋하기 직전이라 특히 중요하다.
+                            if locked["cls"] not in TARGET_CLS:
+                                align_confirm     = False
+                                precise_align     = False
+                                last_target_id    = -1
+                                locked_target_cls = None
+                                print(f"\n[상태] 정렬 확인 완료했지만 타겟 클래스 아님 ({locked['cls']} not in {sorted(TARGET_CLS)}) → 재탐색")
+                            else:
+                                align_confirm          = False
+                                fb_final_forward        = True
+                                fb_final_forward_start  = time.time()
+                                fb_final_forward_cls    = locked["cls"]
+                                send_gripper_open()
+                                gripper_prepped = True
+                                print(f"\n[상태] 정렬 확인 완료 ({ALIGN_CONFIRM_SECS:.1f}s 유지, {locked['cls']}) → 그리퍼 열기 + 직진 접근 시작")
+                        else:
+                            print(f"[상태] 정렬 확인중... ({elapsed_confirm:.1f}/{ALIGN_CONFIRM_SECS:.1f}s) cx={locked['cx']:.0f} cy={locked['cy']:.0f}", end="\r")
+
             elif target:
                 search_rotate_start = None
                 if time.time() - _last_print_t >= 0.5:
@@ -1185,8 +1235,9 @@ try:
                 # 직전에만 연다 (엉뚱한 물체가 정렬 중 벌어진 집게에 끼는 것 방지).
                 control_wheels(None)
                 precise_align     = True
-                last_target_id    = target["id"]  # 이 물체 id로 락 — 이후 select_target() 재호출 없이 이 id만 추적
-                print(f"\n[상태] 타겟 발견 (area={target['area']}) → 정밀 정렬 시작 (그리퍼는 닫힌 채 유지)")
+                last_target_id    = target["id"]   # 이 물체 id로 락 — 이후 select_target() 재호출 없이 이 id만 추적
+                locked_target_cls = target["cls"]  # 락 시점 클래스 — 이후 같은 id라도 클래스가 바뀌면 다른 물체로 간주
+                print(f"\n[상태] 타겟 발견 ({target['cls']}, area={target['area']}) → 정밀 정렬 시작 (그리퍼는 닫힌 채 유지)")
 
             else:
                 align_phase   = 0
@@ -1230,13 +1281,7 @@ try:
         elif robot_state == RobotState.GRIPPING:
             control_wheels(None)
             elapsed = time.time() - grip_sent_at
-            if openrb_at_check:
-                openrb_at_check         = False
-                grip_check_class_counts = {}
-                grip_check_start        = time.time()
-                robot_state             = RobotState.GRIP_CHECK
-                print(f"\n[상태] GRIPPING → GRIP_CHECK (팔 중간 정지, 확인 대상: gripped_{gripped_cls})")
-            elif openrb_gripped:
+            if openrb_gripped:
                 openrb_gripped       = False
                 openrb_grip_failed   = False
                 gripped_cls          = None
@@ -1262,50 +1307,27 @@ try:
             else:
                 print(f"[상태] 집어서 컨테이너 투하중... ({elapsed:.1f}s)", end="\r")
 
-        elif robot_state == RobotState.GRIP_CHECK:
-            # 팔이 중간 위치에서 정지한 동안 GRIP_CHECK_TIMEOUT_SECS 동안 매 프레임 탐지된
-            # 모든 클래스를 집계한다. 창이 끝나면(조기 종료 없이) 가장 많이 탐지된 클래스(최빈값)를
-            # 그 순간 실제로 잡고 있는 물체로 판단 — 그게 원래 클래스(<cls>, 예: d6) 또는
-            # gripped_<cls>(예: gripped_d6)와 같으면 confirm, 다르면(엉뚱한 클래스거나 아예
-            # 아무것도 안 보이면) reject.
-            control_wheels(None)
-            expected_cls     = f"gripped_{gripped_cls}"
-            accepted_classes = {gripped_cls, expected_cls}
-            for o in detected:
-                if o["conf"] >= GRIP_CHECK_CONF_THRESHOLD:
-                    grip_check_class_counts[o["cls"]] = grip_check_class_counts.get(o["cls"], 0) + 1
-            elapsed_check = time.time() - grip_check_start
-
-            if elapsed_check >= GRIP_CHECK_TIMEOUT_SECS:
-                dominant_cls = max(grip_check_class_counts, key=grip_check_class_counts.get) if grip_check_class_counts else None
-                confirmed = dominant_cls in accepted_classes
-                if confirmed:
-                    send_confirm_grip()
-                    print(f"\n[상태] 그립 확인됨 (최빈 클래스={dominant_cls}, {grip_check_class_counts}) → 팔 마저 올리기")
-                else:
-                    send_reject_grip()
-                    print(f"\n[상태] 그립 미확인 (최빈 클래스={dominant_cls}, 기대={gripped_cls}/{expected_cls}, {grip_check_class_counts}) → 그리퍼 열고 팔 내림")
-                robot_state  = RobotState.GRIPPING
-                grip_sent_at = time.time()
-            else:
-                print(f"[상태] 그립 확인중... ({grip_check_class_counts}, {elapsed_check:.2f}s)", end="\r")
-
         elif robot_state == RobotState.POST_GRIP_SCAN:
-            # 집기 시도(성공/실패 무관) 직후 — 이동하지 않고 제자리에서 한 바퀴 돌며
-            # 주변에 바로 이어서 집을 만한 타겟이 있는지 확인한다. 발견하거나 스캔 시간이
-            # 다 차면 SEARCHING으로 넘겨서 이후 정밀 정렬/탐색은 기존 로직이 그대로 처리한다.
+            # 집기 시도(성공/실패 무관) 직후 — 먼저 POST_GRIP_BACKUP_SECS(1초) 동안 뒤로
+            # 후진한 다음, 제자리에서 한 바퀴 돌며(POST_GRIP_SCAN_SECS) 주변에 바로 이어서
+            # 집을 만한 타겟이 있는지 확인한다. 발견하거나 스캔 시간이 다 차면 SEARCHING으로
+            # 넘겨서 이후 정밀 정렬/탐색은 기존 로직이 그대로 처리한다.
             elapsed_scan = time.time() - post_grip_scan_start
             if target:
                 control_wheels(None)
                 robot_state = RobotState.SEARCHING
                 print(f"\n[상태] 스캔 중 타겟 발견 ({target['cls']}) → SEARCHING 복귀")
-            elif elapsed_scan >= POST_GRIP_SCAN_SECS:
+            elif elapsed_scan < POST_GRIP_BACKUP_SECS:
+                control_wheels(None, override_l=-POST_GRIP_BACKUP_SPEED, override_r=-POST_GRIP_BACKUP_SPEED)
+                print(f"[상태] 집기 후 후진중... ({elapsed_scan:.1f}/{POST_GRIP_BACKUP_SECS:.1f}s)", end="\r")
+            elif elapsed_scan >= POST_GRIP_BACKUP_SECS + POST_GRIP_SCAN_SECS:
                 control_wheels(None)
                 robot_state = RobotState.SEARCHING
                 print(f"\n[상태] 주변 스캔 완료 (새 타겟 없음) → SEARCHING 복귀")
             else:
+                scan_elapsed = elapsed_scan - POST_GRIP_BACKUP_SECS
                 control_wheels(None, override_l=-SEARCH_ROTATE_SPEED, override_r=SEARCH_ROTATE_SPEED)
-                print(f"[상태] 집기 후 주변 스캔중... ({elapsed_scan:.1f}/{POST_GRIP_SCAN_SECS:.1f}s)", end="\r")
+                print(f"[상태] 집기 후 주변 스캔중... ({scan_elapsed:.1f}/{POST_GRIP_SCAN_SECS:.1f}s)", end="\r")
             send_idle()
 
         elif robot_state == RobotState.GO_TO_STORAGE:
@@ -1405,7 +1427,7 @@ try:
 
         # 타겟 노란 테두리 — 정밀 정렬 중엔 실제로 추적 중인 last_target_id를 표시
         # (그 순간 select_target()이 고르는 것과 다를 수 있어서 혼동 방지)
-        _highlight_id = last_target_id if (precise_align or fb_final_forward) else (target["id"] if target else None)
+        _highlight_id = last_target_id if (precise_align or align_confirm or fb_final_forward) else (target["id"] if target else None)
         if _highlight_id is not None and boxes is not None:
             ids = boxes.id
             for i, box in enumerate(boxes):

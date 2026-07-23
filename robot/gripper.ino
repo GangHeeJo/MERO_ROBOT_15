@@ -23,7 +23,6 @@ extern Dynamixel2Arduino dxl;
 bool safeDelay(uint32_t wait_ms);
 bool safeSetGoalPosition(uint8_t id, int32_t goal_raw, uint32_t wait_ms);
 bool safetyPoll();
-bool safetyHasFatalFault();
 
 // ── 설정값 (raw, 0~4095, 실측) ───────────────────────────
 #define GRIPPER_ID  1
@@ -87,24 +86,6 @@ bool gripperCloseIdle() {
   bool ok = safeSetGoalPosition(GRIPPER_ID, FINGER_CLOSE_RAW, 300);
   if (ok) {
     Serial.println("[그리퍼] 닫힘 (대기 상태)");
-  }
-  return ok;
-}
-
-// ── 그리퍼 열기 + 팔 내리기 동시 구동 (그립 실패 원위치용) ──────
-// GRIP_CHECK에서 reject 판정이 나거나 확인 타임아웃일 때 쓴다. 그리퍼를 다 열고 나서
-// 팔을 내리면 원위치까지 걸리는 시간이 두 배가 되므로, 두 모터에 목표 위치만 먼저
-// 넣어두고 대기는 한 번만 해서 실제로 동시에 움직이게 한다.
-bool gripperOpenWithArmDown() {
-  if (safetyHasFatalFault()) return false;
-  if (safetyPoll()) return false;
-
-  dxl.setGoalPosition(GRIPPER_ID, FINGER_OPEN_RAW, UNIT_RAW);
-  dxl.setGoalPosition(ARM_ID, ARM_DOWN_RAW, UNIT_RAW);
-
-  bool ok = safeDelay(300);
-  if (ok) {
-    Serial.println("[그리퍼+팔] 그립 실패 원위치 — 그리퍼 열기 + 팔 내림 동시 완료");
   }
   return ok;
 }
