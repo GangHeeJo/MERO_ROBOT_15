@@ -16,15 +16,15 @@ match_start_time을 그만큼 과거로 당겨서 실제 경기 시계와 동기
 경기 도중 main.py를 재시작해야 할 때, 그 시점의 실제 남은 시간을 입력하면 됨
 (안 하면 PICK_PHASE_SECS 카운트다운이 재시작 시점부터 새로 시작돼서 실제 경기 종료
 전에 GO_TO_STORAGE 전환을 영영 못 하는 문제가 있었음). 이 입력 직후 PICK_PHASE_SECS
-(150s=2분30초) 동안 SEARCHING/GRIPPING/
-POST_GRIP_SCAN을 반복하다가, 그 시간이 지나면 셋 중 어느 상태에 있든(grip
-응답 대기 중이든 집기후 스캔 중이든) 매 프레임 즉시 GO_TO_STORAGE로 전환됨
+(150s=2분30초) 동안 SEARCHING/GRIPPING/GRIP_CHECK/
+POST_GRIP_SCAN을 반복하다가, 그 시간이 지나면 넷 중 어느 상태에 있든(grip
+응답 대기 중이든 그립 확인 중이든 집기후 스캔 중이든) 매 프레임 즉시 GO_TO_STORAGE로 전환됨
 (남은 30초 동안 회전하며 flag 탐색 → 발견하면 정렬 후 멈추지 않고 스토리지 안까지 직진 진입).
 전환 시점에
 cam_backward(카메라 후방)와 arm_up(팔 규정 크기 위치 복귀)을 동시에 전송함. 이 체크는
-상태머신 분기 진입 전에 한 번만 수행 — GRIPPING/POST_GRIP_SCAN에서도
-안 걸리면 최악의 경우(grip 타임아웃 15초+스캔 4초) 30초 중 19초를
-까먹을 수 있어서 반드시 세 상태 모두에서 체크해야 함.
+상태머신 분기 진입 전에 한 번만 수행 — GRIPPING/GRIP_CHECK/POST_GRIP_SCAN에서도
+안 걸리면 최악의 경우(grip 타임아웃 15초+그립 확인 0.5초+스캔 4초) 30초 중 대부분을
+까먹을 수 있어서 반드시 네 상태 모두에서 체크해야 함.
 
 상태 머신:
   SEARCHING      — 경기 시작 직후 탐지 결과 무시하고 오프닝 무브(전진하며 좌회전하는
@@ -33,11 +33,12 @@ cam_backward(카메라 후방)와 arm_up(팔 규정 크기 위치 복귀)을 동
                    직진 접근 후 grip 전송
   GRIPPING       — grip 전송 후 at_check_pos/gripped 신호 대기
                    → at_check_pos 수신 시 GRIP_CHECK, gripped 수신 시 POST_GRIP_SCAN
-  GRIP_CHECK     — 팔이 중간 위치(ARM_CHECK_RAW)에서 정지한 동안, 집으려 한 클래스에 대응하는
-                   gripped_<cls>(예: gripped_d6) 클래스가 GRIP_CHECK_CONFIRM_FRAMES 연속으로
-                   보이면 confirm_grip 전송(팔 마저 올림), GRIP_CHECK_TIMEOUT_SECS 안에 안 보이면
-                   reject_grip 전송(그리퍼 열고 팔 내림) → 이후 GRIPPING으로 돌아가 최종 gripped/
-                   grip_failed 신호 대기
+  GRIP_CHECK     — 팔이 중간 위치(ARM_CHECK_RAW)에서 정지한 동안 GRIP_CHECK_TIMEOUT_SECS(0.5초)
+                   동안 매 프레임 탐지되는 모든 클래스를 집계 → 창이 끝나면(조기 종료 없이)
+                   가장 많이 탐지된 클래스(최빈값)가 집으려 한 클래스(<cls>, 예: d6) 또는
+                   gripped_<cls>(예: gripped_d6)와 같으면 confirm_grip 전송(팔 마저 올림),
+                   다르면(엉뚱한 클래스거나 아무것도 안 보이면) reject_grip 전송(그리퍼 열면서
+                   동시에 팔 내림) → 이후 GRIPPING으로 돌아가 최종 gripped/grip_failed 신호 대기
   POST_GRIP_SCAN — 집기 직후 제자리 스캔, 타겟 있으면/시간 다 차면 SEARCHING
   GO_TO_STORAGE  — 제자리 회전하며 flag 탐색 → 발견 시 좌우(cx)만 정렬(방향만 맞춤,
                    상하/거리 정렬 없음) → 정렬 끝나면 멈추지 않고 그 상태로 계속 직진 —
