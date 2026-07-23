@@ -34,7 +34,7 @@ bool safetyPoll();
 #define GRIPPER_TORQUE_LIMIT_PCT 80
 
 // 속도 (Profile Velocity, 낮을수록 느림)
-#define GRIPPER_SPEED 200
+#define GRIPPER_SPEED 160
 
 // Load 기반 집기 감지 (실측: 물체 잡을 때 ~30%, 빈 손 ~0%)
 // PRESENT_LOAD 단위: 0.1% (300 = 30%)
