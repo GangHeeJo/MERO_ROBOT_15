@@ -1,28 +1,34 @@
 """
 Jetson TensorRT 변환 스크립트
 ─────────────────────────────
-실행: python src/trt_export.py  ← 반드시 Jetson에서 실행
+실행: python src/trt_export.py [--name best_final]  ← 반드시 Jetson에서 실행
 
 목적:
-  학습된 best.pt (PyTorch 가중치)를 Jetson 전용 추론 엔진인
-  TensorRT 포맷(best.engine)으로 변환.
+  학습된 <name>.pt (PyTorch 가중치, 기본 best.pt)를 Jetson 전용 추론
+  엔진인 TensorRT 포맷(<name>.engine)으로 변환.
   변환 후 추론 속도가 3~5배 빨라짐.
 
 변환 후 main.py 에서 모델 경로만 바꾸면 됨:
-  MODEL_PATH = os.path.join(BASE_DIR, "model", "best.engine")
+  MODEL_PATH = os.path.join(BASE_DIR, "model", "<name>.engine")
 
 주의:
   - Windows/Mac 에서는 실행 불가 (TensorRT는 NVIDIA GPU 전용)
   - 변환에 수 분 소요됨
-  - best.pt 가 model/ 폴더에 있어야 함
+  - <name>.pt 가 model/ 폴더에 있어야 함
 """
 
+import argparse
 import os
 from ultralytics import YOLO
 
+parser = argparse.ArgumentParser()
+parser.add_argument('--name', default='best',
+                     help='model/<name>.pt 를 model/<name>.engine 으로 변환 (기본값: best)')
+args = parser.parse_args()
+
 BASE_DIR    = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PT_PATH     = os.path.join(BASE_DIR, "model", "best.pt")
-ENGINE_PATH = os.path.join(BASE_DIR, "model", "best.engine")
+PT_PATH     = os.path.join(BASE_DIR, "model", f"{args.name}.pt")
+ENGINE_PATH = os.path.join(BASE_DIR, "model", f"{args.name}.engine")
 
 # best.pt 존재 여부 확인
 if not os.path.exists(PT_PATH):
