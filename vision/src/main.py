@@ -276,7 +276,7 @@ CONFIRM_FRAMES      = 3       # 연속 N프레임 도달 조건 만족해야 gri
 # 같이 쓰여서 건드리면 그쪽도 같이 바뀌므로, 정밀 정렬만 따로 뗀 전용 상수를 쓴다.
 PRECISE_ALIGN_FB_SPEED   = 0.25  # 1단계 전후(cy) 정렬 속도
 PRECISE_ALIGN_TURN_SPEED = 0.18  # 2단계 좌우(cx) 회전 정렬 속도
-TARGET_MISS_GRACE_FRAMES = 10    # 정밀 정렬 중 순간적으로 타겟을 놓쳐도 이 프레임 수까지는 포기 안 하고 정지 대기 (모션블러 등 프레임 단위 오탐 대응)
+TARGET_MISS_GRACE_FRAMES = 3    # 정밀 정렬 중 순간적으로 타겟을 놓쳐도 이 프레임 수까지는 포기 안 하고 정지 대기 (모션블러 등 프레임 단위 오탐 대응)
 GRIPPER_OPEN_LEAD_SECS   = 0.3    # gripper_open 명령 후 직진 시작까지 짧게 두는 텀 (그리퍼가 실제로 열리는 물리 시간, gripper.ino wait_ms=300과 맞춤)
 
 # 탐색 회전
