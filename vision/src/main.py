@@ -326,9 +326,11 @@ FLAG_APPROACH_SPEED      = 0.4    # 후진 접근 속도
 FLAG_APPROACH_SLOW       = 0.1    # 감속 후진 속도
 FLAG_REORIENT_TIMEOUT_SECS = 3.0  # 태극기 놓친 뒤 마지막 방향으로 재정렬 시도하는 최대 시간
                                    # (이 시간 안에 재발견 못 하면 일반 탐색(phase 0)으로 전환, ⚠️ 실측 필요)
-FLAG_REORIENT_APPROACH_SPEED = 0.15  # 재정렬(phase 2) 중 회전과 함께 섞는 후진 속도 — 시야를
+FLAG_REORIENT_APPROACH_SPEED = 0.25  # 재정렬(phase 2) 중 회전과 함께 섞는 후진 속도 — 시야를
                                       # 다시 확보하기 전까지는 접근 속도(FLAG_APPROACH_SPEED)보다
                                       # 느리게(⚠️ 실측 필요, 너무 빠르면 재발견 전에 충돌 위험)
+FLAG_REORIENT_ALIGN_SPEED    = 0.1   # 재정렬(phase 2) 중 회전 성분 — phase 1의 FLAG_ALIGN_SPEED와
+                                      # 별개 상수(phase 1에는 영향 없음)
 
 # 태극기 탐색 중 물체가 많이 보이면(밀집 방향, SEARCHING과 동일 로직) 그쪽으로 이동 —
 # 필드 배치상 물체 격자 중앙 쪽이 구석보다 보관함 방향 시야가 덜 가려서, 회전만 하는
@@ -1497,8 +1499,8 @@ try:
                         # 회전 — phase 1 조향 공식과 동일한 부호 규칙(속도 성분 + 회전 성분).
                         turn_dir = 1.0 if (flag_last_cx is None or flag_last_cx >= fw2 / 2) else -1.0
                         control_wheels(None,
-                                       override_l=-FLAG_REORIENT_APPROACH_SPEED + FLAG_ALIGN_SPEED * turn_dir,
-                                       override_r=-FLAG_REORIENT_APPROACH_SPEED - FLAG_ALIGN_SPEED * turn_dir)
+                                       override_l=-FLAG_REORIENT_APPROACH_SPEED + FLAG_REORIENT_ALIGN_SPEED * turn_dir,
+                                       override_r=-FLAG_REORIENT_APPROACH_SPEED - FLAG_REORIENT_ALIGN_SPEED * turn_dir)
                         print(f"[상태] 태극기 놓침 — 마지막 방향으로 후진하며 재정렬중... ({now - storage_phase_start:.1f}/{FLAG_REORIENT_TIMEOUT_SECS:.1f}s)", end="\r")
 
         # ── 시각화 ──────────────────────────────────────
