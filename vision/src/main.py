@@ -986,6 +986,25 @@ else:
             print(f"[오류] 0~{int(MATCH_DURATION_SECS)}초(0:00~{int(MATCH_DURATION_SECS)//60}:{int(MATCH_DURATION_SECS)%60:02d}) 사이로 입력하세요.")
         except ValueError:
             print("[오류] MM:SS 형식으로 입력하세요 (예: 1:38).")
+
+    # grip_success_count도 남은 시간과 같은 이유로 재시작 시 리셋되면 안 됨 — 이미
+    # 몇 개 집었는지 직접 입력받아서 GRIP_COUNT_STORAGE_THRESHOLD 도달 판단이 실제
+    # 진행 상황과 어긋나지 않게 한다.
+    while True:
+        raw_count = input("[시작] 이미 집은 물건 개수 입력 (재시작 시 리셋 방지용, 처음 시작이면 그냥 Enter = 0): ").strip()
+        if raw_count == "":
+            grip_success_count = 0
+            break
+        try:
+            grip_success_count = int(raw_count)
+            if grip_success_count >= 0:
+                break
+            print("[오류] 0 이상의 정수를 입력하세요.")
+        except ValueError:
+            print("[오류] 숫자로 입력하세요.")
+    if grip_success_count > 0:
+        print(f"[시작] 이미 집은 개수 {grip_success_count}개로 시작")
+
     elapsed_already = MATCH_DURATION_SECS - remaining_secs
     send_start()  # 시작 크기 규정으로 올려둔 팔을 내림 (전진 시작과 함께)
     match_start_time = time.time() - elapsed_already  # 이미 지난 시간만큼 과거로 당겨서 보정
