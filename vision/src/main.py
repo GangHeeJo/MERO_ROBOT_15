@@ -301,7 +301,7 @@ FLAG_CENTER_MARGIN_PX    = 100    # 정렬 허용 오차(px) — 이 안이면 "
 FLAG_ALIGN_SPEED         = 0.25   # 정렬 회전 속도
 FLAG_SETTLE_SECS         = 1.0    # 태극기 첫 감지 직후 짧게 정지하는 시간(정렬 진입 전 안정화)
 FLAG_AREA_STOP_THRESHOLD = 200000 # 도달 판단 면적 (px²) — 이 이상이면 고정 시간 직진 후 정지  ⚠️ 임의값 — 실측 필요
-FLAG_FINAL_FORWARD_SECS  = 0.5    # 도달 판정 후 직진하는 시간
+FLAG_FINAL_FORWARD_SECS  = 0.25   # 도달 판정 후 직진하는 시간
 FLAG_APPROACH_SPEED      = 0.4    # 직진 접근 속도(후진 — cam_backward 이후라 -값이 카메라가 보는 방향) — 감속 없이 끝까지 이 속도 유지
 FLAG_MISS_GRACE_FRAMES   = 10     # 정렬/접근 중 순간적으로 태극기를 놓쳐도 이 프레임까지는 정지 대기 (TARGET_MISS_GRACE_FRAMES와 동일 값)
 
@@ -323,7 +323,6 @@ flag_settle_start    = 0.0
 flag_final_forward       = False  # area가 FLAG_AREA_STOP_THRESHOLD 도달 후 고정 시간 직진 중
 flag_final_forward_start = 0.0
 flag_miss_count      = 0      # 정렬/접근 중 연속으로 태극기를 못 잡은 프레임 수 (FLAG_MISS_GRACE_FRAMES까지는 정지 대기)
-flag_arrived         = False  # 정렬+접근 완료 — 이후 아무 것도 안 함
 storage_enter_time   = 0.0
 confirm_count        = 0
 last_target_id       = -1
@@ -964,7 +963,6 @@ if STORAGE_ONLY:
     storage_initial_spin_start = time.time()
     flag_settle          = False
     flag_final_forward    = False
-    flag_arrived         = False
     storage_enter_time   = time.time()
     send_cam_backward()
     send_arm_up()
@@ -1106,7 +1104,6 @@ try:
             storage_initial_spin_start = time.time()
             flag_settle          = False
             flag_final_forward    = False
-            flag_arrived         = False
             storage_enter_time   = time.time()
             send_cam_backward()   # 경기당 1회 — 이후 다시 정면으로 돌릴 일 없음
             send_arm_up()         # 카메라 회전과 동시에 팔도 규정 크기 위치로 복귀
@@ -1390,12 +1387,6 @@ try:
                 print("[경고] flag 클래스 없음 — SEARCHING 복귀")
                 robot_state = RobotState.SEARCHING
 
-            elif flag_arrived:
-                # 정렬+접근 완료 — 경기 종료 취급, 정지하고 프로그램 자체를 끝낸다
-                control_wheels(None)
-                print("\n[상태] 스토리지 도달 완료 — 프로그램 종료")
-                break
-
             elif flag_settle:
                 # 태극기 첫 감지 직후 — 정렬 진입 전 짧게 정지해서 카메라/트래킹 안정화
                 control_wheels(None)
@@ -1470,9 +1461,8 @@ try:
                             print(f"[상태] 스토리지 진입 직진중... ({elapsed_ff:.1f}s)", end="\r")
                             if elapsed_ff >= FLAG_FINAL_FORWARD_SECS:
                                 control_wheels(None)
-                                flag_final_forward = False
-                                flag_arrived       = True
-                                print(f"\n[상태] 스토리지 도달 — 정지 (경기 종료 취급)")
+                                print(f"\n[상태] 스토리지 도달 — 정지 (경기 종료 취급) → 프로그램 종료")
+                                break
 
                         elif avg_area >= FLAG_AREA_STOP_THRESHOLD:
                             flag_final_forward       = True
