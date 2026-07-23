@@ -308,6 +308,10 @@ SHOW_TIMER            = args.timer  # 화면에 카운트다운 표시 여부 (�
 # KY-032 적외선 센서(ir_counter.ino)로 센 물체 통과 개수가 이 값 이상이면, 남은 경기
 # 시간과 무관하게 즉시 GO_TO_STORAGE로 전환한다 (STORAGE_ENTRY_REMAINING_SECS 트리거와
 # 동일한 정리 로직을 그대로 재사용 — 둘 중 하나만 만족해도 전환됨).
+# ⚠️ 2026-07-23: 센서가 오탐(물체 없이도 카운트 증가)하는 문제 확인돼 IR_COUNT_TRIGGERS_STORAGE로
+# 임시 비활성화 — 카운트 자체(ir_object_count)와 화면 표시는 그대로 두고, GO_TO_STORAGE 전환에만
+# 안 쓰이게 함. 센서 오탐 원인 해결되면 True로 되돌릴 것.
+IR_COUNT_TRIGGERS_STORAGE  = False
 IR_COUNT_STORAGE_THRESHOLD = 7
 
 # ── 태극기 네비게이션 파라미터 ──────────────────────────
@@ -1044,7 +1048,7 @@ try:
         # 스캔 4초)에도 남은 30초를 거의 다 까먹지 않는다.
         _remaining_match_secs = MATCH_DURATION_SECS - (time.time() - match_start_time)
         _time_up  = _remaining_match_secs <= STORAGE_ENTRY_REMAINING_SECS
-        _ir_full  = ir_object_count >= IR_COUNT_STORAGE_THRESHOLD
+        _ir_full  = IR_COUNT_TRIGGERS_STORAGE and ir_object_count >= IR_COUNT_STORAGE_THRESHOLD
         if (robot_state in (RobotState.SEARCHING, RobotState.GRIPPING, RobotState.POST_GRIP_SCAN)
                 and (_time_up or _ir_full)):
             control_wheels(None)
