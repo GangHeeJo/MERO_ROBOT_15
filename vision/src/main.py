@@ -300,7 +300,8 @@ FLAG_SEARCH_SPEED        = 0.15   # 탐색 회전 속도(밀집 이동할 물체
 FLAG_CENTER_MARGIN_PX    = 100    # 정렬 허용 오차(px) — 이 안이면 "정렬 완료"로 판단
 FLAG_ALIGN_SPEED         = 0.25   # 정렬 회전 속도
 FLAG_SETTLE_SECS         = 1.0    # 태극기 첫 감지 직후 짧게 정지하는 시간(정렬 진입 전 안정화)
-FLAG_AREA_SLOW_THRESHOLD = 30000  # 감속 시작 면적 (px²)  ⚠️ 임의값 — 실측 필요
+FLAG_AREA_SLOW_THRESHOLD = 140000 # 감속 시작 면적 (px²) — STOP_THRESHOLD(20만)의 15%였던 걸 70%로 올림,
+                                   # 너무 일찍 감속해서 접근 대부분을 느린 속도로 기어갔던 문제 대응  ⚠️ 임의값 — 실측 필요
 FLAG_AREA_STOP_THRESHOLD = 200000 # 도달 판단 면적 (px²) — 이 이상이면 고정 시간 직진 후 정지  ⚠️ 임의값 — 실측 필요
 FLAG_FINAL_FORWARD_SECS  = 0.5    # 도달 판정 후 직진하는 시간
 FLAG_APPROACH_SPEED      = 0.4    # 직진 접근 속도(후진 — cam_backward 이후라 -값이 카메라가 보는 방향)
