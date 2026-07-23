@@ -1,14 +1,16 @@
 """
-wall_line_test.py — 바닥-벽 경계선(가로 방향으로 화면 전체를 가로지르는 선) 감지 테스트
+wall_line_test.py — 바닥-벽 경계선(화면을 가로지르는 직선, 수평/사선 둘 다) 감지 테스트
 ─────────────────────────────────────────────────────────────
-목적: YOLO 없이 고전 CV(그라디언트 기반)로 바닥과 벽 사이 경계선을 찾을 수 있는지 확인.
+목적: YOLO 없이 고전 CV(Hough 직선 변환)로 바닥과 벽 사이 경계선을 찾을 수 있는지 확인.
       로봇/시리얼 전혀 안 건드림 — 카메라 입력만 사용.
 
-원리: 세로 방향 그라디언트(Sobel y)가 강한 픽셀 = 가로 방향 밝기 변화(=수평 경계선 후보).
-      각 행(y)마다 "그라디언트가 강한 픽셀이 전체 폭의 몇 %인가"를 계산해서 coverage
-      프로파일을 만들고, 그 안에서 극댓값(local peak)들을 전부 찾는다 — 벽이 낮아서
-      "바닥→벽 앞면" 경계와 "벽 윗면→먼 바닥(또는 배경)" 경계처럼 선이 여러 개 동시에
-      존재하는 경우까지 대응. y가 클수록(화면 아래쪽) 가깝다고 해석.
+원리: Canny 엣지 위에서 cv2.HoughLinesP로 직선 세그먼트를 찾는다 — 순수 수평선만
+      가정하지 않고 사선도 그대로 검출됨. 세그먼트를 화면 좌우 끝까지 연장해서
+      실제로 그려주고, 그 기울기(각도)를 함께 보고한다.
+      각도가 0°에 가까우면 로봇이 벽과 평행, 기울어질수록(+ 또는 -) 로봇이 벽에 대해
+      틀어진 정도와 방향을 나타낸다 — 실제 도(度) 값은 카메라 화각 보정이 없어 근사치지만,
+      부호와 크기는 회전 제어 신호(정렬용 turn 값)로 바로 쓸 수 있음.
+      y가 클수록(화면 아래쪽) 벽이 가깝다고 해석.
 
 실행: python vision/src/wall_line_test.py
 브라우저에서 http://<젯슨IP>:8084 접속하면 감지된 선 확인 가능
@@ -16,6 +18,7 @@ wall_line_test.py — 바닥-벽 경계선(가로 방향으로 화면 전체를 
 
 import cv2
 import glob
+import math
 import numpy as np
 import socket
 import threading
@@ -23,11 +26,14 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # ── 파라미터 ─────────────────────────────────────────────
-GRADIENT_THRESHOLD  = 15    # 이 값 이상이면 "강한 가로 경계"로 판단 (0~255 스케일, 실측 후 조정)
-MIN_PEAK_COVERAGE   = 0.15  # 한 행에서 이 비율 이상 폭에 걸쳐 경계가 있어야 후보로 인정
-MIN_PEAK_DISTANCE_PX = 25   # 이 거리 이내의 극댓값은 같은 선으로 보고 하나만 남김(NMS)
-MAX_LINES           = 5     # 화면당 최대 몇 개 선까지 보고할지
-SMOOTH_WINDOW       = 5     # coverage 프로파일 노이즈 완화용 이동평균 윈도우(행 단위)
+CANNY_LOW              = 30   # Canny 하위 임계값
+CANNY_HIGH             = 90   # Canny 상위 임계값 (보통 하위의 2~3배)
+HOUGH_THRESHOLD        = 80   # 이 표 수 이상 누적돼야 직선으로 인정
+MIN_LINE_LENGTH_RATIO  = 0.3  # 프레임 폭의 이 비율 이상 길어야 후보로 인정
+MAX_LINE_GAP           = 30   # 이 픽셀 이내 끊김은 같은 선으로 이어붙임
+MAX_ANGLE_DEG          = 40   # 수평 기준 이 각도보다 더 세우면(수직에 가까우면) 제외
+MIN_LINE_DISTANCE_PX   = 25   # 화면 중앙 y 기준 이 거리 이내의 선은 같은 경계로 보고 병합(NMS)
+MAX_LINES              = 5    # 화면당 최대 몇 개 선까지 보고할지
 
 
 def _find_camera_index(keywords, fallback):
@@ -49,38 +55,44 @@ def _find_camera_index(keywords, fallback):
     return fallback
 
 
-def find_wall_lines(gray):
-    """coverage 프로파일에서 극댓값(local peak)을 전부 찾아 y가 작은 순(먼 것부터)으로
-    반환. 벽이 낮아 "바닥→벽 앞면"/"벽 윗면→먼 바닥" 선이 동시에 잡히는 상황 대응.
-    반환값: [(y, coverage_ratio), ...] — MIN_PEAK_COVERAGE 미만은 아예 제외."""
-    sobel_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
-    edge_mask = np.abs(sobel_y) >= GRADIENT_THRESHOLD
+def find_wall_lines(gray, w):
+    """Canny+Hough로 화면을 가로지르는 (수평 또는 사선) 경계선들을 찾아 화면 좌우
+    끝까지 연장한 좌표와 각도를 반환. y가 작은(먼) 것부터 순서대로.
+    반환값: [{"y0": 왼쪽끝y, "yw": 오른쪽끝y, "y_mid": 중앙y, "angle": 도(수평=0), "length": px}, ...]"""
+    edges = cv2.Canny(gray, CANNY_LOW, CANNY_HIGH)
+    min_len = w * MIN_LINE_LENGTH_RATIO
+    segments = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=HOUGH_THRESHOLD,
+                                minLineLength=min_len, maxLineGap=MAX_LINE_GAP)
+    if segments is None:
+        return []
 
-    h, w = gray.shape
-    row_coverage = edge_mask.sum(axis=1) / w  # 행별 "경계 픽셀 비율" (0~1)
+    candidates = []
+    for seg in segments:
+        x1, y1, x2, y2 = seg[0]
+        if x2 == x1:
+            continue  # 수직선 제외
+        angle = math.degrees(math.atan2(y2 - y1, x2 - x1))
+        if abs(angle) > MAX_ANGLE_DEG:
+            continue
+        length = math.hypot(x2 - x1, y2 - y1)
+        slope  = (y2 - y1) / (x2 - x1)
+        y_at_0 = y1 - slope * x1        # x=0까지 연장
+        y_at_w = y_at_0 + slope * w      # x=w까지 연장
+        candidates.append({
+            "y0": y_at_0, "yw": y_at_w, "y_mid": (y_at_0 + y_at_w) / 2,
+            "angle": angle, "length": length,
+        })
 
-    # 이동평균으로 노이즈 완화 (한두 행만 우연히 튀는 것 방지)
-    kernel = np.ones(SMOOTH_WINDOW) / SMOOTH_WINDOW
-    smoothed = np.convolve(row_coverage, kernel, mode="same")
-
-    # 극댓값 후보: 양옆보다 크거나 같은 행
-    candidates = [
-        (y, smoothed[y]) for y in range(1, h - 1)
-        if smoothed[y] >= MIN_PEAK_COVERAGE
-        and smoothed[y] >= smoothed[y - 1]
-        and smoothed[y] >= smoothed[y + 1]
-    ]
-
-    # coverage 높은 순으로 정렬 후 NMS — 이미 뽑은 선과 너무 가까우면 스킵
-    candidates.sort(key=lambda c: c[1], reverse=True)
+    # 긴 선 우선으로 정렬 후 NMS — 이미 뽑은 선과 중앙 y가 너무 가까우면 같은 선으로 보고 스킵
+    candidates.sort(key=lambda c: c["length"], reverse=True)
     picked = []
-    for y, cov in candidates:
-        if all(abs(y - py) >= MIN_PEAK_DISTANCE_PX for py, _ in picked):
-            picked.append((y, cov))
+    for c in candidates:
+        if all(abs(c["y_mid"] - p["y_mid"]) >= MIN_LINE_DISTANCE_PX for p in picked):
+            picked.append(c)
         if len(picked) >= MAX_LINES:
             break
 
-    picked.sort(key=lambda c: c[0])  # 화면 위(먼 것)부터 아래(가까운 것) 순으로 반환
+    picked.sort(key=lambda c: c["y_mid"])  # 화면 위(먼 것)부터 아래(가까운 것) 순
     return picked
 
 
@@ -158,15 +170,15 @@ try:
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         gray = cv2.GaussianBlur(gray, (5, 5), 0)
-        lines = find_wall_lines(gray)
+        h, w = gray.shape
+        lines = find_wall_lines(gray, w)
 
         if time.time() - _last_print_t >= 0.3:
-            h = gray.shape[0]
             if lines:
-                desc = ", ".join(f"y={y}({y/h*100:.0f}%,cov={cov*100:.0f}%)" for y, cov in lines)
+                desc = ", ".join(f"y_mid={l['y_mid']:.0f}({l['y_mid']/h*100:.0f}%) angle={l['angle']:+.1f}°" for l in lines)
                 print(f"[벽] {len(lines)}개 후보: {desc}")
             else:
-                print(f"[벽] 후보 없음 (필요 coverage={MIN_PEAK_COVERAGE*100:.0f}%)")
+                print(f"[벽] 후보 없음")
             _last_print_t = time.time()
 
         fps_counter += 1
@@ -180,13 +192,12 @@ try:
             watching = _client_count > 0
         if watching:
             annotated = frame.copy()
-            h, w = annotated.shape[:2]
-            # 가까운(아래쪽/큰 y) 선일수록 진한 초록, 먼 선일수록 연한 색으로 구분
-            for i, (y, cov) in enumerate(lines):
+            for i, l in enumerate(lines):
                 color = (0, 255, 0) if i == len(lines) - 1 else (0, 255, 255)
-                cv2.line(annotated, (0, y), (w, y), color, 2)
-                cv2.putText(annotated, f"y={y} ({y/h*100:.0f}%) cov={cov*100:.0f}%",
-                            (10, max(20, y - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+                cv2.line(annotated, (0, int(l["y0"])), (w, int(l["yw"])), color, 2)
+                label_y = int(max(20, min(h - 10, l["y_mid"] - 8)))
+                cv2.putText(annotated, f"y={l['y_mid']:.0f} ({l['y_mid']/h*100:.0f}%) angle={l['angle']:+.1f}",
+                            (10, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
             with _lock:
                 _stream_frame = annotated
 
